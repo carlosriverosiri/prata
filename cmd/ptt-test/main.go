@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/carlosriveros/prata/internal/audio"
+	"github.com/carlosriveros/prata/internal/auth"
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/inject"
@@ -59,8 +60,14 @@ func loadDict() (*dict.Dict, error) {
 func main() {
 	apiKey := os.Getenv("BERGET_API_KEY")
 	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "BERGET_API_KEY not set")
-		os.Exit(1)
+		var err error
+		apiKey, err = auth.LoadAPIKey()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "no API key available:")
+			fmt.Fprintln(os.Stderr, "  set BERGET_API_KEY env var, or")
+			fmt.Fprintln(os.Stderr, "  run prata-setkey to save an encrypted key")
+			os.Exit(1)
+		}
 	}
 
 	d, err := loadDict()
