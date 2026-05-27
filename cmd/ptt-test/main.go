@@ -17,6 +17,7 @@ import (
 
 	"github.com/carlosriveros/prata/internal/audio"
 	"github.com/carlosriveros/prata/internal/hotkey"
+	"github.com/carlosriveros/prata/internal/inject"
 	"github.com/carlosriveros/prata/internal/transcribe"
 )
 
@@ -126,7 +127,12 @@ func processEvents(client *transcribe.Client, events <-chan event) {
 				fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
 				continue
 			}
-			fmt.Printf("%s (%.2fs)\n", text, time.Since(start).Seconds())
+			elapsed := time.Since(start)
+			if err := inject.Type(text); err != nil {
+				fmt.Fprintf(os.Stderr, "inject: %v\n", err)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())
 		}
 	}
 }
