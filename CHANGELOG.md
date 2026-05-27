@@ -4,6 +4,39 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 6 — 2026-05-27
+
+### Added
+
+- `internal/auth/dpapi.go` — Windows DPAPI wrapper exposing
+  `SaveAPIKey`, `LoadAPIKey`, and `KeyPath`. Direct P/Invoke against
+  `crypt32.dll` (`CryptProtectData` / `CryptUnprotectData`) and
+  `kernel32.dll` (`LocalFree`). Stdlib only, no cgo. The encrypted
+  blob is bound to both the current user and current machine — it
+  cannot be decrypted by another user nor copied to another PC.
+- `cmd/prata-setkey/` — one-shot CLI that takes the API key from
+  `os.Args[1]` (or interactive stdin) and encrypts it to
+  `%LOCALAPPDATA%\Prata\apikey.dat`.
+- `cmd/ptt-test/` (modified) — falls back to `auth.LoadAPIKey()`
+  when `BERGET_API_KEY` env var is empty or unset. Both paths
+  remain supported: env var for development, DPAPI for production.
+
+### Verified
+
+- New API key (rotated in this session, replacing one that had
+  been exposed in plaintext earlier) encrypted via `prata-setkey`
+  and saved to disk. File is 278 bytes for a ~65-character key —
+  DPAPI overhead confirms encryption. First byte is 0x01, the
+  DPAPI blob version marker, ruling out plaintext storage.
+- `ptt-test` runs with `BERGET_API_KEY=""` and successfully
+  transcribes via the DPAPI-loaded key.
+
+### Deferred
+
+- Task Scheduler autostart will be handled by `install.ps1` in
+  Phase 7. The Go side of Phase 6 (DPAPI) is complete; the
+  remaining piece is deployment scripting.
+
 ## Phase 5 — 2026-05-27
 
 ### Added
