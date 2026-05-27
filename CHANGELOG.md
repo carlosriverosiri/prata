@@ -4,6 +4,34 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 2 — 2026-05-27
+
+### Added
+
+- `internal/audio/capture.go` — WASAPI audio capture via malgo
+  (Go binding for miniaudio). Session-based API: `Start()` returns a
+  `*Session`, `Stop()` returns the recorded PCM bytes. Captures at
+  16 kHz mono PCM_S16LE; imports the format constants from
+  `internal/transcribe` to make the contract between capture and
+  encoder explicit.
+- `cmd/record-test/` — smoke-test CLI that records N seconds (default
+  5) from the default microphone, encodes to WAV via `transcribe.EncodePCM`,
+  sends to Berget, and prints the transcription.
+- `github.com/gen2brain/malgo v0.11.25` — first external dependency
+  (cgo). Requires a C toolchain at build time; TDM-GCC 10.3.0 used on
+  the development machine.
+
+### Verified
+
+- 5-second recording captured 159 680 bytes of PCM = 4.99 seconds at
+  16 kHz mono 16-bit (99.8% of the requested duration; the 10 ms
+  deficit is malgo's startup latency, expected).
+- Berget transcribed the recording correctly, confirming the format
+  contract between audio capture and WAV encoding is intact end-to-end
+  (sample rate, byte order, channel count, bit depth all correct).
+- First cgo build took ~14 seconds; subsequent builds use Go's build
+  cache and are faster.
+
 ## Phase 1 — 2026-05-27
 
 ### Added
