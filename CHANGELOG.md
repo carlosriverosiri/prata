@@ -4,6 +4,41 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 4 — 2026-05-27
+
+### Added
+
+- `internal/inject/inject.go` — Unicode text injection into the
+  foreground window via Win32 `SendInput` with `KEYEVENTF_UNICODE`.
+  Direct P/Invoke via `syscall`; stdlib only, no cgo. Each UTF-16
+  code unit produces a key-down + key-up event; characters outside
+  the BMP are emitted as surrogate pairs via `unicode/utf16.Encode`.
+- `cmd/inject-test/` — isolated verification of the inject package.
+  Types a supplied text argument into whichever window has focus
+  3 seconds after launch.
+- `cmd/ptt-test/` (modified) — now injects the transcribed text into
+  the foreground window via `inject.Type`, instead of printing to
+  stdout. All status messages remain on stderr.
+
+### Verified
+
+- `å`, `ä`, `ö` and other non-ASCII characters injected correctly,
+  confirming UTF-16 + KEYEVENTF_UNICODE works end-to-end.
+- Full PTT cycle works in real applications: Ctrl+Win → speak →
+  release → text appears in the active window (Notepad tested).
+- Multiple consecutive dictations behave independently — no session
+  leakage, no state drift between cycles.
+
+### Known interaction
+
+- Prata and Diktell share the Ctrl+Win hotkey. Running both
+  concurrently produces duplicate text in the active window: both
+  apps capture the same audio in parallel and inject independently
+  (with slight Whisper variation between local CUDA and Berget).
+  The intended deployment is one-or-the-other per machine
+  (Diktell on GPU machines, Prata elsewhere), so this is by design,
+  but it is worth documenting.
+
 ## Phase 3 — 2026-05-27
 
 ### Added
