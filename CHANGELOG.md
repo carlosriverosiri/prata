@@ -4,6 +4,41 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 5 — 2026-05-27
+
+### Added
+
+- `internal/dict/dict.go` — word-boundary text replacement applied
+  to transcribed text before injection. Loads rules from a key=value
+  file (lines starting with `#` are comments, blank lines ignored);
+  each rule compiles to a `\bkey\b` regex applied case-sensitively.
+  Pure Go, stdlib only.
+- `dictionary-corrections.txt` — copied verbatim from the Diktell
+  project (same KB-Whisper-Large model produces the same error
+  patterns) plus one new rule `adoption = abduktion` confirmed in
+  Phase 4 testing.
+- `cmd/ptt-test/` (modified) — loads the dictionary on startup from
+  `PRATA_DICT_PATH` (env var), falling back to
+  `dictionary-corrections.txt` next to the executable. Applies all
+  rules to every transcription between Berget's response and
+  `inject.Type`. If the file is missing or malformed, the app logs
+  a warning and continues without corrections.
+
+### Verified
+
+- "abduktion" survives end-to-end despite Whisper's consistent
+  transcription of the word as "adoption": the new rule catches it
+  before injection. Notepad output contains "abduktion".
+- Startup log shows `dictionary loaded` when the file is found and
+  parsed successfully.
+
+### Known limitation
+
+- Word-boundary matching uses Go's `\b`, which treats å/ä/ö as
+  non-word characters. Rules whose key starts or ends with å/ä/ö
+  may not match correctly. None of the current rules are affected;
+  this can be revisited in a follow-up if it ever bites.
+
 ## Phase 4 — 2026-05-27
 
 ### Added
