@@ -4,6 +4,36 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 3 — 2026-05-27
+
+### Added
+
+- `internal/hotkey/listener.go` — global Win32 `WH_KEYBOARD_LL`
+  keyboard hook for detecting the Ctrl+Win combination. Uses direct
+  P/Invoke via Go's `syscall` package; stdlib only, no cgo.
+  `Listener.Run()` pins itself to its OS thread (`runtime.LockOSThread`)
+  and runs the Windows message loop; `Stop()` posts `WM_QUIT` to that
+  thread. Press/release callbacks fire on the hook thread and must
+  return within 300 ms (Windows' `LowLevelHooksTimeout`).
+- `cmd/hotkey-test/` — isolated verification of the hook (no audio, no
+  Berget). Prints `PRESS` / `RELEASE` to stdout.
+- `cmd/ptt-test/` — wires hotkey + audio + transcribe into a full
+  push-to-talk loop. Hook callbacks enqueue events on a buffered
+  channel; a separate processor goroutine owns the `audio.Session`
+  lifecycle and dispatches to Berget on release.
+
+### Verified
+
+- Hook detects Ctrl+Win press and release across multiple cycles with
+  no state drift. Modifier-state machine handles arbitrary ordering of
+  ctrl/win down/up events correctly.
+- Full PTT loop: 5.86s recording transcribed in 2.37s end-to-end
+  (press → speech → release → text), in line with the Phase 1 latency
+  baseline.
+- The familiar "adoption" → "abduktion" Whisper error reproduced,
+  confirming again that Phase 5 dictionary corrections will be the
+  right place to address it.
+
 ## Phase 2 — 2026-05-27
 
 ### Added
