@@ -1,0 +1,31 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test artifacts
+*.test
+*.out
+
+# Go workspace files (machine-local)
+go.work
+go.work.sum
+
+# Local audio test fixtures — personal voice recordings, not for distribution
+prata-tests.m4a
+prata-tests.wav
+
+# IDE / editor
+.vscode/
+.idea/
+.cursor/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
