@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"github.com/carlosriveros/prata/internal/audio"
+	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/inject"
 	"github.com/carlosriveros/prata/internal/transcribe"
@@ -30,11 +32,43 @@ const (
 	evRelease
 )
 
+// loadDict resolves the dictionary path (PRATA_DICT_PATH env var, or
+// "dictionary-corrections.txt" next to the executable as a fallback)
+// and returns the parsed Dict. A nil return paired with a non-nil
+// error means dict corrections will be disabled but the app should
+// still run.
+func loadDict() (*dict.Dict, error) {
+	path := os.Getenv("PRATA_DICT_PATH")
+	if path == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("locate executable: %w", err)
+		}
+		path = filepath.Join(filepath.Dir(exe), "dictionary-corrections.txt")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	return dict.Load(f)
+}
+
 func main() {
 	apiKey := os.Getenv("BERGET_API_KEY")
 	if apiKey == "" {
 		fmt.Fprintln(os.Stderr, "BERGET_API_KEY not set")
 		os.Exit(1)
+	}
+
+	d, err := loadDict()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: dictionary disabled (%v)\n", err)
+		// d will be nil here; processEvents handles nil gracefully
+	} else {
+		fmt.Fprintln(os.Stderr, "dictionary loaded")
 	}
 
 	client := transcribe.NewClient(apiKey)
@@ -61,7 +95,7 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(client, events)
+		processEvents(client, d, events)
 	}()
 
 	sigs := make(chan os.Signal, 1)
@@ -92,7 +126,7 @@ func main() {
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
 // trivial and protects against future hook-state regressions.
-func processEvents(client *transcribe.Client, events <-chan event) {
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event) {
 	var session *audio.Session
 
 	for ev := range events {
@@ -126,6 +160,9 @@ func processEvents(client *transcribe.Client, events <-chan event) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
 				continue
+			}
+			if d != nil {
+				text = d.Apply(text)
 			}
 			elapsed := time.Since(start)
 			if err := inject.Type(text); err != nil {

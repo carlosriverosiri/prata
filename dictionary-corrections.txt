@@ -1,0 +1,59 @@
+# dictionary-corrections.txt — Post-Whisper söka-ersätt
+#
+# Regler i denna fil tillämpas EFTER KB-Whisper transkriberat och FÖRE
+# texten injiceras i det aktiva fönstret.
+# Varje regel ersätter en felstavning med korrekt form med word-boundary
+# matchning — "neer" matchar inte "Generera".
+#
+# FORMAT:
+#   felstavning = korrekt stavning
+#   - Rader som börjar med # ignoreras (kommentar)
+#   - Tomma rader ignoreras
+#   - Case-sensitive matchning
+#   - Word-boundary matchning (inte substring)
+#   - Duplicerad felstavning: den senaste raden vinner
+#
+# EXEMPEL:
+#   glenhumeral = glenohumerala
+#   rotatorkuffen = rotatorkuffen
+#   acromioplastik = akromioplastik
+#   impingement syndromet = impingementsyndromet
+#
+# Lägg till dina korrigeringar nedan:
+gangliocid = gangliosid
+Gangleocid = gangliosid
+Gangliocid = Gangliosid
+Dick Tell = Diktell
+DeLibel = Delibel
+Dictel = Diktell
+DikTell = Diktell
+NextGIS = Next JS
+Elexir = Elixir
+FM = F5
+Curser = Cursor
+körer = Cursor
+macken = macen
+Jemine = Gemini
+curser = Cursor
+Kurser = Cursor
+lådningsmodul = kodningsmodul
+Cursers = Cursors
+Jemini = Gemini
+Untroffic = Anthropic
+VSL = WSL
+funktionalnotat = journalnotat
+Delhi Bell = Delibel
+kurser = Cursor
+Delhibell = Delibel
+Diktel = Diktell
+Digitell = Diktell
+choruson = Cursorn
+Fyra = fyra
+Digtel = Diktell
+kursor = Cursor
+akremioplastik = akromioplastik
+Axeluxation = Axelluxation
+KUDA = CUDA
+Kuda = CUDA
+Digtell = Diktell
+adoption = abduktion
