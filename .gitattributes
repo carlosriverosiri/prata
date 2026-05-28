@@ -1,0 +1,10 @@
+# Normalize line endings: store text as LF in the repo and check it out
+# as LF on every platform. Keeps `gofmt -l` stable and avoids CRLF noise
+# in Windows checkouts (local and CI).
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.exe binary
+*.dll binary
+*.wav binary
+*.m4a binary
