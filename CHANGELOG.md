@@ -4,6 +4,36 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 8 — 2026-05-28
+
+### Added
+
+- `internal/cue/cue.go` — short, gentle audio cues for push-to-talk
+  state changes. Tones are synthesised in-process as 16 kHz mono PCM,
+  wrapped in a WAV header, and played from memory via winmm
+  `PlaySoundW` with `SND_MEMORY|SND_ASYNC|SND_NODEFAULT`. Async
+  playback never blocks the caller and no sound files ship with the
+  app. Two distinguishable tones: 880 Hz on start, 587 Hz on stop.
+  Each tone is 110 ms with a 12 ms fade in/out to avoid clicks.
+  Direct P/Invoke against `winmm.dll`; stdlib only, no cgo.
+- Amplitude is capped at 0.18 of full scale (lowered from an initial
+  0.35) so the cues stay unobtrusive at any system volume.
+- `cmd/prata/main.go` (modified) — calls `cue.PlayStart()` right after
+  `audio.Start()` succeeds, and `cue.PlayStop()` right after
+  `session.Stop()` returns. The stop cue is deliberately played
+  *after* the microphone is closed so the tone cannot leak into the
+  captured PCM (and thus into the transcription).
+
+### Verified
+
+- `gofmt -w`, `go build ./...`, and `go vet ./...` all clean.
+
+### To confirm on device
+
+- Actual audible playback and perceived loudness at 0.18 amplitude
+  cannot be verified in CI/headless; confirm the start/stop tones are
+  audible but unobtrusive during a real dictation cycle.
+
 ## Phase 7 — 2026-05-28
 
 ### Added

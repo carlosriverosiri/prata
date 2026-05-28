@@ -19,6 +19,7 @@ import (
 
 	"github.com/carlosriveros/prata/internal/audio"
 	"github.com/carlosriveros/prata/internal/auth"
+	"github.com/carlosriveros/prata/internal/cue"
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/inject"
@@ -158,6 +159,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 				continue
 			}
 			session = s
+			cue.PlayStart()
 			fmt.Fprintln(os.Stderr, "recording...")
 
 		case evRelease:
@@ -170,6 +172,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 				fmt.Fprintf(os.Stderr, "audio stop: %v\n", err)
 				continue
 			}
+			cue.PlayStop()
 
 			fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 			start := time.Now()
