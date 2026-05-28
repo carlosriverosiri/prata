@@ -4,6 +4,64 @@ All notable changes to Prata are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions will be tagged once Phase 7 produces installable releases.
 
+## Phase 7 — 2026-05-28
+
+### Added
+
+- `install.ps1` (repo root) — PowerShell installer that copies the
+  binaries to `%LOCALAPPDATA%\Prata`, encrypts the API key via
+  `prata-setkey`, and registers a Task Scheduler entry for autostart
+  at login. Supports `-Local` for building from the working tree
+  (development) or default GitHub-release download (end users).
+- `.github/workflows/release.yml` — tag-triggered Windows pipeline
+  (`v*`) that builds `prata.exe` (with `-H windowsgui`) and
+  `prata-setkey.exe`, then publishes them along with
+  `dictionary-corrections.txt` and `install.ps1` via
+  `softprops/action-gh-release@v2`.
+- `internal/inject/inject.go` (rewritten) — text injection now uses
+  the Windows clipboard (`CF_UNICODETEXT` via `OpenClipboard`,
+  `GlobalAlloc`, `SetClipboardData`) plus a `Ctrl+V` chord sent with
+  `SendInput`. Previous `KEYEVENTF_UNICODE` path was unreliable in
+  Chromium/Electron apps (Claude Desktop) and modern Notepad: dropped
+  key-up events caused the OS to autorepeat the last character, e.g.
+  `"Detta ar ett test utan radbrytning"` →
+  `"Detta        ggggggggggggggggggggg"`. Per-rune batching and
+  inter-event delays helped but not consistently. Clipboard paste
+  goes through the target app's standard paste handler and bypasses
+  the keyboard input queue entirely.
+- Clipboard preservation in `internal/inject` — `Type` reads any
+  prior `CF_UNICODETEXT` content (`IsClipboardFormatAvailable` +
+  `GetClipboardData` + `GlobalSize` + `RtlMoveMemory`) before
+  pasting and restores it ~50 ms after the paste settles. If there
+  was no prior text, the clipboard is emptied so the dictation does
+  not leak into the user's next paste.
+- `cmd/prata/main.go` (modified) — appends `\n` to each transcription
+  before injection so consecutive dictations land on separate lines.
+
+### Verified
+
+- **Notepad** — `"Detta ar ett test utan radbrytning"` injected three
+  times back-to-back produces the literal text three times, no
+  autorepeat artifacts.
+- **Claude Desktop (Electron)** — same input, same result, three
+  times in a row.
+- **Newlines** — full PTT cycle dictating two sentences puts each
+  sentence on its own line in both Notepad and Claude Desktop.
+- **Clipboard preservation** (three scenarios):
+  - Empty clipboard before → empty clipboard after.
+  - Text clipboard before → exact text restored after.
+  - Image (PrintScreen) clipboard before → empty clipboard after
+    (image lost, but no dictation text leaked either).
+
+### Known limitation
+
+- Clipboard restore preserves only `CF_UNICODETEXT`. Non-text formats
+  (bitmaps, files, rich text from Word, HTML clipboard fragments) are
+  destroyed by the dictation paste cycle. Full enumeration via
+  `EnumClipboardFormats` and per-format reallocation is possible but
+  significantly more complex; deferred until a real-world use case
+  demands it.
+
 ## Phase 6 — 2026-05-27
 
 ### Added
