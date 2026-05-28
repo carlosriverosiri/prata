@@ -1,11 +1,14 @@
-// Command ptt-test verifies the full push-to-talk loop:
-// Ctrl+Win held → microphone capture; release → encode, transcribe,
-// print. Exits on Ctrl+C in the terminal.
+// Command prata runs the full push-to-talk loop: Ctrl+Win held →
+// microphone capture; release → encode, transcribe, correct, and inject
+// the text into the foreground window. Exits on Ctrl+C in the terminal.
+//
+// The API key comes from the BERGET_API_KEY environment variable, or a
+// DPAPI-encrypted file written by prata-setkey (see internal/auth).
 //
 // Usage:
 //
 //	$env:BERGET_API_KEY = "..."
-//	ptt-test
+//	prata
 package main
 
 import (
