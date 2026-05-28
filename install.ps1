@@ -16,7 +16,7 @@
     Use this for development / installer smoke-testing.
 
 .EXAMPLE
-    iwr https://raw.githubusercontent.com/carlosriveros/prata/master/install.ps1 | iex
+    iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
 
 .EXAMPLE
     .\install.ps1 -Local
@@ -60,7 +60,7 @@ if ($Local) {
         Write-Host "  copied $File"
     }
 } else {
-    $Repo = "carlosriveros/prata"
+    $Repo = "carlosriverosiri/prata"
     Write-Host "Source: github.com/$Repo (latest release)"
 
     $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
