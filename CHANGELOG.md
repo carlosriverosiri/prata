@@ -1,8 +1,18 @@
 # Changelog
 
 All notable changes to Prata are documented in this file.
-Format follows [Keep a Changelog](https://keepachangelog.com/);
-versions will be tagged once Phase 7 produces installable releases.
+Format follows [Keep a Changelog](https://keepachangelog.com/).
+Development is organised in numbered phases; the phase entries below
+record that history. Tagged releases bundle the phases completed up to
+that point.
+
+## v0.1.0 — 2026-05-28
+
+First installable release. Bundles Phases 1–8: Berget transcription,
+WASAPI capture, Ctrl+Win push-to-talk, clipboard-paste injection,
+correction dictionary, DPAPI-encrypted API key, single-instance guard,
+PowerShell installer with autostart, and gentle audio cues. Published
+via the tag-triggered GitHub release workflow.
 
 ## Phase 8 — 2026-05-28
 
