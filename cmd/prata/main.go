@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/carlosriveros/prata/internal/audio"
@@ -21,6 +22,7 @@ import (
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/inject"
+	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
 )
 
@@ -58,6 +60,14 @@ func loadDict() (*dict.Dict, error) {
 }
 
 func main() {
+	// Refuse to start if another Prata is already running. Two instances
+	// share Ctrl+Win and would both capture and inject, producing
+	// duplicate output (or garbled output in async target apps).
+	if !single.Acquire("PrataSingleInstanceMutex") {
+		fmt.Fprintln(os.Stderr, "Prata is already running; exiting.")
+		return
+	}
+
 	apiKey := os.Getenv("BERGET_API_KEY")
 	if apiKey == "" {
 		var err error
@@ -170,6 +180,9 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 			}
 			if d != nil {
 				text = d.Apply(text)
+			}
+			if !strings.HasSuffix(text, "\n") {
+				text += "\n"
 			}
 			elapsed := time.Since(start)
 			if err := inject.Type(text); err != nil {
