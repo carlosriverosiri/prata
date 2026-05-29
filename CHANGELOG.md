@@ -6,6 +6,62 @@ Development is organised in numbered phases; the phase entries below
 record that history. Tagged releases bundle the phases completed up to
 that point.
 
+## Phase 9 — 2026-05-29
+
+System tray. Prata now puts a small red icon in the notification area with
+a single right-click item, **Avsluta** (Quit). This matters because the
+production build runs under `-H windowsgui` with no console, so `Ctrl+C`
+is never delivered — until now there was no graceful way to quit a
+login-started Prata. Avsluta shares the exact Ctrl+C shutdown path.
+
+### Added
+
+- `internal/tray/tray.go` — Windows notification-area icon with a
+  right-click "Avsluta" menu. A hidden top-level window pumps the message
+  loop on its own OS thread (mirrors `internal/hotkey`); direct P/Invoke
+  against `shell32.dll` (`Shell_NotifyIconW`) and `user32.dll`, stdlib
+  only, no cgo. The HICON is built from the embedded `.ico` and sized to
+  the DPI-scaled `SM_CXSMICON` metric, picking the smallest frame ≥ the
+  target so scaling is downward (crisp), never upward (blurry).
+  `SetProcessDPIAware` opts the process into per-monitor-v2 awareness. The
+  window registers for the shell's `TaskbarCreated` broadcast and
+  (re-)adds the icon when the shell becomes ready or Explorer restarts; a
+  failed initial `NIM_ADD` is non-fatal and `Run` returns an error only for
+  fundamental setup failures (class/window/icon).
+- `internal/icon/icon.go` — embeds the red Prata application icon via
+  `//go:embed Prata.ico` as `icon.ICO`, so binaries carry the icon with no
+  runtime file dependency. The `.ico` has frames at
+  16/20/24/32/40/48/64/128/256 px for crisp rendering at every display
+  scale.
+- `cmd/tray-test/` — isolated smoke test for the tray icon in isolation
+  (no audio, no Berget): shows the icon and quits on Avsluta or Ctrl+C.
+- `cmd/prata/main.go` (modified) — calls `tray.SetProcessDPIAware()` first,
+  then starts the tray after the single-instance guard so a blocked second
+  instance never adds an icon. Avsluta and Ctrl+C share one `shutdown`
+  closure (stop listener → drain processor → stop tray). A tray that fails
+  to start degrades gracefully: it is logged as `tray disabled` and
+  dictation keeps running — the same soft-degrade policy already used for
+  the correction dictionary, so a notification-area hiccup never takes the
+  core push-to-talk loop down.
+
+### Verified
+
+- `gofmt -w`, `go vet ./...`, `go build ./...`, and the production
+  `go build -ldflags="-s -w -H windowsgui" -o prata.exe ./cmd/prata/`
+  all clean.
+- `Prata.ico` validated as a real multi-frame icon (frames at
+  16/20/24/32/40/48/64/128/256 px, 32bpp); `pickIconFrame` selects the
+  smallest frame ≥ the DPI-scaled target.
+
+### To confirm on device
+
+- Right-click → **Avsluta** quits cleanly with the icon removed (no ghost
+  icon), and Ctrl+C still quits in a dev terminal — both via the shared
+  shutdown path.
+- The icon appears at login and reappears after an Explorer restart (the
+  `TaskbarCreated` path); these need a real shell and cannot be verified
+  headless.
+
 ## v0.1.1 — 2026-05-29
 
 Robustness and safety release. Adds a degenerate-output guard that

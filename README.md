@@ -5,10 +5,10 @@ release — your speech is transcribed and typed into whatever window has
 focus. Transcription runs on [Berget AI](https://berget.ai) using
 KBLab's `kb-whisper-large` model.
 
-Prata is a lightweight background utility: no window, no tray clutter.
-It registers a global hotkey, captures the microphone while the keys are
-held, sends the audio to Berget, applies a correction dictionary, and
-pastes the result.
+Prata is a lightweight background utility: no application window, just a
+single system-tray icon you can right-click to quit. It registers a global
+hotkey, captures the microphone while the keys are held, sends the audio to
+Berget, applies a correction dictionary, and pastes the result.
 
 ## Features
 
@@ -25,6 +25,9 @@ pastes the result.
 - **Encrypted API key** at rest via Windows DPAPI (per-user, per-machine).
 - **Single-instance guard** — a named mutex prevents two copies from
   double-typing.
+- **System-tray icon** — a small red Prata icon in the notification area;
+  right-click and choose **Avsluta** to quit. This is the primary way to
+  exit when Prata runs at login with no console window.
 - **Autostart at login** via Task Scheduler, set up by the installer.
 
 ## How it works
@@ -124,6 +127,8 @@ or malformed, Prata logs a warning and runs without corrections.
 
 When run from a terminal, status messages go to stderr (`recording...`,
 `transcribing...`, injected text and latency). Press **Ctrl+C** to quit.
+When Prata runs at login (no console), right-click the tray icon and choose
+**Avsluta** to quit.
 
 ## Build from source
 
@@ -153,11 +158,13 @@ present).
 | `internal/auth/` | DPAPI key encryption (`crypt32.dll`). |
 | `internal/single/` | Single-instance named-mutex guard. |
 | `internal/cue/` | In-process audio cue tones (winmm `PlaySoundW`). |
+| `internal/tray/` | System-tray icon + right-click "Avsluta" menu (P/Invoke `shell32`/`user32`). |
+| `internal/icon/` | Embedded application icon (`//go:embed Prata.ico`). |
 
 The `cmd/*-test/` directories (`hotkey-test`, `record-test`,
-`inject-test`, `transcribe-test`, `wav-roundtrip-test`, `sanity-test`)
-are isolated smoke-test and calibration utilities for individual
-subsystems. `sanity-test` prints gzip compression ratios for built-in
+`inject-test`, `transcribe-test`, `wav-roundtrip-test`, `sanity-test`,
+`tray-test`) are isolated smoke-test and calibration utilities for
+individual subsystems. `sanity-test` prints gzip compression ratios for built-in
 example strings to calibrate the degenerate-output threshold.
 
 ## Releasing

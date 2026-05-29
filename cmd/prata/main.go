@@ -1,6 +1,7 @@
 // Command prata runs the full push-to-talk loop: Ctrl+Win held →
 // microphone capture; release → encode, transcribe, correct, and inject
-// the text into the foreground window. Exits on Ctrl+C in the terminal.
+// the text into the foreground window. Quit via the system-tray "Avsluta"
+// menu (or Ctrl+C when run from a terminal).
 //
 // The API key comes from the BERGET_API_KEY environment variable, or a
 // DPAPI-encrypted file written by prata-setkey (see internal/auth).
@@ -18,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/carlosriveros/prata/internal/audio"
@@ -25,10 +27,12 @@ import (
 	"github.com/carlosriveros/prata/internal/cue"
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
+	"github.com/carlosriveros/prata/internal/icon"
 	"github.com/carlosriveros/prata/internal/inject"
 	"github.com/carlosriveros/prata/internal/sanity"
 	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
+	"github.com/carlosriveros/prata/internal/tray"
 )
 
 // event is what the hook callback enqueues for the processor goroutine.
@@ -70,6 +74,10 @@ func loadDict() (*dict.Dict, error) {
 }
 
 func main() {
+	// Per-monitor DPI awareness must be set before any window or HICON is
+	// created (the tray icon below), so it renders crisp on scaled displays.
+	tray.SetProcessDPIAware()
+
 	// Refuse to start if another Prata is already running. Two instances
 	// share Ctrl+Win and would both capture and inject, producing
 	// duplicate output (or garbled output in async target apps).
@@ -125,23 +133,75 @@ func main() {
 		processEvents(client, d, events)
 	}()
 
+	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
+	// closing quit. onQuit runs on the tray's UI thread, must return fast,
+	// and must not call t.Stop() (the tray posts its own WM_QUIT) — it only
+	// nudges the shared shutdown path below. quitOnce makes repeat Avsluta
+	// clicks harmless. In production (-H windowsgui, no console) Avsluta is
+	// the only graceful quit path, since Ctrl+C is never delivered.
+	quit := make(chan struct{})
+	var quitOnce sync.Once
+	t := tray.New(icon.ICO, "Prata", func() {
+		quitOnce.Do(func() { close(quit) })
+	})
+	trayDone := make(chan error, 1)
+	go func() {
+		trayDone <- t.Run()
+	}()
+	trayAlive := true
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 
 	fmt.Fprintln(os.Stderr, "PTT ready. Hold Ctrl+Win to dictate. Ctrl+C to quit.")
 
-	select {
-	case <-sigs:
+	// shutdown is the teardown shared by Ctrl+C and tray Avsluta: stop the
+	// listener, drain the processor, then stop the tray — but only if the
+	// tray is still running, since one that failed to start has already
+	// returned (and its trayDone has been niled below).
+	shutdown := func() {
 		listener.Stop()
 		<-listenerDone
 		close(events)
 		<-processorDone
-	case err := <-listenerDone:
-		close(events)
-		<-processorDone
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "listener error: %v\n", err)
-			os.Exit(1)
+		if trayAlive {
+			t.Stop()
+			<-trayDone
+		}
+	}
+
+	for {
+		select {
+		case <-sigs:
+			shutdown()
+			return
+		case <-quit:
+			shutdown()
+			return
+		case err := <-listenerDone:
+			// Listener returned on its own; tear down the rest and exit.
+			close(events)
+			<-processorDone
+			if trayAlive {
+				t.Stop()
+				<-trayDone
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "listener error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case err := <-trayDone:
+			// Tray Run returned. A non-nil error is a fundamental setup
+			// failure; the icon is only a convenience, so log it and keep
+			// dictating — the same soft-degrade policy as the dictionary.
+			// Nil the channel so this case can't re-fire, and mark the tray
+			// dead so shutdown skips waiting on it.
+			trayAlive = false
+			trayDone = nil
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warn: tray disabled (%v)\n", err)
+			}
 		}
 	}
 }
