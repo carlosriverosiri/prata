@@ -29,3 +29,6 @@ Thumbs.db
 # Environment / secrets
 .env
 .env.*
+
+# Windows shortcuts
+*.lnk
