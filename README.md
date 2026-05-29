@@ -149,13 +149,16 @@ present).
 | `internal/hotkey/` | Global `WH_KEYBOARD_LL` hook for Ctrl+Win. |
 | `internal/inject/` | Clipboard-paste text injection with clipboard preservation. |
 | `internal/dict/` | Word-boundary correction dictionary. |
+| `internal/sanity/` | Degenerate-output guard: discards Whisper repetition loops via gzip compression ratio. |
 | `internal/auth/` | DPAPI key encryption (`crypt32.dll`). |
 | `internal/single/` | Single-instance named-mutex guard. |
 | `internal/cue/` | In-process audio cue tones (winmm `PlaySoundW`). |
 
 The `cmd/*-test/` directories (`hotkey-test`, `record-test`,
-`inject-test`, `transcribe-test`, `wav-roundtrip-test`) are isolated
-smoke-test utilities for individual subsystems.
+`inject-test`, `transcribe-test`, `wav-roundtrip-test`, `sanity-test`)
+are isolated smoke-test and calibration utilities for individual
+subsystems. `sanity-test` prints gzip compression ratios for built-in
+example strings to calibrate the degenerate-output threshold.
 
 ## Releasing
 
