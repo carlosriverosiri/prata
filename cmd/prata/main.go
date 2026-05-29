@@ -26,6 +26,7 @@ import (
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/inject"
+	"github.com/carlosriveros/prata/internal/sanity"
 	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
 )
@@ -206,6 +207,15 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 				fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
 				continue
 			}
+			// A Whisper repetition loop (common on long digit strings)
+			// would otherwise be injected verbatim into the patient
+			// journal — a safety hazard, not just noise. Discard it and
+			// log a prefix so the dropped text stays visible and the
+			// user can re-dictate.
+			if sanity.IsDegenerate(text) {
+				fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
+				continue
+			}
 			if !strings.HasSuffix(text, "\n") {
 				text += "\n"
 			}
@@ -217,4 +227,15 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 			fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())
 		}
 	}
+}
+
+// preview returns the first n runes of s for log output, appending an
+// ellipsis when truncated. Rune-based so Swedish characters (å, ä, ö) are
+// never split mid-byte in the log.
+func preview(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
 }

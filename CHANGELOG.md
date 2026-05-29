@@ -8,6 +8,27 @@ that point.
 
 ## Unreleased
 
+### Added
+
+- `internal/sanity/sanity.go` — a guard against degenerate
+  (repetition-loop) transcriptions. KB-Whisper can fall into a loop on
+  long, context-free digit strings (a dictated phone number, personal
+  number, or measurement), emitting hundreds of repeated tokens such as
+  "O A O A O A ...". The detector uses the gzip compression ratio — the
+  same signal Whisper's own pipeline uses (its
+  `compression_ratio_threshold` defaults to 2.4) — since repetitive text
+  compresses far better than natural language. `Ratio` returns
+  original/compressed length; `IsDegenerate` flags text longer than 60
+  bytes whose ratio exceeds 2.4 (the length floor avoids false positives
+  on short text, where gzip's fixed overhead makes the ratio
+  meaningless). Stdlib only.
+- `cmd/prata/main.go` — wires the guard into `processEvents`, after the
+  empty-transcription check and before injection. A degenerate result is
+  discarded rather than typed into the foreground window — a real
+  patient-safety hazard in a clinical journal, not just noise. The
+  discard logs the gzip ratio and a rune-safe prefix of the dropped text
+  so the user sees what was lost and can re-dictate.
+
 ### Changed
 
 - `internal/cue/cue.go` — lowered the audio cue amplitude from 0.18 to
