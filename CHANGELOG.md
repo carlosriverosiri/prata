@@ -6,7 +6,13 @@ Development is organised in numbered phases; the phase entries below
 record that history. Tagged releases bundle the phases completed up to
 that point.
 
-## Unreleased
+## v0.1.1 — 2026-05-29
+
+Robustness and safety release. Adds a degenerate-output guard that
+discards KB-Whisper repetition loops before they reach the foreground
+window (a real hazard on dictated number strings in a clinical
+journal), skips empty / near-empty captures and empty transcriptions,
+lowers the audio-cue volume, and adds the sanity-test calibration CLI.
 
 ### Added
 
