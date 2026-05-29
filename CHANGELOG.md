@@ -6,6 +6,32 @@ Development is organised in numbered phases; the phase entries below
 record that history. Tagged releases bundle the phases completed up to
 that point.
 
+## Unreleased
+
+### Changed
+
+- `internal/cue/cue.go` — lowered the audio cue amplitude from 0.18 to
+  0.07 of full scale, so the start/stop tones are quieter and less
+  obtrusive.
+
+### Fixed
+
+- `cmd/prata/main.go` — guard against empty / near-empty captures. An
+  accidental brief Ctrl+Win tap could capture little or no audio, yet
+  the empty WAV was still sent to Berget and blocked for the full 30s
+  HTTP timeout before failing with "context deadline exceeded". The
+  release handler now skips transcription when the captured PCM is
+  below a minimal threshold (`minCaptureBytes`, ~0.1s of audio derived
+  from the transcribe format constants), logging "no audio captured,
+  skipping" and continuing to the next event.
+- `cmd/prata/main.go` — skip injection on empty transcription. When
+  Berget returned empty or whitespace-only text (e.g. a very short
+  capture with no clear speech), the release handler still appended a
+  newline and injected a bare blank line into the foreground window.
+  It now checks the trimmed result after dict correction and, when
+  empty, logs "empty transcription, skipping" with the elapsed
+  round-trip time and continues to the next event.
+
 ## v0.1.0 — 2026-05-28
 
 First installable release. Bundles Phases 1–8: Berget transcription,

@@ -17,9 +17,9 @@ import (
 const (
 	sampleRate = 16000
 	// amplitude is the peak sample level as a fraction of full scale.
-	// Kept gentle at 0.35, well under the 0.50 ceiling we want. Raise
+	// Kept gentle at 0.07, well under the 0.50 ceiling we want. Raise
 	// toward 0.50 for louder cues, lower for quieter.
-	amplitude = 0.18
+	amplitude = 0.07
 	toneMs    = 110 // length of each cue tone
 	fadeMs    = 12  // fade in/out to avoid clicks
 )

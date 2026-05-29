@@ -39,6 +39,11 @@ const (
 	evRelease
 )
 
+// minCaptureBytes is the smallest PCM payload worth transcribing,
+// roughly 0.1s of audio. Derived from the transcribe format constants
+// so it tracks the sample rate.
+const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcribe.BitsPerSample / 8 / 10
+
 // loadDict resolves the dictionary path (PRATA_DICT_PATH env var, or
 // "dictionary-corrections.txt" next to the executable as a fallback)
 // and returns the parsed Dict. A nil return paired with a non-nil
@@ -177,6 +182,14 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 			}
 			cue.PlayStop()
 
+			// An empty / near-empty capture (e.g. an accidental brief
+			// tap) would otherwise be sent to Berget and block for the
+			// full 30s HTTP timeout before failing. Skip it instead.
+			if len(pcm) < minCaptureBytes {
+				fmt.Fprintln(os.Stderr, "no audio captured, skipping")
+				continue
+			}
+
 			fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 			start := time.Now()
 			text, err := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
@@ -186,6 +199,12 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 			}
 			if d != nil {
 				text = d.Apply(text)
+			}
+			// Empty / whitespace-only result (e.g. a short capture with
+			// no clear speech) would otherwise inject a bare newline.
+			if strings.TrimSpace(text) == "" {
+				fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
+				continue
 			}
 			if !strings.HasSuffix(text, "\n") {
 				text += "\n"
