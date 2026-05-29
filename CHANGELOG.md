@@ -28,6 +28,12 @@ that point.
   patient-safety hazard in a clinical journal, not just noise. The
   discard logs the gzip ratio and a rune-safe prefix of the dropped text
   so the user sees what was lost and can re-dictate.
+- `cmd/sanity-test` — dev-only calibration CLI for the gzip-ratio
+  threshold. Prints a formatted table of gzip ratios and IsDegenerate
+  verdicts for a fixed set of built-in example strings (natural Swedish
+  sentences, spoken digit sequences, personnummer, and synthetic
+  repetition loops), so the 2.4 threshold can be eyeballed against
+  representative dictations. Run with `go run ./cmd/sanity-test/`.
 
 ### Changed
 
