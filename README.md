@@ -8,7 +8,7 @@ KBLab's `kb-whisper-large` model.
 Prata is a lightweight background utility: no application window, just a
 single system-tray icon you can right-click to quit. It registers a global
 hotkey, captures the microphone while the keys are held, sends the audio to
-Berget, applies a correction dictionary, and pastes the result.
+Berget, applies a correction dictionary, and inserts the result.
 
 ## Features
 
@@ -19,9 +19,13 @@ Berget, applies a correction dictionary, and pastes the result.
   tone when it stops, synthesised in-process (no sound files).
 - **Correction dictionary** — word-boundary text replacements fix
   recurring Whisper errors (e.g. `adoption` → `abduktion`).
-- **Clipboard-paste injection** — reliable in Chromium/Electron apps and
-  modern Notepad; the previous clipboard content is preserved and
-  restored.
+- **Hybrid text injection** — routed on the foreground window's class.
+  Chromium/Electron apps and the web-based journal receive the text via
+  SendInput Unicode, leaving the clipboard untouched (so a copied
+  screenshot survives and dictated text stays out of Win+V / cloud
+  clipboard); every other window uses clipboard paste with the previous
+  clipboard content preserved and restored. Anything uncertain defaults to
+  clipboard paste.
 - **Encrypted API key** at rest via Windows DPAPI (per-user, per-machine).
 - **Single-instance guard** — a named mutex prevents two copies from
   double-typing.
@@ -34,7 +38,7 @@ Berget, applies a correction dictionary, and pastes the result.
 
 ```
 Ctrl+Win held ──► WASAPI capture (16 kHz mono PCM)
-release       ──► WAV encode ──► Berget AI ──► dictionary corrections ──► clipboard paste
+release       ──► WAV encode ──► Berget AI ──► dictionary corrections ──► inject (SendInput or clipboard, by class)
 ```
 
 ## Requirements
@@ -113,8 +117,9 @@ misspelling = correction
 adoption = abduktion
 ```
 
-Matching is case-sensitive with ASCII word boundaries; rules apply in
-file order. Prata looks for the file at `PRATA_DICT_PATH`, falling back
+Matching is case-sensitive with Unicode-aware word boundaries
+(`[\p{L}\p{N}_]`); rules apply in file order. Prata looks for the file at
+`PRATA_DICT_PATH`, falling back
 to `dictionary-corrections.txt` next to the executable. If it is missing
 or malformed, Prata logs a warning and runs without corrections.
 
@@ -123,7 +128,7 @@ or malformed, Prata logs a warning and runs without corrections.
 1. Start Prata (autostarts at login, or run `prata.exe`).
 2. Hold **Ctrl+Win**. You hear the start tone; speak.
 3. Release. You hear the stop tone; a moment later the transcribed text
-   is pasted into the focused window.
+   is inserted into the focused window.
 
 When run from a terminal, status messages go to stderr (`recording...`,
 `transcribing...`, injected text and latency). Press **Ctrl+C** to quit.
@@ -152,7 +157,7 @@ present).
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
 | `internal/transcribe/` | Berget AI HTTP client + PCM→WAV encoder. |
 | `internal/hotkey/` | Global `WH_KEYBOARD_LL` hook for Ctrl+Win. |
-| `internal/inject/` | Clipboard-paste text injection with clipboard preservation. |
+| `internal/inject/` | Hybrid text injection — SendInput Unicode for allowlisted (Chromium/Electron) windows, clipboard paste with preservation otherwise. |
 | `internal/dict/` | Word-boundary correction dictionary. |
 | `internal/sanity/` | Degenerate-output guard: discards Whisper repetition loops via gzip compression ratio. |
 | `internal/auth/` | DPAPI key encryption (`crypt32.dll`). |
@@ -161,11 +166,11 @@ present).
 | `internal/tray/` | System-tray icon + right-click "Avsluta" menu (P/Invoke `shell32`/`user32`). |
 | `internal/icon/` | Embedded application icon (`//go:embed Prata.ico`). |
 
-The `cmd/*-test/` directories (`hotkey-test`, `record-test`,
-`inject-test`, `transcribe-test`, `wav-roundtrip-test`, `sanity-test`,
-`tray-test`) are isolated smoke-test and calibration utilities for
-individual subsystems. `sanity-test` prints gzip compression ratios for built-in
-example strings to calibrate the degenerate-output threshold.
+The `cmd/*-test/` directories (`hotkey-test`, `f9-test`, `record-test`,
+`inject-test`, `popup-test`, `transcribe-test`, `wav-roundtrip-test`,
+`sanity-test`, `tray-test`) are isolated smoke-test and calibration utilities
+for individual subsystems. `sanity-test` prints gzip compression ratios for
+built-in example strings to calibrate the degenerate-output threshold.
 
 ## Releasing
 
@@ -188,5 +193,6 @@ cues) is direct P/Invoke against Windows DLLs via `syscall`.
 
 ## Status
 
-Personal project, Windows-only. See [`CHANGELOG.md`](CHANGELOG.md) for
-the development history.
+Personal project, Windows-only. See [`CHANGELOG.md`](CHANGELOG.md) for the
+development history and [`PRATA-DESIGN-LOG.md`](PRATA-DESIGN-LOG.md) for
+architecture decision records.
