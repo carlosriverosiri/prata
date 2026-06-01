@@ -280,7 +280,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event)
 				text += "\n"
 			}
 			elapsed := time.Since(start)
-			if err := inject.Type(text); err != nil {
+			if err := inject.TypeAuto(text); err != nil {
 				fmt.Fprintf(os.Stderr, "inject: %v\n", err)
 				continue
 			}
