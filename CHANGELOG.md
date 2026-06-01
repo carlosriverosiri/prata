@@ -80,6 +80,24 @@ that point.
   window's thread (`AttachThreadInput`), calls `SetForegroundWindow`, and
   confirms the window actually became foreground — the safety gate the
   orchestrator will use to abort paste-back on a failed focus restore.
+- F9 step C2 — the `cmd/prata` quick-fix orchestrator that wires the
+  primitives together (no device test yet). A global F9 tap grabs the
+  foreground selection (`inject.CopySelection`), splits off its leading/
+  trailing whitespace (`splitEnvelope`, rune-aware), shows the trimmed core
+  in `popup.Prompt`, and on Enter: hands the rule to the processor
+  goroutine over a channel (that goroutine owns the `*dict.Dict` and runs
+  `dict.Save` + `Reload`, so no lock is needed), restores focus to the
+  source window (`inject.RestoreForeground`, a hard gate — paste-back is
+  aborted if it fails so a correction never lands in the wrong window), and
+  pastes the correction back over the selection via `inject.TypeAuto` with
+  NO trailing newline (unlike the dictation path). An `atomic.Bool`
+  single-flight drops overlapping F9 taps, and the channel send is
+  non-blocking so the worker never blocks or leaks if the processor is busy
+  or gone. The rule persists even if paste-back is aborted; when the
+  dictionary was disabled at startup the rule is still saved but the running
+  session is not reloaded. `processEvents` is restructured from a `range`
+  loop to a `for`/`select` that keeps the existing shutdown semantics
+  (a closed `events` channel still returns).
 
 ### Changed
 

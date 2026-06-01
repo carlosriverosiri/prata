@@ -20,7 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/carlosriveros/prata/internal/audio"
 	"github.com/carlosriveros/prata/internal/auth"
@@ -29,6 +31,7 @@ import (
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/icon"
 	"github.com/carlosriveros/prata/internal/inject"
+	"github.com/carlosriveros/prata/internal/popup"
 	"github.com/carlosriveros/prata/internal/sanity"
 	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
@@ -43,6 +46,18 @@ const (
 	evPress event = iota
 	evRelease
 )
+
+// dictAdd is a correction rule captured by the F9 quick-fix flow and
+// handed to the processor goroutine, which owns the *dict.Dict and is the
+// only goroutine allowed to Save/Reload it — so no lock is needed.
+type dictAdd struct {
+	wrong, correct string
+}
+
+// f9Busy is the single-flight guard for the F9 quick-fix flow: at most one
+// grab → popup → paste-back runs at a time. A second F9 tap while one is in
+// flight is dropped.
+var f9Busy atomic.Bool
 
 // minCaptureBytes is the smallest PCM payload worth transcribing,
 // roughly 0.1s of audio. Derived from the transcribe format constants
@@ -117,6 +132,27 @@ func main() {
 		func() { events <- evRelease },
 	)
 
+	// F9 quick-fix: grab the foreground selection, let the user correct it
+	// in a popup, persist the rule, and paste the correction back. The dict
+	// save+reload is handed over dictAdds to the processor goroutine, which
+	// owns d. SetOnF9 must run before listener.Run for the same
+	// happens-before guarantee the press/release callbacks rely on.
+	dictAdds := make(chan dictAdd, 1)
+	listener.SetOnF9(func() {
+		// Hook thread: must return within ~300 ms. Do only the cheap,
+		// time-critical work (grab the foreground HWND before focus
+		// changes) and hand the rest to a goroutine.
+		if !f9Busy.CompareAndSwap(false, true) {
+			return // a quick-fix is already in flight; drop this tap
+		}
+		sourceHwnd, ok := inject.ForegroundWindow()
+		if !ok {
+			f9Busy.Store(false)
+			return
+		}
+		go f9Worker(sourceHwnd, dictAdds)
+	})
+
 	// Listener goroutine: pins itself to its OS thread and runs the
 	// Windows message loop until Stop is called.
 	listenerDone := make(chan error, 1)
@@ -130,7 +166,7 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(client, d, events)
+		processEvents(client, d, events, dictAdds)
 	}()
 
 	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
@@ -213,78 +249,103 @@ func main() {
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
 // trivial and protects against future hook-state regressions.
-func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event) {
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd) {
 	var session *audio.Session
 
-	for ev := range events {
-		switch ev {
-		case evPress:
-			if session != nil {
-				continue
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return // shutdown: close(events) ends the loop, as the range did
 			}
-			s, err := audio.Start()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "audio start: %v\n", err)
-				continue
-			}
-			session = s
-			cue.PlayStart()
-			fmt.Fprintln(os.Stderr, "recording...")
+			switch ev {
+			case evPress:
+				if session != nil {
+					continue
+				}
+				s, err := audio.Start()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "audio start: %v\n", err)
+					continue
+				}
+				session = s
+				cue.PlayStart()
+				fmt.Fprintln(os.Stderr, "recording...")
 
-		case evRelease:
-			if session == nil {
-				continue
-			}
-			pcm, err := session.Stop()
-			session = nil
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "audio stop: %v\n", err)
-				continue
-			}
-			cue.PlayStop()
+			case evRelease:
+				if session == nil {
+					continue
+				}
+				pcm, err := session.Stop()
+				session = nil
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "audio stop: %v\n", err)
+					continue
+				}
+				cue.PlayStop()
 
-			// An empty / near-empty capture (e.g. an accidental brief
-			// tap) would otherwise be sent to Berget and block for the
-			// full 30s HTTP timeout before failing. Skip it instead.
-			if len(pcm) < minCaptureBytes {
-				fmt.Fprintln(os.Stderr, "no audio captured, skipping")
-				continue
-			}
+				// An empty / near-empty capture (e.g. an accidental brief
+				// tap) would otherwise be sent to Berget and block for the
+				// full 30s HTTP timeout before failing. Skip it instead.
+				if len(pcm) < minCaptureBytes {
+					fmt.Fprintln(os.Stderr, "no audio captured, skipping")
+					continue
+				}
 
-			fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
-			start := time.Now()
-			text, err := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
+				fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
+				start := time.Now()
+				text, err := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
+					continue
+				}
+				if d != nil {
+					text = d.Apply(text)
+				}
+				// Empty / whitespace-only result (e.g. a short capture with
+				// no clear speech) would otherwise inject a bare newline.
+				if strings.TrimSpace(text) == "" {
+					fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
+					continue
+				}
+				// A Whisper repetition loop (common on long digit strings)
+				// would otherwise be injected verbatim into the patient
+				// journal — a safety hazard, not just noise. Discard it and
+				// log a prefix so the dropped text stays visible and the
+				// user can re-dictate.
+				if sanity.IsDegenerate(text) {
+					fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
+					continue
+				}
+				if !strings.HasSuffix(text, "\n") {
+					text += "\n"
+				}
+				elapsed := time.Since(start)
+				if err := inject.TypeAuto(text); err != nil {
+					fmt.Fprintf(os.Stderr, "inject: %v\n", err)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())
+			}
+		case da := <-dictAdds:
+			// Only this goroutine touches d, so Save+Reload need no lock.
+			// dict.Save persists the rule even when d is nil (corrections
+			// disabled at startup); reload the running dict only if there
+			// is one.
+			saved, err := dict.Save(da.wrong, da.correct)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
-				continue
+				fmt.Fprintf(os.Stderr, "dict save: %v\n", err)
 			}
-			if d != nil {
-				text = d.Apply(text)
+			switch {
+			case saved && d != nil:
+				if rerr := d.Reload(); rerr != nil {
+					fmt.Fprintf(os.Stderr, "dict reload: %v\n", rerr)
+				} else {
+					fmt.Fprintf(os.Stderr, "dict rule saved: %q = %q\n", da.wrong, da.correct)
+				}
+			case saved:
+				fmt.Fprintf(os.Stderr, "dict rule saved (corrections disabled until restart): %q = %q\n", da.wrong, da.correct)
 			}
-			// Empty / whitespace-only result (e.g. a short capture with
-			// no clear speech) would otherwise inject a bare newline.
-			if strings.TrimSpace(text) == "" {
-				fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
-				continue
-			}
-			// A Whisper repetition loop (common on long digit strings)
-			// would otherwise be injected verbatim into the patient
-			// journal — a safety hazard, not just noise. Discard it and
-			// log a prefix so the dropped text stays visible and the
-			// user can re-dictate.
-			if sanity.IsDegenerate(text) {
-				fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
-				continue
-			}
-			if !strings.HasSuffix(text, "\n") {
-				text += "\n"
-			}
-			elapsed := time.Since(start)
-			if err := inject.TypeAuto(text); err != nil {
-				fmt.Fprintf(os.Stderr, "inject: %v\n", err)
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())
 		}
 	}
 }
@@ -298,4 +359,79 @@ func preview(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "..."
+}
+
+// f9Worker runs the F9 quick-fix flow off the hook thread: grab the
+// foreground selection, let the user correct it in a popup, hand the rule
+// to the processor goroutine for save+reload, restore focus to the source
+// window, and paste the corrected text back over the selection. It always
+// clears the single-flight guard on return.
+func f9Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
+	defer f9Busy.Store(false)
+
+	sel, ok, err := inject.CopySelection()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "f9 copy selection: %v\n", err)
+		return
+	}
+	if !ok {
+		return // nothing selected; clipboard already restored by CopySelection
+	}
+
+	leading, core, trailing := splitEnvelope(sel)
+	if core == "" {
+		return // selection was empty or all whitespace
+	}
+
+	edited, ok, err := popup.Prompt(core)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "f9 popup: %v\n", err)
+		return
+	}
+	if !ok {
+		return // Esc / clicked away: no save, no paste-back
+	}
+	edited = strings.TrimSpace(edited)
+	if edited == "" || edited == core {
+		// No-op: never delete the selected word, and skip re-injecting
+		// unchanged text. This guard gates PASTE-BACK and is NOT redundant
+		// with dict.Save's own identity filter — do not remove it.
+		return
+	}
+
+	// Hand the rule to the processor goroutine (it owns d). Non-blocking, so
+	// the worker never blocks or leaks if the processor is busy or has
+	// already exited at shutdown. Sent before the foreground gate so the
+	// rule persists even if paste-back is aborted.
+	select {
+	case dictAdds <- dictAdd{wrong: core, correct: edited}:
+	default:
+		fmt.Fprintln(os.Stderr, "dict rule dropped (processor busy)")
+	}
+
+	// Foreground gate: only paste once the source window is confirmed
+	// foreground again, so a correction never lands in the wrong window.
+	ok, err = inject.RestoreForeground(sourceHwnd)
+	if err != nil || !ok {
+		fmt.Fprintf(os.Stderr, "f9 restore foreground failed (ok=%v): %v\n", ok, err)
+		return
+	}
+
+	// Paste-back over the still-selected word. No trailing newline (unlike
+	// the dictation path) — this replaces an inline selection.
+	if err := inject.TypeAuto(leading + edited + trailing); err != nil {
+		fmt.Fprintf(os.Stderr, "f9 paste-back: %v\n", err)
+	}
+}
+
+// splitEnvelope splits s into its leading whitespace run, the trimmed core,
+// and its trailing whitespace run, so the F9 flow can show/save the core
+// while reapplying the exact surrounding whitespace on paste-back. Splits
+// are byte-offset-exact and rune-aware via unicode.IsSpace.
+func splitEnvelope(s string) (leading, core, trailing string) {
+	rest := strings.TrimLeftFunc(s, unicode.IsSpace)
+	leading = s[:len(s)-len(rest)]
+	core = strings.TrimRightFunc(rest, unicode.IsSpace)
+	trailing = rest[len(core):]
+	return leading, core, trailing
 }
