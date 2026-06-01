@@ -1,12 +1,12 @@
 // Package hotkey provides a global low-level keyboard hook on Windows
-// for detecting the Ctrl+Win combination press and release.
+// for detecting the Ctrl+Win combination (press and release) and F9 taps.
 //
 // Implementation: Win32 WH_KEYBOARD_LL hook installed on the OS thread
 // that calls Run. The hook callback runs on that same thread, so any
-// caller-provided callbacks (onPress, onRelease) MUST return quickly —
-// Windows' default LowLevelHooksTimeout is 300 ms and the system will
-// silently uninstall the hook if a callback exceeds it. Spawn goroutines
-// for any non-trivial work.
+// caller-provided callbacks (onPress, onRelease, onF9) MUST return
+// quickly — Windows' default LowLevelHooksTimeout is 300 ms and the
+// system will silently uninstall the hook if a callback exceeds it.
+// Spawn goroutines for any non-trivial work.
 package hotkey
 
 import (
@@ -33,6 +33,7 @@ const (
 	vkRControl = 0xA3
 	vkLWin     = 0x5B
 	vkRWin     = 0x5C
+	vkF9       = 0x78
 )
 
 // KBDLLHOOKSTRUCT from winuser.h. lParam points to one of these inside
@@ -80,6 +81,7 @@ var (
 type Listener struct {
 	onPress   func()
 	onRelease func()
+	onF9      func()
 
 	threadID  atomic.Uint32
 	started   chan struct{}
@@ -89,6 +91,7 @@ type Listener struct {
 	ctrlDown bool
 	winDown  bool
 	bothDown bool
+	f9Down   bool
 }
 
 // NewListener returns a Listener that fires onPress when both Ctrl and
@@ -101,6 +104,21 @@ func NewListener(onPress, onRelease func()) *Listener {
 		onRelease: onRelease,
 		started:   make(chan struct{}),
 	}
+}
+
+// SetOnF9 registers a callback that fires once per F9 tap, on the F9
+// key-up transition. While a callback is registered, both the F9 key-down
+// and key-up are swallowed so the foreground app never sees the key; a
+// Listener with no F9 handler leaves F9 untouched.
+//
+// SetOnF9 MUST be called before Run. The field is read on the hook thread
+// without synchronization, so setting it before the goroutine that calls
+// Run is started gives the same happens-before guarantee that NewListener
+// relies on for onPress/onRelease. Like those, onF9 runs on the hook
+// thread and must return within ~300 ms, so spawn a goroutine for any
+// real work.
+func (l *Listener) SetOnF9(cb func()) {
+	l.onF9 = cb
 }
 
 // Run installs the keyboard hook on the current OS thread, pumps the
@@ -154,13 +172,39 @@ func (l *Listener) hookProc(nCode uintptr, wParam uintptr, lParam uintptr) uintp
 		// unsafeptr check, which forbids direct uintptr→unsafe.Pointer.
 		ptr := *(*unsafe.Pointer)(unsafe.Pointer(&lParam))
 		kbd := (*kbdLLHookStruct)(ptr)
-		l.handleKey(uint32(wParam), kbd.VkCode)
+		if l.handleKey(uint32(wParam), kbd.VkCode) {
+			// Returning nonzero without chaining to the next hook
+			// swallows the event so it never reaches the foreground app.
+			return 1
+		}
 	}
 	ret, _, _ := procCallNextHook.Call(0, nCode, wParam, lParam)
 	return ret
 }
 
-func (l *Listener) handleKey(msgType, vk uint32) {
+// handleKey updates key state and fires callbacks. It returns true when
+// the event should be swallowed instead of passed to the foreground app,
+// which happens only for F9 while an onF9 callback is registered.
+func (l *Listener) handleKey(msgType, vk uint32) bool {
+	if vk == vkF9 {
+		if l.onF9 == nil {
+			return false // no handler: leave F9 untouched for the app
+		}
+		switch msgType {
+		case wmKeyDown, wmSysKeyDown:
+			l.f9Down = true
+		case wmKeyUp, wmSysKeyUp:
+			// Fire on the key-up transition so F9 is no longer physically
+			// held when the callback later synthesizes input. The f9Down
+			// guard collapses auto-repeat into one fire per tap.
+			if l.f9Down {
+				l.f9Down = false
+				l.onF9()
+			}
+		}
+		return true // swallow both down and up
+	}
+
 	switch msgType {
 	case wmKeyDown, wmSysKeyDown:
 		switch vk {
@@ -191,4 +235,5 @@ func (l *Listener) handleKey(msgType, vk uint32) {
 			l.onRelease()
 		}
 	}
+	return false
 }
