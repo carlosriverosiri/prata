@@ -10,8 +10,8 @@
 #   - Rader som börjar med # ignoreras (kommentar)
 #   - Tomma rader ignoreras
 #   - Case-sensitive matchning
-#   - Word-boundary matchning (inte substring)
-#   - Duplicerad felstavning: den senaste raden vinner
+#   - Word-boundary-matchning, Unicode-medveten: å/ä/ö räknas som bokstäver (inte substring)
+#   - Duplicerad felstavning: första förekomsten vinner (rättningar ersätter raden på plats, så dubbletter undviks)
 #
 # EXEMPEL:
 #   glenhumeral = glenohumerala
