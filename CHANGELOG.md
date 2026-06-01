@@ -6,6 +6,96 @@ Development is organised in numbered phases; the phase entries below
 record that history. Tagged releases bundle the phases completed up to
 that point.
 
+## [Unreleased]
+
+### Added
+
+- `internal/hotkey/listener.go` — F9 support in the low-level keyboard
+  hook: `SetOnF9` registers a callback that fires once per tap on the F9
+  key-up transition (tracked via an `f9Down` flag, so no key is held when
+  the callback later synthesizes input). Both the F9 key-down and key-up
+  are swallowed so F9 never reaches the foreground app — but only when an
+  `onF9` callback is registered; otherwise F9 passes through untouched.
+  The Ctrl+Win push-to-talk combo is unchanged.
+- `internal/inject/inject.go` — `CopySelection` grabs the foreground
+  window's current selection by synthesizing Ctrl+C and reading the
+  clipboard, and is clipboard-neutral: it saves the prior clipboard,
+  clears it, copies, settles, reads the selection, then restores the
+  prior contents. Clearing first makes "empty after copy" reliably mean
+  "nothing was selected". The paste chord helper was generalized to
+  `sendChord(vk)` so Ctrl+C reuses it.
+- `internal/popup/popup.go` — `Prompt(initial)` shows a small modal
+  text-input popup for quick edits: borderless, always-on-top, positioned
+  at the cursor, pre-filled with `initial` (select-all), returning the
+  edited text on Enter and cancelling on Esc / click-away / close.
+  DPI-aware (per-monitor font scaling via `GetDpiForMonitor` +
+  `CreateFontW`). Direct Win32 P/Invoke, stdlib only.
+- `cmd/f9-test` — isolated harness wiring the F9 hotkey to `CopySelection`
+  and printing the grabbed selection (or "no selection") to stderr.
+- `internal/inject/inject.go` — experimental `TypeUnicode`, a clipboard-free
+  alternative to `Type`. It synthesizes the whole string as Unicode
+  character input (`KEYEVENTF_UNICODE`) and sends it in a *single*
+  `SendInput` call; newlines become `Shift+Enter` soft breaks (never a bare
+  Enter, which would send the message in chat apps). The single batched
+  call is the deliberate difference from the per-rune Phase 4 attempt, which
+  autorepeated characters in Electron/Chromium and modern Notepad — the same
+  atomic approach the Diktell Rust app uses via enigo. The production
+  dictation path (`Type`, clipboard + Ctrl+V) is unchanged. Evaluation of
+  clipboard-free injection, parallel to Diktell's ADR 2026-05-24.
+- `cmd/inject-test` — `-mode` flag selecting `clipboard` (default,
+  `inject.Type`, the existing behavior) or `unicode` (`inject.TypeUnicode`).
+  A `-nl` flag (default off) replaces literal `\n` in the argument with a
+  real newline before injection, for testing line breaks where the shell
+  does not interpret the escape.
+- `internal/inject/inject.go` — `ForegroundWindowClass` helper
+  (`GetForegroundWindow` + `GetClassNameW`) reporting the foreground
+  window's class, and `cmd/inject-test` now logs that class before
+  injecting — diagnostics ahead of class-based injection routing. The
+  package doc comment now describes both injection paths (clipboard paste
+  and SendInput Unicode).
+- `internal/inject/inject.go` — class-based injection routing: a hardcoded
+  allowlist (`sendInputSafeClasses`) of SendInput-verified window classes,
+  `IsSendInputSafeClass`, and `TypeAuto`, which routes to `TypeUnicode`
+  (SendInput) for allowlisted foreground classes and to `Type` (clipboard
+  paste) for everything else. `cmd/inject-test` gains `-mode auto`
+  (`inject.TypeAuto`) and logs the chosen route in that mode.
+- `internal/dict/dict.go` — `Save(wrong, correct)` writes a correction
+  rule to the dictionary file (same location as loading: `PRATA_DICT_PATH`,
+  else `dictionary-corrections.txt` next to the executable), and a `Reload`
+  method re-reads the file into a running `Dict`. `Save` trims both fields
+  and writes nothing — `(false, nil)` — for an empty field or an identity
+  rule (`wrong == correct`). It deduplicates on write by replacing an
+  existing key's line in place (matching is first-match-wins, so a trailing
+  duplicate would be dead) and otherwise appends, preserving comments,
+  blank lines, and unrelated rules verbatim; a missing file is created.
+  `Load`/`Apply` and their `cmd/prata` caller are unchanged. Stdlib only.
+
+### Changed
+
+- Dictation now routes on the foreground window's class.
+  `Chrome_WidgetWin_1` — the whole Chromium/Electron family plus the
+  verified web-based journal system, which reports the same class — goes via
+  SendInput (`TypeUnicode`): the clipboard is left untouched and the dictated
+  text never enters Win+V / cloud-clipboard history. All other windows keep
+  clipboard paste (`Type`); an unknown or unreadable foreground window
+  defaults to clipboard paste (the safe default). `TypeAuto` deliberately
+  does NOT fall back to clipboard paste if SendInput fails — SendInput may
+  already have sent characters, so a paste would double-inject (a hazard in a
+  patient journal). Modern Notepad (class `Notepad`) is intentionally
+  excluded: SendInput fails there on realistic, multi-line text (a short
+  test can hide the failure).
+- `dictionary-corrections.txt` — corrected the misleading header note that
+  claimed a duplicated misspelling lets "the latest line win". Matching is
+  first-match-wins and `dict.Save` deduplicates in place, so the first
+  occurrence wins; the header now states this.
+- `internal/dict` — word-boundary matching is now Unicode-aware (a word
+  character is `[\p{L}\p{N}_]`) instead of Go's ASCII `\b`. This fixes
+  prior under-matching (a key starting or ending in å/ä/ö never matched)
+  and over-matching (e.g. "sken" inside "påsken"); existing rules whose
+  keys touch non-ASCII letter boundaries may now behave differently — by
+  design, this is the fix. Matching no longer uses `regexp` (literal scan
+  plus a rune-aware boundary check) and replacements are inserted verbatim.
+
 ## Phase 9 — 2026-05-29
 
 System tray. Prata now puts a small red icon in the notification area with
