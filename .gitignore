@@ -21,6 +21,7 @@ prata-tests.wav
 .vscode/
 .idea/
 .cursor/
+prata.code-workspace
 
 # OS junk
 .DS_Store
