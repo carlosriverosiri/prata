@@ -34,6 +34,12 @@ const (
 	vkLWin     = 0x5B
 	vkRWin     = 0x5C
 	vkF9       = 0x78
+
+	// llkhfInjected (LLKHF_INJECTED) marks events synthesized by SendInput,
+	// e.g. our own Ctrl+C / Ctrl+V / Unicode input from internal/inject. The
+	// hook passes these through untouched so they reach the target app but
+	// are never interpreted as user input by our state machine.
+	llkhfInjected = 0x10
 )
 
 // KBDLLHOOKSTRUCT from winuser.h. lParam points to one of these inside
@@ -172,6 +178,13 @@ func (l *Listener) hookProc(nCode uintptr, wParam uintptr, lParam uintptr) uintp
 		// unsafeptr check, which forbids direct uintptr→unsafe.Pointer.
 		ptr := *(*unsafe.Pointer)(unsafe.Pointer(&lParam))
 		kbd := (*kbdLLHookStruct)(ptr)
+		// Pass injected events straight through, before any Ctrl+Win or F9
+		// logic: our own synthesized input (Ctrl+C/Ctrl+V/Unicode) must
+		// reach the target app but must never be read as a hotkey here.
+		if kbd.Flags&llkhfInjected != 0 {
+			ret, _, _ := procCallNextHook.Call(0, nCode, wParam, lParam)
+			return ret
+		}
 		if l.handleKey(uint32(wParam), kbd.VkCode) {
 			// Returning nonzero without chaining to the next hook
 			// swallows the event so it never reaches the foreground app.

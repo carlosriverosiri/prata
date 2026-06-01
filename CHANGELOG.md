@@ -69,6 +69,17 @@ that point.
   duplicate would be dead) and otherwise appends, preserving comments,
   blank lines, and unrelated rules verbatim; a missing file is created.
   `Load`/`Apply` and their `cmd/prata` caller are unchanged. Stdlib only.
+- F9 step C1 — primitives ahead of the quick-fix orchestrator (no
+  orchestrator yet). `internal/hotkey` now passes injected events through
+  the low-level hook: when `LLKHF_INJECTED` is set the event goes straight
+  to `CallNextHookEx` before any Ctrl+Win or F9 logic, so our own
+  synthesized Ctrl+C / Ctrl+V / Unicode input reaches the target app but is
+  never read as a hotkey. `internal/inject` exposes `ForegroundWindow` (the
+  foreground HWND; `ForegroundWindowClass` now goes through it, unchanged
+  behavior) and `RestoreForeground`, which reattaches input to the target
+  window's thread (`AttachThreadInput`), calls `SetForegroundWindow`, and
+  confirms the window actually became foreground — the safety gate the
+  orchestrator will use to abort paste-back on a failed focus restore.
 
 ### Changed
 

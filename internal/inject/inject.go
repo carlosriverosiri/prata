@@ -32,6 +32,11 @@ const (
 	gmemZeroInit     = 0x0040
 	interEventDelay  = 2 * time.Millisecond
 	pasteSettleDelay = 50 * time.Millisecond
+
+	// focusSettle is how long RestoreForeground waits after
+	// SetForegroundWindow before confirming the window actually became
+	// foreground. Tuned conservatively; revisit during device testing.
+	focusSettle = 30 * time.Millisecond
 )
 
 // KEYBDINPUT from winuser.h. Go inserts padding between Time and
@@ -60,6 +65,9 @@ var (
 
 	procSendInput                  = user32.NewProc("SendInput")
 	procGetForegroundWindow        = user32.NewProc("GetForegroundWindow")
+	procSetForegroundWindow        = user32.NewProc("SetForegroundWindow")
+	procGetWindowThreadProcessId   = user32.NewProc("GetWindowThreadProcessId")
+	procAttachThreadInput          = user32.NewProc("AttachThreadInput")
 	procGetClassNameW              = user32.NewProc("GetClassNameW")
 	procOpenClipboard              = user32.NewProc("OpenClipboard")
 	procCloseClipboard             = user32.NewProc("CloseClipboard")
@@ -73,6 +81,7 @@ var (
 	procGlobalFree                 = kernel32.NewProc("GlobalFree")
 	procGlobalSize                 = kernel32.NewProc("GlobalSize")
 	procRtlMoveMemory              = kernel32.NewProc("RtlMoveMemory")
+	procGetCurrentThreadId         = kernel32.NewProc("GetCurrentThreadId")
 )
 
 // Type sends text to the foreground window via clipboard paste. Direct
@@ -428,14 +437,24 @@ func makeUnicodeInput(codeUnit uint16, keyUp bool) input {
 	}
 }
 
+// ForegroundWindow returns the current foreground window's handle and
+// true, or (0, false) when there is no foreground window.
+func ForegroundWindow() (uintptr, bool) {
+	hwnd, _, _ := procGetForegroundWindow.Call()
+	if hwnd == 0 {
+		return 0, false
+	}
+	return hwnd, true
+}
+
 // ForegroundWindowClass returns the window-class name of the current
 // foreground window and true, or ("", false) when there is no foreground
 // window or its class cannot be read. It is the basis for class-based
 // injection routing: a caller can pick SendInput (TypeUnicode) for
 // verified-safe classes and otherwise fall back to clipboard paste (Type).
 func ForegroundWindowClass() (string, bool) {
-	hwnd, _, _ := procGetForegroundWindow.Call()
-	if hwnd == 0 {
+	hwnd, ok := ForegroundWindow()
+	if !ok {
 		return "", false
 	}
 	var buf [256]uint16
@@ -448,4 +467,46 @@ func ForegroundWindowClass() (string, bool) {
 		return "", false
 	}
 	return syscall.UTF16ToString(buf[:ret]), true
+}
+
+// RestoreForeground brings hwnd back to the foreground and reports whether
+// it actually became the foreground window. SetForegroundWindow will not
+// steal focus across processes unless the calling thread shares an input
+// queue with the target, so this attaches to the target window's thread
+// (AttachThreadInput) for the duration of the call. It pins its OS thread
+// because AttachThreadInput and SetForegroundWindow are thread-affine.
+//
+// The bool return is a safety gate, not a courtesy: an orchestrator (the
+// F9 quick-fix flow) MUST abort paste-back when it is false, so a
+// correction is never injected into the wrong window after a failed focus
+// restore. A non-nil error means the restore could not even be attempted.
+func RestoreForeground(hwnd uintptr) (bool, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if hwnd == 0 {
+		return false, fmt.Errorf("RestoreForeground: nil window")
+	}
+
+	targetTID, _, _ := procGetWindowThreadProcessId.Call(hwnd, 0)
+	if targetTID == 0 {
+		return false, fmt.Errorf("GetWindowThreadProcessId: no thread for window")
+	}
+	currentTID, _, _ := procGetCurrentThreadId.Call()
+
+	// Self-focus edge: if we already own the target's input thread there is
+	// nothing to attach, and AttachThreadInput to self would fail.
+	if targetTID != currentTID {
+		ret, _, sysErr := procAttachThreadInput.Call(currentTID, targetTID, 1)
+		if ret == 0 {
+			return false, fmt.Errorf("AttachThreadInput attach: %v", sysErr)
+		}
+		defer procAttachThreadInput.Call(currentTID, targetTID, 0)
+	}
+
+	procSetForegroundWindow.Call(hwnd)
+	time.Sleep(focusSettle)
+
+	front, _ := ForegroundWindow()
+	return front == hwnd, nil
 }
