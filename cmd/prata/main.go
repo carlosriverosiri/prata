@@ -1,4 +1,4 @@
-// Command prata runs the full push-to-talk loop: Ctrl+Win held →
+// Command prata runs the full push-to-talk loop: F1 held →
 // microphone capture; release → encode, transcribe, correct, and inject
 // the text into the foreground window. Quit via the system-tray "Avsluta"
 // menu (or Ctrl+C when run from a terminal).
@@ -38,7 +38,7 @@ import (
 	"github.com/carlosriveros/prata/internal/tray"
 )
 
-// event is what the hook callback enqueues for the processor goroutine.
+// event is what the listener enqueues for the processor goroutine.
 // Using a typed enum keeps the channel small and self-documenting.
 type event int
 
@@ -94,7 +94,7 @@ func main() {
 	tray.SetProcessDPIAware()
 
 	// Refuse to start if another Prata is already running. Two instances
-	// share Ctrl+Win and would both capture and inject, producing
+	// share F1 and would both capture and inject, producing
 	// duplicate output (or garbled output in async target apps).
 	if !single.Acquire("PrataSingleInstanceMutex") {
 		fmt.Fprintln(os.Stderr, "Prata is already running; exiting.")
@@ -123,8 +123,8 @@ func main() {
 
 	client := transcribe.NewClient(apiKey)
 
-	// Buffered so the hook callback (which has a 300 ms Windows timeout)
-	// never blocks. Size 4 covers any realistic press/release burst.
+	// Buffered so the listener's message-loop goroutine never blocks.
+	// Size 4 covers any realistic press/release burst.
 	events := make(chan event, 4)
 
 	listener := hotkey.NewListener(
@@ -139,9 +139,10 @@ func main() {
 	// happens-before guarantee the press/release callbacks rely on.
 	dictAdds := make(chan dictAdd, 1)
 	listener.SetOnF9(func() {
-		// Hook thread: must return within ~300 ms. Do only the cheap,
-		// time-critical work (grab the foreground HWND before focus
-		// changes) and hand the rest to a goroutine.
+		// Listener goroutine: must return quickly to keep the message
+		// loop responsive. Do only the cheap, time-critical work (grab
+		// the foreground HWND before focus changes) and hand the rest
+		// to a goroutine.
 		if !f9Busy.CompareAndSwap(false, true) {
 			return // a quick-fix is already in flight; drop this tap
 		}
@@ -189,7 +190,7 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 
-	fmt.Fprintln(os.Stderr, "PTT ready. Hold Ctrl+Win to dictate. Ctrl+C to quit.")
+	fmt.Fprintln(os.Stderr, "PTT ready. Hold F1 to dictate. Ctrl+C to quit.")
 
 	// shutdown is the teardown shared by Ctrl+C and tray Avsluta: stop the
 	// listener, drain the processor, then stop the tray — but only if the
@@ -248,7 +249,7 @@ func main() {
 // Defensive: ignores duplicate press while already recording, and
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
-// trivial and protects against future hook-state regressions.
+// trivial and protects against future listener-state regressions.
 func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd) {
 	var session *audio.Session
 
@@ -361,7 +362,7 @@ func preview(s string, n int) string {
 	return string(r[:n]) + "..."
 }
 
-// f9Worker runs the F9 quick-fix flow off the hook thread: grab the
+// f9Worker runs the F9 quick-fix flow off the listener goroutine: grab the
 // foreground selection, let the user correct it in a popup, hand the rule
 // to the processor goroutine for save+reload, restore focus to the source
 // window, and paste the corrected text back over the selection. It always

@@ -163,3 +163,81 @@ dokumenteras i CHANGELOG._
 - Macport för fruns predikningar (kb-whisper-medium-q5_0 på M2)
 - Linux-port om Carlos slutligen flyttar till Unix
 - Eliminera audio feedback om Carlos finner den onödig efter användning
+
+
+### 2026-06-09: PTT moves from Ctrl+Win (WH_KEYBOARD_LL hook) to F1-hold (RegisterHotKey + reconciliation loop)
+
+**Context:**
+
+Prata's `internal/hotkey` was ported conceptually from Diktell: a custom
+`WH_KEYBOARD_LL` hook detecting modifier-only Ctrl+Win, with selective Win
+suppression and injected-event filtering. The hook approach carries a
+documented failure class from six months of Diktell operation: silent
+uninstallation when the callback exceeds Windows' ~300 ms
+LowLevelHooksTimeout, invalidation across sleep/resume cycles, and AV/EDR
+suspicion (keyboard hooks pattern-match keyloggers — relevant on managed
+office machines, Prata's primary deployment target). Diktell absorbed this
+class with a watchdog thread, generation counters, and recovery machinery;
+Prata has none of that safety net.
+
+Separately, distinct PTT gestures let both apps run in parallel on the
+development machine: F1 for Prata, Ctrl+Win for Diktell — direct A/B
+benchmarking of the two pipelines on the same dictation.
+
+A Diktell observation from April 2026 (ADR 2026-04-21) — bare F-keys via
+RegisterHotKey reaching the focused app anyway — argued against this design.
+Kanary-tested 2026-06-09 with direct Win32 calls in Go (`cmd/regkey-test`):
+WM_HOTKEY is delivered, MOD_NOREPEAT suppresses repeats, 20 ms
+GetAsyncKeyState polling detects release with ms precision, and the focused
+app (Notepad, browser) never sees F1/F9. Conclusion: the April observation
+was a crate-level (`global-hotkey`) artifact, not an API property.
+
+**Alternatives considered:**
+
+- **Keep Ctrl+Win via WH_KEYBOARD_LL (status quo):** identical muscle memory
+  to Diktell, zero migration cost. Rejected: inherits the hook failure class
+  without Diktell's recovery machinery; porting that machinery contradicts
+  Prata's simplification goal; AV/EDR risk on managed office machines;
+  blocks parallel A/B with Diktell.
+- **Ctrl+Win+Space via RegisterHotKey (MOD_CONTROL | MOD_WIN + VK_SPACE):**
+  hook-free, preserves the modifier feel. Rejected for ergonomics (see
+  Diktell ADR 2026-04-22) — kept as documented fallback if F1 proves
+  Fn-layered on a mini-PC keyboard.
+- **F1-hold via RegisterHotKey + reconciliation loop.** Chosen.
+
+**Decision:**
+
+`internal/hotkey` is rewritten around RegisterHotKey: id 1 = VK_F1
+(MOD_NOREPEAT) for PTT, id 2 = VK_F9 (MOD_NOREPEAT) for the dictionary
+quick-fix. Press = WM_HOTKEY on the registering thread's message queue;
+release = 20 ms GetAsyncKeyState polling, started on press, terminated on
+release (zero idle cost). The public Listener interface (`NewListener`,
+`SetOnF9`, `Run`, `Stop`) is unchanged — `cmd/prata/main.go` is untouched
+except user-facing strings. The PTT key is a single const; an env-var
+override is deferred until a real Fn-layer problem appears.
+
+**Consequences:**
+
+- The WH_KEYBOARD_LL failure class (silent unhook, sleep/resume
+  invalidation, AV signature) leaves the codebase entirely; no watchdog
+  will ever be needed.
+- The 300 ms callback constraint disappears — callbacks still return fast
+  to keep the message loop responsive, but there is no OS-enforced death
+  penalty.
+- The Ctrl/Win state machine, Win suppression, and LLKHF_INJECTED filtering
+  are deleted — RegisterHotKey cannot self-trigger from Prata's own
+  SendInput (Ctrl+C/Ctrl+V/VK_PACKET never match F1/F9).
+- F1's native function (Help) is consumed system-wide while Prata runs;
+  restored on exit. Accepted.
+- Prata and Diktell can run simultaneously for A/B benchmarking.
+- Different gestures per app/machine — the machine context is itself
+  the cue.
+- Mini-PC confirmation pending (Fn layer, EDR) with the same
+  `regkey-test.exe`; non-blocking, fallback documented above.
+
+  - F9 coexistence with Diktell on the development machine: Diktell's
+  WH_KEYBOARD_LL hook consumes F9 before RegisterHotKey matching, so while
+  both apps run, F9 deterministically opens Diktell's dictionary popup and
+  Prata's quick-fix never fires. Accepted — Prata's F9 is effectively
+  office-scoped. Optional refinement: point PRATA_DICT_PATH at Diktell's
+  dictionary file on that machine so both apps share one rule set there.

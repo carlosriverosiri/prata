@@ -1,6 +1,6 @@
 # Prata
 
-Push-to-talk Swedish dictation for Windows. Hold **Ctrl+Win**, speak,
+Push-to-talk Swedish dictation for Windows. Hold **F1**, speak,
 release — your speech is transcribed and typed into whatever window has
 focus. Transcription runs on [Berget AI](https://berget.ai) using
 KBLab's `kb-whisper-large` model.
@@ -12,8 +12,8 @@ Berget, applies a correction dictionary, and inserts the result.
 
 ## Features
 
-- **Push-to-talk** via a global Ctrl+Win keyboard hook — works in any
-  foreground application.
+- **Push-to-talk** via a global F1 hotkey (`RegisterHotKey`) — works in
+  any foreground application.
 - **Swedish transcription** through Berget AI (`KBLab/kb-whisper-large`).
 - **Gentle audio cues** — a higher tone when recording starts, a lower
   tone when it stops, synthesised in-process (no sound files).
@@ -37,8 +37,8 @@ Berget, applies a correction dictionary, and inserts the result.
 ## How it works
 
 ```
-Ctrl+Win held ──► WASAPI capture (16 kHz mono PCM)
-release       ──► WAV encode ──► Berget AI ──► dictionary corrections ──► inject (SendInput or clipboard, by class)
+F1 held  ──► WASAPI capture (16 kHz mono PCM)
+release  ──► WAV encode ──► Berget AI ──► dictionary corrections ──► inject (SendInput or clipboard, by class)
 ```
 
 ## Requirements
@@ -126,7 +126,7 @@ or malformed, Prata logs a warning and runs without corrections.
 ## Usage
 
 1. Start Prata (autostarts at login, or run `prata.exe`).
-2. Hold **Ctrl+Win**. You hear the start tone; speak.
+2. Hold **F1**. You hear the start tone; speak.
 3. Release. You hear the stop tone; a moment later the transcribed text
    is inserted into the focused window.
 
@@ -156,7 +156,7 @@ present).
 | `cmd/prata-setkey/` | Encrypts the Berget API key to disk (DPAPI). |
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
 | `internal/transcribe/` | Berget AI HTTP client + PCM→WAV encoder. |
-| `internal/hotkey/` | Global `WH_KEYBOARD_LL` hook for Ctrl+Win. |
+| `internal/hotkey/` | Global `RegisterHotKey` listener for F1 (PTT) and F9 (dictionary quick-fix). |
 | `internal/inject/` | Hybrid text injection — SendInput Unicode for allowlisted (Chromium/Electron) windows, clipboard paste with preservation otherwise. |
 | `internal/dict/` | Word-boundary correction dictionary. |
 | `internal/sanity/` | Degenerate-output guard: discards Whisper repetition loops via gzip compression ratio. |

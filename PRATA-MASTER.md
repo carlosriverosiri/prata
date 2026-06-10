@@ -8,15 +8,15 @@ Diktell på maskiner utan dedikerad GPU.
 
 ## Användarflöde
 
-1. Carlos håller `Ctrl+Win` nere
+1. Carlos håller `F1` nere
 2. Prata spelar in mikrofon-ljud (16 kHz mono PCM)
-3. När `Ctrl+Win` släpps: skicka ljudet till Berget AI
+3. När `F1` släpps: skicka ljudet till Berget AI
 4. Tillämpa dictionary-korrigeringar på returnerad text
 5. Skriv texten i aktivt fönster via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen)
 
 ## Komponenter
 
-- **Hotkey-hook** — global Ctrl+Win med `WH_KEYBOARD_LL` passive hook
+- **Hotkey** — global F1 (PTT) och F9 (dictionary quick-fix) via `RegisterHotKey`
 - **Audio capture** — 16 kHz mono PCM via WASAPI (`malgo` Go-binding för miniaudio)
 - **HTTP client** — POST multipart till Berget
 - **Dictionary** — Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp) från `dictionary-corrections.txt`

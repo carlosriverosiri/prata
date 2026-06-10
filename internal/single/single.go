@@ -1,6 +1,6 @@
 // Package single provides a Windows named-mutex single-instance guard.
 // A tray app like Prata must never run in two copies: two instances
-// share the Ctrl+Win hotkey and would both capture audio and inject,
+// share the F1 hotkey and would both capture audio and inject,
 // producing duplicate output (or garbled output in async apps).
 package single
 

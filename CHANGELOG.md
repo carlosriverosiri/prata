@@ -8,15 +8,28 @@ that point.
 
 ## [Unreleased]
 
+### Changed
+
+- `internal/hotkey` rewritten from `WH_KEYBOARD_LL` to `RegisterHotKey`
+  (ADR 2026-06-09 in PRATA-DESIGN-LOG.md). PTT gesture changes from
+  **Ctrl+Win-hold** to **F1-hold**; F9 (dictionary quick-fix) moves from
+  the low-level hook to a conditional `RegisterHotKey` registration. The
+  `WH_KEYBOARD_LL` failure class — silent unhook on 300 ms callback
+  timeout, hook invalidation across sleep/resume, AV/EDR keylogger
+  signature — leaves the codebase entirely. The public `Listener`
+  interface (`NewListener`, `SetOnF9`, `Run`, `Stop`) is unchanged;
+  `cmd/prata` is untouched except user-facing strings and stale comments.
+
 ### Added
 
-- `internal/hotkey/listener.go` — F9 support in the low-level keyboard
-  hook: `SetOnF9` registers a callback that fires once per tap on the F9
-  key-up transition (tracked via an `f9Down` flag, so no key is held when
-  the callback later synthesizes input). Both the F9 key-down and key-up
-  are swallowed so F9 never reaches the foreground app — but only when an
-  `onF9` callback is registered; otherwise F9 passes through untouched.
-  The Ctrl+Win push-to-talk combo is unchanged.
+- `internal/hotkey/listener.go` — `SetOnF9` registers a callback that
+  fires once per F9 tap, on the physical key-up transition: a poll
+  goroutine detects release via `GetAsyncKeyState` (20 ms interval) so
+  F9 is not physically held when the callback later synthesizes
+  Ctrl+C/Ctrl+V. F9 is registered as a system hotkey (`RegisterHotKey`)
+  only when a handler is set — without a handler, F9 is not registered
+  and passes through untouched globally. A failed F9 registration is
+  non-fatal (soft-degrade with a warning to stderr).
 - `internal/inject/inject.go` — `CopySelection` grabs the foreground
   window's current selection by synthesizing Ctrl+C and reading the
   clipboard, and is clipboard-neutral: it saves the prior clipboard,
