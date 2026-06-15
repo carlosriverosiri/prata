@@ -44,9 +44,10 @@ const (
 	// the icon. Distinct from callbackMsg.
 	balloonMsg = wmUser + 2
 
-	// AppendMenuW / TrackPopupMenu flags.
+	// AppendMenuW / TrackPopupMenu / CheckMenuRadioItem flags.
 	mfString       = 0x0000
 	mfSeparator    = 0x0800
+	mfByCommand    = 0x0000
 	tpmRightButton = 0x0002
 	tpmReturnCmd   = 0x0100
 	tpmNoNotify    = 0x0080
@@ -74,6 +75,10 @@ const (
 	// returns 0 when dismissed without a choice.
 	idQuit        = 1
 	idCheckUpdate = 2
+
+	// idBackendBase is the first command id for the backend radio items;
+	// item i has id idBackendBase+i. Kept clear of idQuit/idCheckUpdate.
+	idBackendBase = 100
 
 	// dpiPerMonitorAwareV2 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 from
 	// winuser.h: the pseudo-handle value -4 passed to
@@ -152,6 +157,7 @@ var (
 	procCreatePopupMenu        = user32.NewProc("CreatePopupMenu")
 	procAppendMenuW            = user32.NewProc("AppendMenuW")
 	procTrackPopupMenu         = user32.NewProc("TrackPopupMenu")
+	procCheckMenuRadioItem     = user32.NewProc("CheckMenuRadioItem")
 	procDestroyMenu            = user32.NewProc("DestroyMenu")
 	procSetForegroundWindow    = user32.NewProc("SetForegroundWindow")
 	procGetCursorPos           = user32.NewProc("GetCursorPos")
@@ -178,6 +184,14 @@ type Tray struct {
 	tooltip       string
 	onQuit        func()
 	onCheckUpdate func() // optional; when set, adds a "check for update" menu item
+
+	// Backend selector: when backendNames is non-empty, the menu shows a
+	// radio item per name above the other items, with activeBackend bulleted.
+	// Set before Run (same happens-before rule as onCheckUpdate). After Run,
+	// activeBackend is only touched on the message-loop thread (showMenu).
+	backendNames    []string
+	activeBackend   int
+	onSelectBackend func(int) // fired with the chosen index on a deliberate switch
 
 	threadID  atomic.Uint32
 	hwnd      atomic.Uintptr // hidden window handle, set in Run; target for Notify's posted message
@@ -224,6 +238,26 @@ func New(iconICO []byte, tooltip string, onQuit func()) *Tray {
 // own goroutine and report the result via Notify.
 func (t *Tray) SetOnCheckUpdate(cb func()) {
 	t.onCheckUpdate = cb
+}
+
+// SetBackends configures the backend radio items shown at the top of the
+// right-click menu, with active pre-selected (bulleted). The active name is
+// also appended to the tooltip ("Prata — Hemma"). Like SetOnCheckUpdate it
+// MUST be called before Run: the menu and tooltip are built in Run, and the
+// fields are read on the message-loop thread.
+func (t *Tray) SetBackends(names []string, active int) {
+	t.backendNames = names
+	if active >= 0 && active < len(names) {
+		t.activeBackend = active
+	}
+}
+
+// SetOnSelectBackend registers a callback fired (on the message-loop thread)
+// when the user picks a different backend item. Like onQuit it MUST return
+// quickly — do any disk/network work on its own goroutine. The index maps
+// into the names passed to SetBackends.
+func (t *Tray) SetOnSelectBackend(cb func(int)) {
+	t.onSelectBackend = cb
 }
 
 // SetProcessDPIAware opts the current process into per-monitor DPI awareness
@@ -323,7 +357,7 @@ func (t *Tray) Run() error {
 		hIcon:            hIcon,
 	}
 	t.nid.cbSize = uint32(unsafe.Sizeof(t.nid))
-	putUTF16(t.nid.szTip[:], t.tooltip)
+	putUTF16(t.nid.szTip[:], t.tooltipText())
 
 	// Best-effort initial add: at login the shell may not be ready yet, so a
 	// failure is non-fatal — we keep pumping and (re-)add on TaskbarCreated.
@@ -403,6 +437,18 @@ func (t *Tray) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 func (t *Tray) showMenu(hwnd uintptr) {
 	procSetForegroundWindow.Call(hwnd)
 
+	// Reflect the active backend as the bulleted radio item each time the
+	// menu opens (the menu itself is built once and reused).
+	if n := len(t.backendNames); n > 0 {
+		procCheckMenuRadioItem.Call(
+			t.menu,
+			uintptr(idBackendBase),
+			uintptr(idBackendBase+n-1),
+			uintptr(idBackendBase+t.activeBackend),
+			uintptr(mfByCommand),
+		)
+	}
+
 	var pt point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 
@@ -427,6 +473,22 @@ func (t *Tray) showMenu(hwnd uintptr) {
 	case idCheckUpdate:
 		if t.onCheckUpdate != nil {
 			t.onCheckUpdate()
+		}
+	default:
+		// A backend radio item: switch only on an actual change, update the
+		// tooltip so the active backend stays visible, and notify the app.
+		if n := len(t.backendNames); n > 0 {
+			id := int(uint32(cmd))
+			if id >= idBackendBase && id < idBackendBase+n {
+				idx := id - idBackendBase
+				if idx != t.activeBackend {
+					t.activeBackend = idx
+					t.updateTooltip()
+					if t.onSelectBackend != nil {
+						t.onSelectBackend(idx)
+					}
+				}
+			}
 		}
 	}
 }
@@ -464,6 +526,30 @@ func (t *Tray) showBalloon(title, text string) {
 	t.nid.uFlags = prevFlags
 }
 
+// tooltipText is the base tooltip plus the active backend name when a
+// backend selector is configured, e.g. "Prata — Hemma".
+func (t *Tray) tooltipText() string {
+	if n := len(t.backendNames); n > 0 && t.activeBackend >= 0 && t.activeBackend < n {
+		return t.tooltip + " — " + t.backendNames[t.activeBackend]
+	}
+	return t.tooltip
+}
+
+// updateTooltip refreshes the tray tooltip to show the active backend. Runs
+// on the message-loop thread (from showMenu), where t.nid is owned, so the
+// field writes need no lock. uFlags is restored afterwards so later
+// add/delete calls are unaffected. A no-op until the icon has been added.
+func (t *Tray) updateTooltip() {
+	if !t.added {
+		return
+	}
+	prevFlags := t.nid.uFlags
+	t.nid.uFlags = nifTip
+	putUTF16(t.nid.szTip[:], t.tooltipText())
+	procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&t.nid)))
+	t.nid.uFlags = prevFlags
+}
+
 // buildMenu creates the popup menu once; Run reuses it for every right-click
 // and destroys it on the cleanup path. When onCheckUpdate is set it prepends
 // a "Sök efter uppdatering…" item and a separator above Avsluta; otherwise the
@@ -472,6 +558,26 @@ func (t *Tray) buildMenu() (uintptr, error) {
 	menu, _, sysErr := procCreatePopupMenu.Call()
 	if menu == 0 {
 		return 0, fmt.Errorf("CreatePopupMenu failed: %v", sysErr)
+	}
+
+	// Backend radio items (Hemma / Jobb / Berget) at the top, followed by a
+	// separator. The active one is bulleted per-open in showMenu.
+	for i, name := range t.backendNames {
+		p, err := syscall.UTF16PtrFromString(name)
+		if err != nil {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("menu item: %w", err)
+		}
+		if ret, _, sysErr := procAppendMenuW.Call(menu, mfString, uintptr(idBackendBase+i), uintptr(unsafe.Pointer(p))); ret == 0 {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("AppendMenuW (backend) failed: %v", sysErr)
+		}
+	}
+	if len(t.backendNames) > 0 {
+		if ret, _, sysErr := procAppendMenuW.Call(menu, mfSeparator, 0, 0); ret == 0 {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("AppendMenuW (backend separator) failed: %v", sysErr)
+		}
 	}
 
 	if t.onCheckUpdate != nil {

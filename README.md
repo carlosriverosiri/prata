@@ -261,3 +261,6 @@ cues) is direct P/Invoke against Windows DLLs via `syscall`.
 Personal project, Windows-only. See [`CHANGELOG.md`](CHANGELOG.md) for the
 development history and [`PRATA-DESIGN-LOG.md`](PRATA-DESIGN-LOG.md) for
 architecture decision records.
+[`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) is a work-in-progress guide for
+running a local KB-Whisper GPU server on the LAN as an alternative
+transcription backend to Berget AI.

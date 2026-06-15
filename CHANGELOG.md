@@ -10,6 +10,45 @@ that point.
 
 ### Added
 
+- `internal/transcribe` — selectable transcription **backends**. A `Backend`
+  (name, URL, `RequiresKey`) and three predefined ones — **Hemma** and **Jobb**
+  (local whisper.cpp GPU servers over the LAN/Tailscale, no auth) and **Berget**
+  (cloud fallback, Bearer-authenticated). `Client.SetBackend`/`ActiveBackend`
+  switch at runtime under a mutex; `Transcribe` posts the same OpenAI-compatible
+  multipart form to the active backend's URL and sends `Authorization` only when
+  the backend requires it. A backend with no configured URL, or Berget without a
+  key, fails before going on the wire. Endpoint URLs are hardcoded constants
+  (`HomeURL`/`WorkURL`/`BergetURL`); `WorkURL` is empty until the work server is
+  deployed. See `PRATA-GPU-SERVER.md` Steg 5.
+- `internal/tray` — `SetBackends(names, active)` adds a row of radio items at the
+  top of the right-click menu (bulleted via `CheckMenuRadioItem`), and
+  `SetOnSelectBackend` fires on a deliberate switch. The active backend is shown
+  in the tooltip ("Prata — Hemma") and refreshed on change.
+- `cmd/prata` — wires the tray backend selector to the client: switching updates
+  the tooltip, shows a Swedish balloon ("Aktiv transkribering: …", with a caveat
+  when Berget lacks a key or Work is unconfigured), and persists the choice to
+  `%LOCALAPPDATA%\Prata\backend.txt` (state, not config; default Berget).
+- `internal/transcribe/client_test.go` — covers conditional auth and routing:
+  Berget sends the Bearer header and form fields, a local backend sends no auth
+  even when a key is present, an empty URL fails, Berget without a key fails, and
+  `BackendByName` round-trips.
+
+### Changed
+
+- `internal/transcribe` — `Transcribe` now collapses the per-segment line
+  breaks the backend returns in the `text` field into single spaces, so an
+  injected dictation reads as one flowing prose block instead of a poem.
+  Whisper (whisper.cpp server and Berget alike) serializes each timing segment
+  on its own line; those breaks land on time-window cuts, not sentence
+  boundaries. The new `normalizeTranscript` mirrors Diktell, which concatenates
+  segments without a separator. The end-of-dictation newline (added in
+  `cmd/prata`) is unchanged.
+- `cmd/prata` now loads the Berget API key **best-effort** instead of refusing to
+  start without one: the local GPU backends need no key, so a missing key only
+  fails the Berget backend (with an error cue) rather than blocking startup. The
+  HTTP client is no longer Berget-only — it routes to the active backend, and the
+  active backend is never switched silently (no automatic failover).
+
 - `internal/update/update.go` — `Check(current)` asks GitHub's
   "latest release" API for the newest published tag and compares it to the
   version stamped into the running binary, returning whether a newer release

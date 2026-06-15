@@ -126,6 +126,42 @@ func loadDict() (*dict.Dict, error) {
 	return dict.Load(f)
 }
 
+// backendPrefPath is where the active backend choice is stored:
+// %LOCALAPPDATA%\Prata\backend.txt. This is state (the last deliberate
+// choice), not config — it is written by the tray selection, not hand-edited,
+// which is why it lives next to apikey.dat rather than being a constant.
+func backendPrefPath() string {
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Prata", "backend.txt")
+}
+
+// loadBackendPref reads the persisted backend name and resolves it to a
+// Backend, falling back to Berget when the file is missing or names an
+// unknown backend. Berget is the safe default: it works from any network
+// (given a key) and matches Prata's original behaviour.
+func loadBackendPref() transcribe.Backend {
+	data, err := os.ReadFile(backendPrefPath())
+	if err != nil {
+		return transcribe.Berget
+	}
+	if b, ok := transcribe.BackendByName(strings.TrimSpace(string(data))); ok {
+		return b
+	}
+	return transcribe.Berget
+}
+
+// saveBackendPref persists the chosen backend by name. Failures are logged,
+// not fatal: a write error just means the choice will not survive a restart.
+func saveBackendPref(b transcribe.Backend) {
+	path := backendPrefPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "backend pref mkdir: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(b.Name+"\n"), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "backend pref write: %v\n", err)
+	}
+}
+
 func main() {
 	// Per-monitor DPI awareness must be set before any window or HICON is
 	// created (the tray icon below), so it renders crisp on scaled displays.
@@ -139,16 +175,19 @@ func main() {
 		return
 	}
 
+	// The Berget API key is loaded best-effort: it is only needed when the
+	// Berget backend is active. The local GPU backends (Hemma / Jobb) need
+	// no key, so a missing key no longer prevents startup — it just means
+	// the Berget backend will report an error if selected without a key.
 	apiKey := os.Getenv("BERGET_API_KEY")
 	if apiKey == "" {
-		var err error
-		apiKey, err = auth.LoadAPIKey()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "no API key available:")
-			fmt.Fprintln(os.Stderr, "  set BERGET_API_KEY env var, or")
-			fmt.Fprintln(os.Stderr, "  run prata-setkey to save an encrypted key")
-			os.Exit(1)
+		if k, err := auth.LoadAPIKey(); err == nil {
+			apiKey = k
 		}
+	}
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "no Berget API key found; the Berget backend will not work")
+		fmt.Fprintln(os.Stderr, "  (set BERGET_API_KEY or run prata-setkey); local GPU backends still work")
 	}
 
 	d, err := loadDict()
@@ -159,7 +198,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "dictionary loaded")
 	}
 
+	// Resolve the active transcription backend from the persisted choice
+	// (default Berget). The selection is changed deliberately in the tray and
+	// never switched silently.
+	active := loadBackendPref()
 	client := transcribe.NewClient(apiKey)
+	client.SetBackend(active)
+	fmt.Fprintf(os.Stderr, "active backend: %s (%s)\n", active.Name, active.URL)
 
 	// Buffered so the listener's message-loop goroutine never blocks.
 	// Size 4 covers any realistic press/release burst.
@@ -262,6 +307,38 @@ func main() {
 	// the menu is built with the item present.
 	t.SetOnCheckUpdate(func() {
 		go checkForUpdate(t)
+	})
+	// Backend selector (Hemma / Jobb / Berget) as radio items in the tray
+	// menu, with the persisted choice pre-selected. Switching is deliberate
+	// and visible: the tray updates the tooltip and shows a balloon, the new
+	// choice is persisted, and the client routes the next dictation there.
+	// Must be set before t.Run is launched (the menu is built in Run).
+	backendNames := make([]string, len(transcribe.Backends))
+	activeIdx := 0
+	for i, b := range transcribe.Backends {
+		backendNames[i] = b.Name
+		if b.Name == active.Name {
+			activeIdx = i
+		}
+	}
+	t.SetBackends(backendNames, activeIdx)
+	t.SetOnSelectBackend(func(idx int) {
+		b := transcribe.Backends[idx]
+		client.SetBackend(b)
+		go saveBackendPref(b)
+		// Swedish user feedback, with a caveat when the chosen backend can't
+		// actually serve yet (Berget without a key, or an unconfigured Work
+		// server). It still switches — Prata never overrides a deliberate
+		// choice — but the user is told why a dictation may fail.
+		switch {
+		case b.RequiresKey && apiKey == "":
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Varning: ingen API-nyckel. Kör prata-setkey.", b.Name))
+		case b.URL == "":
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Servern är inte konfigurerad än.", b.Name))
+		default:
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s", b.Name))
+		}
+		fmt.Fprintf(os.Stderr, "backend switched: %s (%s)\n", b.Name, b.URL)
 	})
 	trayDone := make(chan error, 1)
 	go func() {
