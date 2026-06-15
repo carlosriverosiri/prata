@@ -49,7 +49,7 @@ jobs:
       - name: Build prata.exe
         env:
           CGO_ENABLED: 1
-        run: go build -ldflags="-s -w -H windowsgui" -o prata.exe ./cmd/prata/
+        run: go build -ldflags="-s -w -H windowsgui -X main.version=${{ github.ref_name }}" -o prata.exe ./cmd/prata/
 
       - name: Build prata-setkey.exe
         env:

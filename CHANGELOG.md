@@ -10,6 +10,26 @@ that point.
 
 ### Added
 
+- `internal/update/update.go` — `Check(current)` asks GitHub's
+  "latest release" API for the newest published tag and compares it to the
+  version stamped into the running binary, returning whether a newer release
+  exists and its release-page URL. It is notify-only: it never downloads or
+  installs anything (the upgrade still runs through `install.ps1`). This
+  deliberately keeps Prata clear of the download-and-execute behaviour that
+  behavioural AV/EDR products flag — the same concern as the unsigned-binary
+  ADR (2026-06-15). Numeric `vX.Y.Z` comparison ignores any `-`/`+` suffix; a
+  non-numeric `current` (a plain `go build`/`go run`, which leaves
+  `version = "dev"`) is reported as a local build and never nags.
+- `internal/tray` — `SetOnCheckUpdate` adds a **Sök efter uppdatering…**
+  item above Avsluta (only when a handler is registered, so `cmd/tray-test`
+  keeps just Avsluta), and `Notify(title, text)` shows a tray balloon. Notify
+  is goroutine-safe: it stashes the text under a lock and posts a private
+  message to the icon's message-loop thread, which owns `Shell_NotifyIconW`.
+- `cmd/prata` now embeds a `version` string (stamped via
+  `-ldflags "-X main.version=…"`) and wires the tray's update item to
+  `update.Check`, reporting the outcome — newer version available, up to
+  date, or "local build" — as a Swedish tray balloon. The network call runs
+  on its own goroutine so the tray UI thread is never blocked.
 - `internal/hotkey/listener.go` — `SetOnF8` registers a callback that
   fires once per F8 tap, on the physical key-up transition: a poll
   goroutine detects release via `GetAsyncKeyState` (20 ms interval) so
@@ -174,6 +194,12 @@ that point.
   `%LOCALAPPDATA%\Prata\dictionary-corrections.txt` on install/upgrade and
   writes the release copy to `dictionary-corrections.default.txt` instead.
   F8 quick-fix rules are user data; updating Prata must not overwrite them.
+- `.github/workflows/release.yml` and `install.ps1 -Local` now stamp the
+  binary with a version via `-ldflags "-X main.version=…"` — the release
+  workflow uses the pushed git tag (`github.ref_name`); the local installer
+  uses `git describe --tags --always`, falling back to `dev`. This feeds the
+  in-app "Sök efter uppdatering…" check; previously the binary carried no
+  version at all.
 - Dictation now routes on the foreground window's class.
   `Chrome_WidgetWin_1` — the whole Chromium/Electron family plus the
   verified web-based journal system, which reports the same class — goes via

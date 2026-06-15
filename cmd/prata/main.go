@@ -36,7 +36,14 @@ import (
 	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
 	"github.com/carlosriveros/prata/internal/tray"
+	"github.com/carlosriveros/prata/internal/update"
 )
+
+// version is the release this binary was built from. The release workflow
+// and install.ps1 -Local inject the git tag via
+// -ldflags "-X main.version=…"; a plain `go build`/`go run` leaves it as
+// "dev", which never reports an available update against a real release tag.
+var version = "dev"
 
 // event is what the listener enqueues for the processor goroutine.
 // Using a typed enum keeps the channel small and self-documenting.
@@ -248,6 +255,13 @@ func main() {
 	var quitOnce sync.Once
 	t := tray.New(icon.ICO, "Prata", func() {
 		quitOnce.Do(func() { close(quit) })
+	})
+	// "Sök efter uppdatering…": notify-only update check. Must return fast
+	// on the tray UI thread, so the network call runs on its own goroutine
+	// and reports back via a tray balloon. Set before t.Run is launched so
+	// the menu is built with the item present.
+	t.SetOnCheckUpdate(func() {
+		go checkForUpdate(t)
 	})
 	trayDone := make(chan error, 1)
 	go func() {
@@ -473,6 +487,29 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				fmt.Fprintf(os.Stderr, "dict rule saved (corrections disabled until restart): %q = %q\n", da.wrong, da.correct)
 			}
 		}
+	}
+}
+
+// checkForUpdate queries GitHub for the latest release and reports the
+// result as a tray balloon. It never downloads or installs — upgrades go
+// through install.ps1 (the single tested path), which also keeps Prata clear
+// of the download-and-execute behaviour that AV/EDR products flag. Runs on
+// its own goroutine so the network call never blocks the tray UI thread.
+func checkForUpdate(t *tray.Tray) {
+	res, err := update.Check(version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "update check: %v\n", err)
+		t.Notify("Prata", "Kunde inte söka efter uppdatering. Försök igen senare.")
+		return
+	}
+	fmt.Fprintf(os.Stderr, "update check: current=%s latest=%s newer=%v\n", res.Current, res.Latest, res.Newer)
+	switch {
+	case res.Newer:
+		t.Notify("Prata", fmt.Sprintf("Ny version %s finns (du kör %s). Kör om installationskommandot för att uppdatera.", res.Latest, res.Current))
+	case !res.Comparable:
+		t.Notify("Prata", fmt.Sprintf("Senaste version är %s. Den här kopian är en lokal build (%s).", res.Latest, res.Current))
+	default:
+		t.Notify("Prata", fmt.Sprintf("Prata är uppdaterad (senaste är %s).", res.Latest))
 	}
 }
 

@@ -48,7 +48,12 @@ if ($Local) {
     Write-Host "Source: current directory (local mode)"
     Write-Host ""
     Write-Host "Building prata.exe (windowsgui, stripped)..."
-    & go build -ldflags="-s -w -H windowsgui" -o prata.exe ./cmd/prata/
+    # Stamp the binary with a version so the in-app update check has
+    # something to compare. git describe yields the nearest tag (e.g.
+    # v0.1.0 or v0.1.0-3-gabc123); fall back to "dev" outside a git tree.
+    $Version = (& git describe --tags --always 2>$null)
+    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = "dev" }
+    & go build -ldflags="-s -w -H windowsgui -X main.version=$Version" -o prata.exe ./cmd/prata/
     if ($LASTEXITCODE -ne 0) { Write-Error "go build prata.exe failed" }
 
     Write-Host "Building prata-setkey.exe..."

@@ -40,6 +40,11 @@ Berget, applies a correction dictionary, and inserts the result.
 - **System-tray icon** — a small red Prata icon in the notification area;
   right-click and choose **Avsluta** to quit. This is the primary way to
   exit when Prata runs at login with no console window.
+- **Update check** — the same right-click menu has **Sök efter
+  uppdatering…**, which asks GitHub whether a newer release exists and
+  reports the result in a tray balloon. It is notify-only: it never
+  downloads or replaces the binary itself; you upgrade by re-running the
+  installer (see [Updating](#updating)).
 - **Autostart at login** via Task Scheduler, set up by the installer.
 
 ## How it works
@@ -90,6 +95,26 @@ Start it immediately without re-logging in:
 ```powershell
 Start-ScheduledTask -TaskName Prata
 ```
+
+### Updating
+
+Right-click the tray icon and choose **Sök efter uppdatering…** to check
+whether a newer release exists; Prata reports the result in a balloon but
+does not update itself. To actually upgrade, re-run the installer one-liner:
+
+```powershell
+iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
+```
+
+It downloads the latest release, keeps your `dictionary-corrections.txt`
+(F8 rules are user data), and re-registers autostart. No USB stick or
+manual file copying involved.
+
+The update check is deliberately notify-only rather than a self-updater: a
+binary that downloads and runs a new binary over itself is exactly the
+behaviour that behavioural AV/EDR products (e.g. Webroot) flag for an
+unsigned executable, and the upgrade is better done through the single,
+tested `install.ps1` path. See PRATA-DESIGN-LOG.md (2026-06-15).
 
 ### Developers (build from the working tree)
 
@@ -165,8 +190,9 @@ When Prata runs at login (no console), right-click the tray icon and choose
 ## Build from source
 
 ```powershell
-# main binary (no console window)
-go build -ldflags="-s -w -H windowsgui" -o prata.exe ./cmd/prata/
+# main binary (no console window); -X stamps the version the in-app
+# update check compares against (use a tag, or "dev" for throwaway builds)
+go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/prata/
 
 # API-key tool
 go build -ldflags="-s -w" -o prata-setkey.exe ./cmd/prata-setkey/

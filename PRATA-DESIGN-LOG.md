@@ -353,3 +353,54 @@ quick-fix never shipped to users on F9, so no released behavior changes.
 - The earlier optional refinement (point `PRATA_DICT_PATH` at Diktell's
   dictionary so both apps share one rule set) still stands and is now more
   useful, since Prata's quick-fix can actually run on the shared machine.
+
+### 2026-06-15: Update mechanism — notify-only check, not self-update
+
+**Context:**
+
+Prata installs and upgrades through `install.ps1` (GitHub Releases →
+`%LOCALAPPDATA%\Prata`, dictionary preserved). Upgrading therefore already
+needs no USB stick — re-running the one-liner does it — but nothing tells the
+user a new version exists, and the binary carried no version string to
+compare against. The question was whether to add an in-app updater, and if so
+how much it should do. Cadence is roughly annual; the audience is a handful
+of clinical machines; output lands in a patient journal.
+
+**Decision:**
+
+Add a **notify-only** update check, not a self-updater. Three pieces:
+
+1. The binary is stamped with a version via `-ldflags "-X main.version=…"`
+   (release workflow uses the git tag; `install.ps1 -Local` uses
+   `git describe`; plain `go build`/`go run` stays `"dev"`).
+2. `internal/update.Check` queries GitHub's latest-release API and compares
+   numeric `vX.Y.Z` versions.
+3. A tray item, **Sök efter uppdatering…**, runs the check off the UI thread
+   and reports the result in a tray balloon. The actual upgrade is still the
+   user re-running `install.ps1`.
+
+**Alternatives considered:**
+
+- **Full self-update** (download new exe, rename the running one via
+  `MoveFileEx`, write the replacement, restart). Rejected: a binary that
+  downloads and executes a replacement of itself is precisely the
+  download-and-execute pattern behavioural AV/EDR flags — and the
+  unsigned-binary ADR above already documents Webroot blocking Prata at
+  launch. Self-update would worsen that surface, add a silent-failure path
+  into the one operation that must not go wrong on a clinical tool, and buy
+  little for an annual cadence.
+- **Silent auto-check on startup.** Reasonable, and easy to add later (the
+  `update.Check` + `tray.Notify` plumbing already supports it). Deferred:
+  for an annual cadence a constantly-polling background check is overkill,
+  and an explicit user action keeps control with the user.
+- **Do nothing in the app, document re-running the installer.** Honest
+  baseline, but leaves the user with no signal that an update exists.
+
+**Consequences:**
+
+- Once code signing lands (the leading deployment-hardening candidate from
+  the ADR above), the notify-only stance can be revisited — a signed binary
+  removes the main argument against self-update.
+- The check needs network and GitHub's unauthenticated API (60 req/h per IP);
+  fine for a manual, occasional click. Failures degrade to a "could not
+  check" balloon, never a crash.

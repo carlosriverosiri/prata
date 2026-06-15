@@ -63,6 +63,13 @@ Diktell på maskiner utan dedikerad GPU.
   - krypterar nyckeln med DPAPI
   - registrerar Task Scheduler-entry för autostart
 - **"See and forget"-mål**: ladda ner exe, kör install.ps1, klar
+- **Uppdatering**: notifierande (inte automatisk). Tray-menyn har "Sök efter
+  uppdatering…" som frågar GitHub om en nyare release finns och visar svaret
+  i en tray-ballong. Själva uppgraderingen sker genom att köra om
+  `install.ps1` (behåller `dictionary-corrections.txt`). Binären byter aldrig
+  ut sig själv — ett självuppdaterande, osignerat exe är exakt det beteende
+  som AV/EDR flaggar (se designloggen 2026-06-15). Versionen stämplas in via
+  `-ldflags "-X main.version=<tag>"` i release-bygget.
 
 ## Vad Prata ÄR
 

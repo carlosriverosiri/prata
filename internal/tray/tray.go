@@ -39,18 +39,29 @@ const (
 	// window for tray mouse events. Any value in the WM_USER range works.
 	callbackMsg = wmUser + 1
 
+	// balloonMsg is the private message Notify posts (from any goroutine) to
+	// the message-loop thread so the balloon is shown by the thread that owns
+	// the icon. Distinct from callbackMsg.
+	balloonMsg = wmUser + 2
+
 	// AppendMenuW / TrackPopupMenu flags.
 	mfString       = 0x0000
+	mfSeparator    = 0x0800
 	tpmRightButton = 0x0002
 	tpmReturnCmd   = 0x0100
 	tpmNoNotify    = 0x0080
 
 	// Shell_NotifyIconW messages and NOTIFYICONDATAW flags.
 	nimAdd     = 0x0000
+	nimModify  = 0x0001
 	nimDelete  = 0x0002
 	nifMessage = 0x0001
 	nifIcon    = 0x0002
 	nifTip     = 0x0004
+	nifInfo    = 0x0010
+
+	// NIIF_INFO: show the info-level (i) glyph on the balloon.
+	niifInfo = 0x0001
 
 	// CreateIconFromResourceEx requires this version word for .ico image
 	// bits; a wrong value makes the call fail.
@@ -59,9 +70,10 @@ const (
 	// GetSystemMetrics index for the recommended small-icon width.
 	smCXSmIcon = 49
 
-	// Menu command id for Avsluta. Must be non-zero: TrackPopupMenu with
-	// TPM_RETURNCMD returns 0 when dismissed without a choice.
-	idQuit = 1
+	// Menu command ids. Must be non-zero: TrackPopupMenu with TPM_RETURNCMD
+	// returns 0 when dismissed without a choice.
+	idQuit        = 1
+	idCheckUpdate = 2
 
 	// dpiPerMonitorAwareV2 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 from
 	// winuser.h: the pseudo-handle value -4 passed to
@@ -162,13 +174,22 @@ var (
 // New configures it; Run installs the icon and blocks on the message loop;
 // Stop signals it to exit from another goroutine.
 type Tray struct {
-	iconICO []byte
-	tooltip string
-	onQuit  func()
+	iconICO       []byte
+	tooltip       string
+	onQuit        func()
+	onCheckUpdate func() // optional; when set, adds a "check for update" menu item
 
 	threadID  atomic.Uint32
+	hwnd      atomic.Uintptr // hidden window handle, set in Run; target for Notify's posted message
 	started   chan struct{}
 	startOnce sync.Once
+
+	// balloon* hold the pending balloon text. Notify (any goroutine) writes
+	// them under balloonMu and posts balloonMsg; the message-loop thread
+	// reads them under the same lock and shows the balloon.
+	balloonMu    sync.Mutex
+	balloonTitle string
+	balloonText  string
 
 	// The fields below are created in Run and then only touched on the
 	// message-loop thread (Run itself and the WndProc it dispatches), so
@@ -189,6 +210,20 @@ func New(iconICO []byte, tooltip string, onQuit func()) *Tray {
 		onQuit:  onQuit,
 		started: make(chan struct{}),
 	}
+}
+
+// SetOnCheckUpdate registers a callback for a "Sök efter uppdatering…" menu
+// item. The item is added to the right-click menu only when a callback is
+// set, so harnesses that don't need it (cmd/tray-test) keep just Avsluta.
+//
+// SetOnCheckUpdate MUST be called before Run: the menu is built in Run, and
+// the field is read on the message-loop thread when the menu opens. Setting
+// it before the goroutine that calls Run is started gives the required
+// happens-before guarantee. Like onQuit, the callback runs on the
+// message-loop thread and MUST return quickly — do the network check on its
+// own goroutine and report the result via Notify.
+func (t *Tray) SetOnCheckUpdate(cb func()) {
+	t.onCheckUpdate = cb
 }
 
 // SetProcessDPIAware opts the current process into per-monitor DPI awareness
@@ -256,6 +291,10 @@ func (t *Tray) Run() error {
 		return fmt.Errorf("CreateWindowExW failed: %v", sysErr)
 	}
 	defer procDestroyWindow.Call(hwnd)
+	// Published so Notify can PostMessageW to this window from another
+	// goroutine; cleared on teardown so a late Notify is a harmless no-op.
+	t.hwnd.Store(hwnd)
+	defer t.hwnd.Store(0)
 
 	hIcon, err := t.buildIcon()
 	if err != nil {
@@ -263,7 +302,7 @@ func (t *Tray) Run() error {
 	}
 	defer procDestroyIcon.Call(hIcon)
 
-	t.menu, err = buildMenu()
+	t.menu, err = t.buildMenu()
 	if err != nil {
 		return err
 	}
@@ -284,7 +323,7 @@ func (t *Tray) Run() error {
 		hIcon:            hIcon,
 	}
 	t.nid.cbSize = uint32(unsafe.Sizeof(t.nid))
-	copyTip(&t.nid.szTip, t.tooltip)
+	putUTF16(t.nid.szTip[:], t.tooltip)
 
 	// Best-effort initial add: at login the shell may not be ready yet, so a
 	// failure is non-fatal — we keep pumping and (re-)add on TaskbarCreated.
@@ -342,6 +381,13 @@ func (t *Tray) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 			t.showMenu(hwnd)
 		}
 		return 0
+	case uint32(message) == balloonMsg:
+		// Notify posted this from another goroutine; show the stashed text.
+		t.balloonMu.Lock()
+		title, text := t.balloonTitle, t.balloonText
+		t.balloonMu.Unlock()
+		t.showBalloon(title, text)
+		return 0
 	case t.taskbarCreatedMsg != 0 && uint32(message) == t.taskbarCreatedMsg:
 		// The shell (re)started: (re-)add the icon so it appears/reappears.
 		t.addIcon()
@@ -372,21 +418,78 @@ func (t *Tray) showMenu(hwnd uintptr) {
 
 	procPostMessageW.Call(hwnd, wmNull, 0, 0)
 
-	if uint32(cmd) == idQuit {
+	switch uint32(cmd) {
+	case idQuit:
 		if t.onQuit != nil {
 			t.onQuit()
 		}
 		procPostQuitMessage.Call(0)
+	case idCheckUpdate:
+		if t.onCheckUpdate != nil {
+			t.onCheckUpdate()
+		}
 	}
 }
 
+// Notify shows a tray balloon (title + body). Safe to call from any
+// goroutine: the text is stashed under a lock and a private message posted
+// to the message-loop thread, which owns the icon and actually shows the
+// balloon. It blocks only until Run has reached its start signal, then
+// returns immediately. A no-op if the icon was never added or the window is
+// gone (Notify after teardown posts to a zero handle, which fails harmlessly).
+func (t *Tray) Notify(title, text string) {
+	<-t.started
+	t.balloonMu.Lock()
+	t.balloonTitle = title
+	t.balloonText = text
+	t.balloonMu.Unlock()
+	procPostMessageW.Call(t.hwnd.Load(), uintptr(balloonMsg), 0, 0)
+}
+
+// showBalloon updates the existing icon with balloon info (NIF_INFO) so the
+// shell shows a notification toast. It runs on the message-loop thread, where
+// t.nid is otherwise touched, so the field writes need no lock. uFlags is
+// restored afterwards so later add/delete calls are unaffected. A no-op until
+// the icon has been added — a balloon for a missing icon would be dropped.
+func (t *Tray) showBalloon(title, text string) {
+	if !t.added {
+		return
+	}
+	prevFlags := t.nid.uFlags
+	t.nid.uFlags = nifInfo
+	putUTF16(t.nid.szInfoTitle[:], title)
+	putUTF16(t.nid.szInfo[:], text)
+	t.nid.dwInfoFlags = niifInfo
+	procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&t.nid)))
+	t.nid.uFlags = prevFlags
+}
+
 // buildMenu creates the popup menu once; Run reuses it for every right-click
-// and destroys it on the cleanup path.
-func buildMenu() (uintptr, error) {
+// and destroys it on the cleanup path. When onCheckUpdate is set it prepends
+// a "Sök efter uppdatering…" item and a separator above Avsluta; otherwise the
+// menu is just Avsluta.
+func (t *Tray) buildMenu() (uintptr, error) {
 	menu, _, sysErr := procCreatePopupMenu.Call()
 	if menu == 0 {
 		return 0, fmt.Errorf("CreatePopupMenu failed: %v", sysErr)
 	}
+
+	if t.onCheckUpdate != nil {
+		upd, err := syscall.UTF16PtrFromString("Sök efter uppdatering…")
+		if err != nil {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("menu item: %w", err)
+		}
+		if ret, _, sysErr := procAppendMenuW.Call(menu, mfString, idCheckUpdate, uintptr(unsafe.Pointer(upd))); ret == 0 {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("AppendMenuW (update) failed: %v", sysErr)
+		}
+		if ret, _, sysErr := procAppendMenuW.Call(menu, mfSeparator, 0, 0); ret == 0 {
+			procDestroyMenu.Call(menu)
+			return 0, fmt.Errorf("AppendMenuW (separator) failed: %v", sysErr)
+		}
+	}
+
 	item, err := syscall.UTF16PtrFromString("Avsluta")
 	if err != nil {
 		procDestroyMenu.Call(menu)
@@ -485,9 +588,10 @@ func pickIconFrame(ico []byte, want int) ([]byte, error) {
 	}
 }
 
-// copyTip writes s as a null-terminated UTF-16 string into the fixed tooltip
-// buffer, truncating to fit.
-func copyTip(dst *[128]uint16, s string) {
+// putUTF16 writes s as a null-terminated UTF-16 string into a fixed-size
+// buffer (tooltip, balloon title, or balloon body), truncating to fit and
+// always leaving room for the terminator.
+func putUTF16(dst []uint16, s string) {
 	enc := utf16.Encode([]rune(s))
 	n := copy(dst[:len(dst)-1], enc)
 	dst[n] = 0
