@@ -47,22 +47,38 @@ const (
 	evRelease
 )
 
-// dictAdd is a correction rule captured by the F9 quick-fix flow and
+// dictAdd is a correction rule captured by the F8 quick-fix flow and
 // handed to the processor goroutine, which owns the *dict.Dict and is the
 // only goroutine allowed to Save/Reload it — so no lock is needed.
 type dictAdd struct {
 	wrong, correct string
 }
 
-// f9Busy is the single-flight guard for the F9 quick-fix flow: at most one
-// grab → popup → paste-back runs at a time. A second F9 tap while one is in
+// f8Busy is the single-flight guard for the F8 quick-fix flow: at most one
+// grab → popup → paste-back runs at a time. A second F8 tap while one is in
 // flight is dropped.
-var f9Busy atomic.Bool
+var f8Busy atomic.Bool
 
 // minCaptureBytes is the smallest PCM payload worth transcribing,
 // roughly 0.1s of audio. Derived from the transcribe format constants
 // so it tracks the sample rate.
 const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcribe.BitsPerSample / 8 / 10
+
+// transcribeResult carries a finished transcription from the worker
+// goroutine back to the processor. Keeping the blocking Berget call off the
+// processor means a slow response never freezes F1 capture.
+type transcribeResult struct {
+	text    string
+	elapsed time.Duration
+	err     error
+}
+
+// transcribeQueueDepth bounds how many finished captures can wait for
+// transcription. A single slow Berget round (~24s observed) must not freeze
+// capture, but an unbounded queue under a sustained outage would hide the
+// failure and pile up stale audio; past this depth the processor drops the
+// capture with an error cue so the user re-dictates instead.
+const transcribeQueueDepth = 8
 
 // loadDict resolves the dictionary path (PRATA_DICT_PATH env var, or
 // "dictionary-corrections.txt" next to the executable as a fallback)
@@ -132,26 +148,26 @@ func main() {
 		func() { events <- evRelease },
 	)
 
-	// F9 quick-fix: grab the foreground selection, let the user correct it
+	// F8 quick-fix: grab the foreground selection, let the user correct it
 	// in a popup, persist the rule, and paste the correction back. The dict
 	// save+reload is handed over dictAdds to the processor goroutine, which
-	// owns d. SetOnF9 must run before listener.Run for the same
+	// owns d. SetOnF8 must run before listener.Run for the same
 	// happens-before guarantee the press/release callbacks rely on.
 	dictAdds := make(chan dictAdd, 1)
-	listener.SetOnF9(func() {
+	listener.SetOnF8(func() {
 		// Listener goroutine: must return quickly to keep the message
 		// loop responsive. Do only the cheap, time-critical work (grab
 		// the foreground HWND before focus changes) and hand the rest
 		// to a goroutine.
-		if !f9Busy.CompareAndSwap(false, true) {
+		if !f8Busy.CompareAndSwap(false, true) {
 			return // a quick-fix is already in flight; drop this tap
 		}
 		sourceHwnd, ok := inject.ForegroundWindow()
 		if !ok {
-			f9Busy.Store(false)
+			f8Busy.Store(false)
 			return
 		}
-		go f9Worker(sourceHwnd, dictAdds)
+		go f8Worker(sourceHwnd, dictAdds)
 	})
 
 	// Listener goroutine: pins itself to its OS thread and runs the
@@ -161,13 +177,30 @@ func main() {
 		listenerDone <- listener.Run()
 	}()
 
+	// Transcription worker: the only goroutine that makes the blocking
+	// Berget call. Decoupling it from the processor keeps F1 capture
+	// responsive even when one request is slow (~24s seen during a Berget
+	// hiccup). A single worker draining a FIFO queue preserves dictation
+	// order — injected text always matches the order spoken.
+	jobs := make(chan []byte, transcribeQueueDepth)
+	results := make(chan transcribeResult, transcribeQueueDepth)
+	go func() {
+		for pcm := range jobs {
+			start := time.Now()
+			text, terr := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
+			results <- transcribeResult{text: text, elapsed: time.Since(start), err: terr}
+		}
+		close(results)
+	}()
+
 	// Processor goroutine: drains events sequentially, owning the
-	// audio.Session lifecycle. Single-goroutine ownership means no
-	// mutex is needed on the session pointer.
+	// audio.Session lifecycle, and applies + injects finished
+	// transcriptions. Single-goroutine ownership means no mutex is needed on
+	// the session pointer or the dictionary.
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(client, d, events, dictAdds)
+		processEvents(d, events, dictAdds, jobs, results)
 	}()
 
 	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
@@ -244,20 +277,28 @@ func main() {
 }
 
 // processEvents drains the event channel sequentially, managing the
-// audio.Session lifecycle and dispatching to Berget on release.
+// audio.Session lifecycle and handing finished captures to the transcription
+// worker over jobs. Transcribed text comes back over results, where the
+// dictionary is applied and the text injected — all on this one goroutine,
+// so d needs no lock. Transcription itself runs on the worker, so a slow
+// Berget response never blocks the next F1 press.
 //
 // Defensive: ignores duplicate press while already recording, and
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
 // trivial and protects against future listener-state regressions.
-func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd) {
+func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- []byte, results <-chan transcribeResult) {
 	var session *audio.Session
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return // shutdown: close(events) ends the loop, as the range did
+				// Shutdown: close(events) ends the loop. Close jobs too so
+				// the worker drains and exits; any in-flight result is
+				// abandoned (the process is exiting anyway).
+				close(jobs)
+				return
 			}
 			switch ev {
 			case evPress:
@@ -293,48 +334,60 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 					continue
 				}
 
-				fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
-				start := time.Now()
-				text, err := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
-				if err != nil {
-					// Production runs -H windowsgui (no console), so the
-					// error cue is the only failure signal the user gets;
-					// same on the three discard paths below.
-					fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
+				// Hand the capture to the transcription worker instead of
+				// transcribing inline, so a slow Berget response never
+				// freezes the next F1 press. Non-blocking: if the queue is
+				// full (sustained outage) drop with an error cue rather than
+				// stalling capture or piling up stale audio.
+				select {
+				case jobs <- pcm:
+					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
+				default:
+					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
 					cue.PlayError()
-					continue
 				}
-				if d != nil {
-					text = d.Apply(text)
-				}
-				// Empty / whitespace-only result (e.g. a short capture with
-				// no clear speech) would otherwise inject a bare newline.
-				if strings.TrimSpace(text) == "" {
-					fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
-					cue.PlayError()
-					continue
-				}
-				// A Whisper repetition loop (common on long digit strings)
-				// would otherwise be injected verbatim into the patient
-				// journal — a safety hazard, not just noise. Discard it and
-				// log a prefix so the dropped text stays visible and the
-				// user can re-dictate.
-				if sanity.IsDegenerate(text) {
-					fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
-					cue.PlayError()
-					continue
-				}
-				if !strings.HasSuffix(text, "\n") {
-					text += "\n"
-				}
-				elapsed := time.Since(start)
-				if err := inject.TypeAuto(text); err != nil {
-					fmt.Fprintf(os.Stderr, "inject: %v\n", err)
-					cue.PlayError()
-					continue
-				}
-				fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())
 			}
+
+		case res := <-results:
+			// A finished transcription from the worker: apply corrections,
+			// guard against degenerate output, and inject. Production runs
+			// -H windowsgui (no console), so the error cue is the only
+			// failure signal on each discard path below.
+			if res.err != nil {
+				fmt.Fprintf(os.Stderr, "transcribe: %v\n", res.err)
+				cue.PlayError()
+				continue
+			}
+			text := res.text
+			if d != nil {
+				text = d.Apply(text)
+			}
+			// Empty / whitespace-only result (e.g. a short capture with
+			// no clear speech) would otherwise inject a bare newline.
+			if strings.TrimSpace(text) == "" {
+				fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", res.elapsed.Seconds())
+				cue.PlayError()
+				continue
+			}
+			// A Whisper repetition loop (common on long digit strings)
+			// would otherwise be injected verbatim into the patient
+			// journal — a safety hazard, not just noise. Discard it and
+			// log a prefix so the dropped text stays visible and the
+			// user can re-dictate.
+			if sanity.IsDegenerate(text) {
+				fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
+				cue.PlayError()
+				continue
+			}
+			if !strings.HasSuffix(text, "\n") {
+				text += "\n"
+			}
+			if err := inject.TypeAuto(text); err != nil {
+				fmt.Fprintf(os.Stderr, "inject: %v\n", err)
+				cue.PlayError()
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, res.elapsed.Seconds())
 		case da := <-dictAdds:
 			// Only this goroutine touches d, so Save+Reload need no lock.
 			// dict.Save persists the rule even when d is nil (corrections
@@ -369,17 +422,17 @@ func preview(s string, n int) string {
 	return string(r[:n]) + "..."
 }
 
-// f9Worker runs the F9 quick-fix flow off the listener goroutine: grab the
+// f8Worker runs the F8 quick-fix flow off the listener goroutine: grab the
 // foreground selection, let the user correct it in a popup, hand the rule
 // to the processor goroutine for save+reload, restore focus to the source
 // window, and paste the corrected text back over the selection. It always
 // clears the single-flight guard on return.
-func f9Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
-	defer f9Busy.Store(false)
+func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
+	defer f8Busy.Store(false)
 
 	sel, ok, err := inject.CopySelection()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "f9 copy selection: %v\n", err)
+		fmt.Fprintf(os.Stderr, "f8 copy selection: %v\n", err)
 		return
 	}
 	if !ok {
@@ -393,7 +446,7 @@ func f9Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 
 	edited, ok, err := popup.Prompt(core)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "f9 popup: %v\n", err)
+		fmt.Fprintf(os.Stderr, "f8 popup: %v\n", err)
 		return
 	}
 	if !ok {
@@ -421,19 +474,19 @@ func f9Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	// foreground again, so a correction never lands in the wrong window.
 	ok, err = inject.RestoreForeground(sourceHwnd)
 	if err != nil || !ok {
-		fmt.Fprintf(os.Stderr, "f9 restore foreground failed (ok=%v): %v\n", ok, err)
+		fmt.Fprintf(os.Stderr, "f8 restore foreground failed (ok=%v): %v\n", ok, err)
 		return
 	}
 
 	// Paste-back over the still-selected word. No trailing newline (unlike
 	// the dictation path) — this replaces an inline selection.
 	if err := inject.TypeAuto(leading + edited + trailing); err != nil {
-		fmt.Fprintf(os.Stderr, "f9 paste-back: %v\n", err)
+		fmt.Fprintf(os.Stderr, "f8 paste-back: %v\n", err)
 	}
 }
 
 // splitEnvelope splits s into its leading whitespace run, the trimmed core,
-// and its trailing whitespace run, so the F9 flow can show/save the core
+// and its trailing whitespace run, so the F8 flow can show/save the core
 // while reapplying the exact surrounding whitespace on paste-back. Splits
 // are byte-offset-exact and rune-aware via unicode.IsSpace.
 func splitEnvelope(s string) (leading, core, trailing string) {

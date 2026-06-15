@@ -317,3 +317,39 @@ correct; the obstacle is host policy.
 - Code signing is now the leading candidate for the next deployment-
   hardening task and should be folded into the release workflow before
   wider rollout.
+
+### 2026-06-15: Dictionary quick-fix hotkey moved F9 → F8 (Diktell owns F9)
+
+**Context:**
+
+The 2026-06-09 ADR accepted that on a machine running both Diktell and
+Prata, Diktell's `WH_KEYBOARD_LL` hook consumes F9 before Prata's
+`RegisterHotKey` can match, so Prata's F9 quick-fix never fires there —
+"Prata's F9 is effectively office-scoped". In practice the user drives
+Diktell with F9 as their primary dictation tool, so the collision is not
+theoretical: wherever Diktell runs, Prata's quick-fix is dead on F9.
+
+**Decision:**
+
+Move Prata's dictionary quick-fix from **F9** to **F8**. F8 is unclaimed
+by Diktell (which owns F9 and Ctrl+Win) and by Prata's own PTT (F1), so the
+two apps get one key each: **F9 = Diktell, F8 = Prata quick-fix, F1 = Prata
+PTT**. This supersedes the "office-scoped, accepted" disposition above — the
+quick-fix is now expected to work alongside Diktell rather than yield to it.
+
+The change is `vkF8 = 0x77 (VK_F8)` in `internal/hotkey/listener.go`, with
+the public API renamed `SetOnF9` → `SetOnF8` and all internal identifiers
+(`onF8`, `f8Held`, `f8Busy`, `f8Worker`) and comments following. The test
+harness `cmd/f9-test` is now `cmd/f8-test`. `cmd/regkey-test` is left as the
+dated F1/F9 RegisterHotKey canary from the 2026-06-09 migration — it records
+that diagnostic as run, and is unrelated to the production key choice. The
+quick-fix never shipped to users on F9, so no released behavior changes.
+
+**Consequences:**
+
+- On the mini-PC, F8 may sit behind the keyboard's Fn layer (same caveat as
+  F1); verified at the next on-device test. `RegisterHotKey` binds the base
+  VK_F8, so an Fn-layered keyboard would require Fn+F8.
+- The earlier optional refinement (point `PRATA_DICT_PATH` at Diktell's
+  dictionary so both apps share one rule set) still stands and is now more
+  useful, since Prata's quick-fix can actually run on the shared machine.

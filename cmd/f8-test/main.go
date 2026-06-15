@@ -1,5 +1,5 @@
-// Command f9-test verifies F9 detection and selection capture in
-// isolation (no popup, no dictionary, no inject-back). On each F9 tap it
+// Command f8-test verifies F8 detection and selection capture in
+// isolation (no popup, no dictionary, no inject-back). On each F8 tap it
 // grabs the foreground window's current selection via the clipboard and
 // prints it to stderr. Exits on Ctrl+C in the terminal.
 package main
@@ -16,9 +16,9 @@ import (
 func main() {
 	listener := hotkey.NewListener(nil, nil)
 
-	// SetOnF9 before Run so the hook thread observes the callback.
-	listener.SetOnF9(func() {
-		// onF9 runs on the hook thread and must return fast, so do the
+	// SetOnF8 before Run so the hook thread observes the callback.
+	listener.SetOnF8(func() {
+		// onF8 runs on the hook thread and must return fast, so do the
 		// clipboard work (synthesized Ctrl+C plus reads) on a goroutine.
 		go func() {
 			text, ok, err := inject.CopySelection()
@@ -41,7 +41,7 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 
-	fmt.Fprintln(os.Stderr, "select text, then tap F9 to capture it. Ctrl+C to quit.")
+	fmt.Fprintln(os.Stderr, "select text, then tap F8 to capture it. Ctrl+C to quit.")
 
 	select {
 	case <-sigs:

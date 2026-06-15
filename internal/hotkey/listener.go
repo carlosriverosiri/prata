@@ -1,14 +1,14 @@
 // Package hotkey provides global push-to-talk (F1) and dictionary
-// quick-fix (F9) hotkeys for Windows using RegisterHotKey.
+// quick-fix (F8) hotkeys for Windows using RegisterHotKey.
 //
 // Unlike the previous WH_KEYBOARD_LL implementation, there is no
 // OS-enforced callback timeout, no hook invalidation across sleep/resume
 // cycles, and no keylogger-pattern AV/EDR signature.
 //
-// F1 (PTT) is registered unconditionally. F9 is registered only when a
-// handler has been provided via SetOnF9, preserving the semantics of the
-// previous implementation: without a handler, F9 is not registered and
-// passes through untouched globally. A failed F9 registration is
+// F1 (PTT) is registered unconditionally. F8 is registered only when a
+// handler has been provided via SetOnF8, preserving the semantics of the
+// previous implementation: without a handler, F8 is not registered and
+// passes through untouched globally. A failed F8 registration is
 // non-fatal (soft-degrade with a warning to stderr); a failed F1
 // registration is fatal.
 //
@@ -20,7 +20,7 @@
 // 20 ms; they are signalled and fully awaited before Run returns, so no
 // callback ever fires after Run exits.
 //
-// Callbacks (onPress, onRelease, onF9) must return quickly to keep the
+// Callbacks (onPress, onRelease, onF8) must return quickly to keep the
 // message loop responsive. The 300 ms LowLevelHooksTimeout death penalty
 // of the previous hook implementation no longer applies.
 package hotkey
@@ -48,7 +48,7 @@ const (
 	// PRATA-DESIGN-LOG.md.
 	vkPTT = 0x70 // VK_F1
 
-	vkF9 = 0x78 // VK_F9
+	vkF8 = 0x77 // VK_F8
 )
 
 // msg mirrors the Win32 MSG structure (winuser.h).
@@ -78,7 +78,7 @@ var (
 	procGetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
 )
 
-// Listener detects the push-to-talk (F1) and dictionary quick-fix (F9)
+// Listener detects the push-to-talk (F1) and dictionary quick-fix (F8)
 // hotkeys globally.
 //
 // NewListener creates one configured with press/release callbacks. Run
@@ -86,17 +86,17 @@ var (
 type Listener struct {
 	onPress   func()
 	onRelease func()
-	onF9      func()
+	onF8      func()
 
 	threadID  atomic.Uint32
 	started   chan struct{}
 	startOnce sync.Once
 
-	// f1Held and f9Held guard against duplicate WM_HOTKEY deliveries
+	// f1Held and f8Held guard against duplicate WM_HOTKEY deliveries
 	// while a press is already being tracked (possible with certain
 	// keyboard firmware or when the message loop is briefly busy).
 	f1Held atomic.Int32
-	f9Held atomic.Int32
+	f8Held atomic.Int32
 }
 
 // NewListener returns a Listener that fires onPress when F1 is first
@@ -110,25 +110,25 @@ func NewListener(onPress, onRelease func()) *Listener {
 	}
 }
 
-// SetOnF9 registers a callback that fires once per F9 tap, on the
-// physical key-up transition. While a callback is registered, F9 is
+// SetOnF8 registers a callback that fires once per F8 tap, on the
+// physical key-up transition. While a callback is registered, F8 is
 // claimed as a system hotkey so the foreground app never sees the key;
-// without a handler, F9 is not registered and passes through untouched
+// without a handler, F8 is not registered and passes through untouched
 // globally.
 //
-// SetOnF9 MUST be called before Run. The field is read on the goroutine
+// SetOnF8 MUST be called before Run. The field is read on the goroutine
 // that calls Run before the message loop starts, so setting it before
 // that goroutine is started gives the required happens-before guarantee.
-// Like the PTT callbacks, onF9 must return quickly.
-func (l *Listener) SetOnF9(cb func()) {
-	l.onF9 = cb
+// Like the PTT callbacks, onF8 must return quickly.
+func (l *Listener) SetOnF8(cb func()) {
+	l.onF8 = cb
 }
 
 // Run registers the hotkeys on the current OS thread, pumps the Windows
 // message loop, and blocks until Stop is called from another goroutine.
 // It pins itself with runtime.LockOSThread internally.
 //
-// F1 registration failure returns a non-nil error. F9 registration
+// F1 registration failure returns a non-nil error. F8 registration
 // failure is non-fatal: a warning is written to stderr and Run continues
 // with only F1 registered.
 func (l *Listener) Run() error {
@@ -150,13 +150,13 @@ func (l *Listener) Run() error {
 	}
 	defer procUnregisterHotKey.Call(0, 1)
 
-	// Register F9 (quick-fix) — only when a handler is set; soft-degrade
+	// Register F8 (quick-fix) — only when a handler is set; soft-degrade
 	// on failure (same policy as the dictionary and tray icon in main.go).
-	// Without a handler, F9 is not registered and passes through untouched.
-	if l.onF9 != nil {
-		ret, _, sysErr = procRegisterHotKey.Call(0, 2, modNoRepeat, vkF9)
+	// Without a handler, F8 is not registered and passes through untouched.
+	if l.onF8 != nil {
+		ret, _, sysErr = procRegisterHotKey.Call(0, 2, modNoRepeat, vkF8)
 		if ret == 0 {
-			fmt.Fprintf(os.Stderr, "warn: F9 quick-fix disabled (%v)\n", sysErr)
+			fmt.Fprintf(os.Stderr, "warn: F8 quick-fix disabled (%v)\n", sysErr)
 		} else {
 			defer procUnregisterHotKey.Call(0, 2)
 		}
@@ -213,9 +213,9 @@ func (l *Listener) Stop() {
 // then onPress, then a poll goroutine that detects the physical release
 // via GetAsyncKeyState and calls onRelease.
 //
-// F9 (quick-fix): the atomic guard fires first, then a poll goroutine
-// waits for the physical key release before calling onF9 — preserving
-// the key-up-firing semantics so F9 is not physically held when f9Worker
+// F8 (quick-fix): the atomic guard fires first, then a poll goroutine
+// waits for the physical key release before calling onF8 — preserving
+// the key-up-firing semantics so F8 is not physically held when f8Worker
 // later synthesizes Ctrl+C/Ctrl+V.
 //
 // Both goroutines respect quit: on WM_QUIT they exit without calling any
@@ -256,28 +256,28 @@ func (l *Listener) handleHotKey(id uintptr, quit <-chan struct{}, wg *sync.WaitG
 			}
 		}()
 
-	case 2: // F9 quick-fix
-		if !l.f9Held.CompareAndSwap(0, 1) {
+	case 2: // F8 quick-fix
+		if !l.f8Held.CompareAndSwap(0, 1) {
 			return // tap already in flight
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer l.f9Held.Store(0)
+			defer l.f8Held.Store(0)
 			tick := time.NewTicker(20 * time.Millisecond)
 			defer tick.Stop()
 			for {
 				select {
 				case <-quit:
-					return // shutdown: do not call onF9
+					return // shutdown: do not call onF8
 				case <-tick.C:
 				}
-				ret, _, _ := procGetAsyncKeyState.Call(vkF9)
+				ret, _, _ := procGetAsyncKeyState.Call(vkF8)
 				if ret&0x8000 == 0 {
-					// Fire on physical key-up so F9 is not held
-					// when f9Worker later synthesizes Ctrl+C/Ctrl+V.
-					if l.onF9 != nil {
-						l.onF9()
+					// Fire on physical key-up so F8 is not held
+					// when f8Worker later synthesizes Ctrl+C/Ctrl+V.
+					if l.onF8 != nil {
+						l.onF8()
 					}
 					return
 				}

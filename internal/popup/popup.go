@@ -114,6 +114,21 @@ type monitorInfo struct {
 	dwFlags   uint32
 }
 
+// guiThreadInfo mirrors the Win32 GUITHREADINFO struct for GetGUIThreadInfo,
+// used to read the foreground window's caret rectangle so the popup can be
+// anchored to the text being edited rather than the mouse.
+type guiThreadInfo struct {
+	cbSize        uint32
+	flags         uint32
+	hwndActive    uintptr
+	hwndFocus     uintptr
+	hwndCapture   uintptr
+	hwndMenuOwner uintptr
+	hwndMoveSize  uintptr
+	hwndCaret     uintptr
+	rcCaret       rect
+}
+
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
@@ -142,6 +157,11 @@ var (
 	procMonitorFromPoint     = user32.NewProc("MonitorFromPoint")
 	procGetMonitorInfoW      = user32.NewProc("GetMonitorInfoW")
 
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procGetGUIThreadInfo         = user32.NewProc("GetGUIThreadInfo")
+	procClientToScreen           = user32.NewProc("ClientToScreen")
+
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 
 	procCreateFontW  = gdi32.NewProc("CreateFontW")
@@ -163,7 +183,8 @@ type popup struct {
 }
 
 // Prompt shows a modal single-line text popup pre-filled with initial,
-// positioned near the cursor and always on top. It returns the edited
+// positioned over the edited line (foreground caret, or the mouse cursor as
+// a fallback) and always on top. It returns the edited
 // text and ok=true when the user presses Enter, or ok=false when the user
 // cancels (Esc, clicks away / deactivates, or closes the window). err is
 // non-nil only on a fundamental window-creation failure; when ok is false
@@ -197,18 +218,23 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 	defer procUnregisterClassW.Call(uintptr(unsafe.Pointer(className)), hInstance)
 
-	// Resolve DPI and the monitor work area from the cursor's monitor
-	// before sizing/positioning the window, so it is crisp and on-screen.
-	var cursor point
-	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor)))
-	dpi, work := monitorMetrics(cursor)
+	// Resolve the anchor (the foreground window's caret if it exposes one,
+	// else the mouse cursor), then the DPI and work area of that anchor's
+	// monitor, before sizing/positioning the window so it is crisp and
+	// on-screen.
+	anchor := anchorPoint()
+	dpi, work := monitorMetrics(anchor)
 
 	scale := func(v int32) int32 { return v * int32(dpi) / baseDPI }
 	width := scale(baseWidth)
 	height := scale(baseHeight)
 	offset := scale(baseOffset)
 
-	x, y := cursor.x+offset, cursor.y+offset
+	// Open the box UPWARD from the anchor: its bottom edge lands `offset`
+	// above the anchor so the popup sits over the selection instead of the
+	// text below it, where the user keeps reading and writing. The work-area
+	// clamp below still pushes it back on-screen if there is no room above.
+	x, y := anchor.x, anchor.y-offset-height
 	if work.right > work.left {
 		if x+width > work.right {
 			x = work.right - width
@@ -356,6 +382,42 @@ func (p *popup) cancel() {
 	p.ok = false
 	p.done = true
 	procPostMessageW.Call(p.hwnd, wmNull, 0, 0)
+}
+
+// anchorPoint returns the screen point to position the popup near, trying
+// three sources in order of reliability so the box lands on the edited line
+// regardless of where the mouse sits:
+//  1. The text selection's bounding rectangle via UI Automation — reliable
+//     in Chromium/Electron (the journal, the editor) and native controls.
+//  2. The legacy system caret (GetGUIThreadInfo) — works for many Win32
+//     controls but is reported inconsistently by Chromium.
+//  3. The mouse cursor — always available, usually near the writing zone.
+//
+// Must be called before the popup window is created, while the edited window
+// is still in the foreground.
+func anchorPoint() point {
+	if r, ok := selectionRect(); ok {
+		return point{r.left, r.top}
+	}
+
+	if fg, _, _ := procGetForegroundWindow.Call(); fg != 0 {
+		var gti guiThreadInfo
+		gti.cbSize = uint32(unsafe.Sizeof(gti))
+		if tid, _, _ := procGetWindowThreadProcessId.Call(fg, 0); tid != 0 {
+			r, _, _ := procGetGUIThreadInfo.Call(tid, uintptr(unsafe.Pointer(&gti)))
+			// A real caret has positive height; a zero rect means the app
+			// reports none. rcCaret is in hwndCaret's client coordinates.
+			if r != 0 && gti.hwndCaret != 0 && gti.rcCaret.bottom > gti.rcCaret.top {
+				pt := point{gti.rcCaret.left, gti.rcCaret.top}
+				procClientToScreen.Call(gti.hwndCaret, uintptr(unsafe.Pointer(&pt)))
+				return pt
+			}
+		}
+	}
+
+	var cursor point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor)))
+	return cursor
 }
 
 // monitorMetrics returns the effective DPI and work-area rect of the

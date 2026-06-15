@@ -16,7 +16,7 @@ Diktell på maskiner utan dedikerad GPU.
 
 ## Komponenter
 
-- **Hotkey** — global F1 (PTT) och F9 (dictionary quick-fix) via `RegisterHotKey`
+- **Hotkey** — global F1 (PTT) och F8 (dictionary quick-fix) via `RegisterHotKey`
 - **Audio capture** — 16 kHz mono PCM via WASAPI (`malgo` Go-binding för miniaudio)
 - **HTTP client** — POST multipart till Berget
 - **Dictionary** — Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp) från `dictionary-corrections.txt`
@@ -73,7 +73,7 @@ Diktell på maskiner utan dedikerad GPU.
 ## Faser
 
 _Ursprunglig plan från Fas 0. Faktiska faser och status — inklusive arbete efter Fas 7
-(hybridinjektion, tray-ikon, F9-ordbokstillägg) — dokumenteras i CHANGELOG._
+(hybridinjektion, tray-ikon, F8-ordbokstillägg) — dokumenteras i CHANGELOG._
 
 - **Fas 0** — verifiera Berget AI (klar 2026-05-27)
 - **Fas 1** — HTTP-klient + WAV-encoding isolerat

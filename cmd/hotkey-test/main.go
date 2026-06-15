@@ -2,7 +2,7 @@
 // (no audio, no Berget). It prints PRESS when F1 is first pressed and
 // RELEASE when it is released. Exits on Ctrl+C in the terminal.
 //
-// Note: hotkey-test does not call SetOnF9, so F9 is not registered and
+// Note: hotkey-test does not call SetOnF8, so F8 is not registered and
 // passes through untouched to the foreground app.
 package main
 

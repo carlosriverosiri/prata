@@ -166,7 +166,7 @@ present).
 | `cmd/prata-setkey/` | Encrypts the Berget API key to disk (DPAPI). |
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
 | `internal/transcribe/` | Berget AI HTTP client + PCM→WAV encoder. |
-| `internal/hotkey/` | Global `RegisterHotKey` listener for F1 (PTT) and F9 (dictionary quick-fix). |
+| `internal/hotkey/` | Global `RegisterHotKey` listener for F1 (PTT) and F8 (dictionary quick-fix). |
 | `internal/inject/` | Hybrid text injection — SendInput Unicode for allowlisted (Chromium/Electron) windows, clipboard paste with preservation otherwise. |
 | `internal/dict/` | Word-boundary correction dictionary. |
 | `internal/sanity/` | Degenerate-output guard: discards Whisper repetition loops via gzip compression ratio. |
@@ -176,7 +176,7 @@ present).
 | `internal/tray/` | System-tray icon + right-click "Avsluta" menu (P/Invoke `shell32`/`user32`). |
 | `internal/icon/` | Embedded application icon (`//go:embed Prata.ico`). |
 
-The `cmd/*-test/` directories (`hotkey-test`, `f9-test`, `record-test`,
+The `cmd/*-test/` directories (`hotkey-test`, `f8-test`, `record-test`,
 `inject-test`, `popup-test`, `transcribe-test`, `wav-roundtrip-test`,
 `sanity-test`, `tray-test`, `regkey-test`) are isolated smoke-test and
 calibration utilities for individual subsystems. `sanity-test` prints gzip

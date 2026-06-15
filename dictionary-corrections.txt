@@ -57,3 +57,4 @@ KUDA = CUDA
 Kuda = CUDA
 Digtell = Diktell
 adoption = abduktion
+fintfint = finfint

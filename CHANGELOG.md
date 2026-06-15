@@ -10,13 +10,13 @@ that point.
 
 ### Added
 
-- `internal/hotkey/listener.go` — `SetOnF9` registers a callback that
-  fires once per F9 tap, on the physical key-up transition: a poll
+- `internal/hotkey/listener.go` — `SetOnF8` registers a callback that
+  fires once per F8 tap, on the physical key-up transition: a poll
   goroutine detects release via `GetAsyncKeyState` (20 ms interval) so
-  F9 is not physically held when the callback later synthesizes
-  Ctrl+C/Ctrl+V. F9 is registered as a system hotkey (`RegisterHotKey`)
-  only when a handler is set — without a handler, F9 is not registered
-  and passes through untouched globally. A failed F9 registration is
+  F8 is not physically held when the callback later synthesizes
+  Ctrl+C/Ctrl+V. F8 is registered as a system hotkey (`RegisterHotKey`)
+  only when a handler is set — without a handler, F8 is not registered
+  and passes through untouched globally. A failed F8 registration is
   non-fatal (soft-degrade with a warning to stderr).
 - `internal/inject/inject.go` — `CopySelection` grabs the foreground
   window's current selection by synthesizing Ctrl+C and reading the
@@ -26,12 +26,25 @@ that point.
   "nothing was selected". The paste chord helper was generalized to
   `sendChord(vk)` so Ctrl+C reuses it.
 - `internal/popup/popup.go` — `Prompt(initial)` shows a small modal
-  text-input popup for quick edits: borderless, always-on-top, positioned
-  at the cursor, pre-filled with `initial` (select-all), returning the
-  edited text on Enter and cancelling on Esc / click-away / close.
+  text-input popup for quick edits: borderless, always-on-top, anchored
+  *over the text selection* and opening upward so it lands on the edited
+  word rather than the text below it, pre-filled with `initial`
+  (select-all), returning the edited text on Enter and cancelling on Esc /
+  click-away / close. The anchor is resolved in `anchorPoint` from three
+  sources in order: the selection's bounding rectangle via UI Automation
+  (`internal/popup/uia.go`), the legacy system caret (`GetGUIThreadInfo`),
+  and finally the mouse cursor.
+- `internal/popup/uia.go` — UI Automation lookup of the focused element's
+  text-selection rectangle (IUIAutomation → focused element → TextPattern →
+  GetSelection → GetBoundingRectangles), used to anchor the quick-fix popup
+  reliably in Chromium/Electron (the web journal and editor) where the
+  legacy caret is reported inconsistently. Pure COM via syscall, run on an
+  apartment-isolated goroutine with a 500 ms timeout so an unresponsive
+  window can never hang the popup; any failure falls through to the caret
+  and mouse fallbacks.
   DPI-aware (per-monitor font scaling via `GetDpiForMonitor` +
   `CreateFontW`). Direct Win32 P/Invoke, stdlib only.
-- `cmd/f9-test` — isolated harness wiring the F9 hotkey to `CopySelection`
+- `cmd/f8-test` — isolated harness wiring the F8 hotkey to `CopySelection`
   and printing the grabbed selection (or "no selection") to stderr.
 - `internal/inject/inject.go` — experimental `TypeUnicode`, a clipboard-free
   alternative to `Type`. It synthesizes the whole string as Unicode
@@ -70,7 +83,7 @@ that point.
   duplicate would be dead) and otherwise appends, preserving comments,
   blank lines, and unrelated rules verbatim; a missing file is created.
   `Load`/`Apply` and their `cmd/prata` caller are unchanged. Stdlib only.
-- F9 step C1 — primitives ahead of the quick-fix orchestrator (no
+- F8 step C1 — primitives ahead of the quick-fix orchestrator (no
   orchestrator yet). `internal/inject` exposes `ForegroundWindow` (the
   foreground HWND; `ForegroundWindowClass` now goes through it, unchanged
   behavior) and `RestoreForeground`, which reattaches input to the target
@@ -81,8 +94,8 @@ that point.
   `CallNextHookEx` passthrough — is obsolete under the `RegisterHotKey`
   rewrite below, which cannot self-trigger from synthesized
   Ctrl+C/Ctrl+V/Unicode input.)
-- F9 step C2 — the `cmd/prata` quick-fix orchestrator that wires the
-  primitives together (no device test yet). A global F9 tap grabs the
+- F8 step C2 — the `cmd/prata` quick-fix orchestrator that wires the
+  primitives together (no device test yet). A global F8 tap grabs the
   foreground selection (`inject.CopySelection`), splits off its leading/
   trailing whitespace (`splitEnvelope`, rune-aware), shows the trimmed core
   in `popup.Prompt`, and on Enter: hands the rule to the processor
@@ -92,7 +105,7 @@ that point.
   aborted if it fails so a correction never lands in the wrong window), and
   pastes the correction back over the selection via `inject.TypeAuto` with
   NO trailing newline (unlike the dictation path). An `atomic.Bool`
-  single-flight drops overlapping F9 taps, and the channel send is
+  single-flight drops overlapping F8 taps, and the channel send is
   non-blocking so the worker never blocks or leaks if the processor is busy
   or gone. The rule persists even if paste-back is aborted; when the
   dictionary was disabled at startup the rule is still saved but the running
@@ -118,13 +131,30 @@ that point.
 
 - `internal/hotkey` rewritten from `WH_KEYBOARD_LL` to `RegisterHotKey`
   (ADR 2026-06-09 in PRATA-DESIGN-LOG.md). PTT gesture changes from
-  **Ctrl+Win-hold** to **F1-hold**; F9 (dictionary quick-fix) moves from
+  **Ctrl+Win-hold** to **F1-hold**; F8 (dictionary quick-fix) moves from
   the low-level hook to a conditional `RegisterHotKey` registration. The
   `WH_KEYBOARD_LL` failure class — silent unhook on 300 ms callback
   timeout, hook invalidation across sleep/resume, AV/EDR keylogger
   signature — leaves the codebase entirely. The public `Listener`
-  interface (`NewListener`, `SetOnF9`, `Run`, `Stop`) is unchanged;
+  interface (`NewListener`, `SetOnF8`, `Run`, `Stop`) is unchanged;
   `cmd/prata` is untouched except user-facing strings and stale comments.
+- Dictionary quick-fix hotkey moved from **F9** to **F8** (ADR 2026-06-15
+  in PRATA-DESIGN-LOG.md). Diktell owns F9 (and consumes it via its
+  low-level hook before Prata's `RegisterHotKey` can match), so on a machine
+  running both apps Prata's F9 quick-fix never fired. F8 is unclaimed,
+  giving each app its own key: F9 = Diktell, F8 = Prata. Public API renamed
+  `SetOnF9` → `SetOnF8`; the test harness `cmd/f9-test` is now `cmd/f8-test`.
+  The quick-fix never shipped to users on F9, so this is the first released
+  key for the feature.
+- `cmd/prata` transcription is now asynchronous: the processor goroutine
+  hands each finished capture to a dedicated transcription worker over a
+  buffered FIFO channel instead of calling Berget inline, then applies the
+  dictionary and injects the result when it comes back. A single worker
+  keeps injected text in dictation order. Previously a slow Berget response
+  (~24s observed during a hiccup) blocked the whole loop, so F1 appeared
+  dead until it returned; now capture stays responsive and the text lands,
+  in order, when ready. If the queue fills under a sustained outage the
+  capture is dropped with an error cue rather than stalling F1.
 - Dictation now routes on the foreground window's class.
   `Chrome_WidgetWin_1` — the whole Chromium/Electron family plus the
   verified web-based journal system, which reports the same class — goes via
