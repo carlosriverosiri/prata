@@ -26,14 +26,14 @@ const (
 //
 // HomeURL targets the home GPU server over Tailscale, so it is reachable
 // from any network the client sits on (cabin, mobile hotspot, home LAN).
-// WorkURL targets the work GPU server on the clinic LAN; it is left empty
-// until that server is deployed and its LAN IP is known — set it then and
-// rebuild (Prata follows "edit constant + recompile", no config file).
-// Selecting a backend with an empty URL fails with an error cue rather than
-// falling back silently.
+// WorkURL targets the work GPU server on the clinic LAN at its fixed IP
+// (10.64.3.60). It is only reachable from inside the clinic network, so
+// selecting "Jobb" off-site fails with an error cue rather than falling back
+// silently. Prata follows "edit constant + recompile", no config file — change
+// this and rebuild if the server is re-addressed.
 const (
 	HomeURL   = "http://100.87.6.56:8080/v1/audio/transcriptions"
-	WorkURL   = ""
+	WorkURL   = "http://10.64.3.60:8080/v1/audio/transcriptions"
 	BergetURL = "https://api.berget.ai/v1/audio/transcriptions"
 )
 

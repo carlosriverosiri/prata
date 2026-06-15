@@ -32,9 +32,32 @@ that point.
   Berget sends the Bearer header and form fields, a local backend sends no auth
   even when a key is present, an empty URL fails, Berget without a key fails, and
   `BackendByName` round-trips.
+- `PRATA-GPU-SERVER.md` Steg 2b — autostart for the home GPU server. A scheduled
+  task (`PrataWhisperServer`) runs `whisper-server.exe` as **SYSTEM at boot**
+  (`AtStartup`, `ServiceAccount`/`Highest`, no time limit, restart-on-failure),
+  so the Hemma backend behaves like the Tailscale service: it comes up at
+  startup without anyone logging in and survives reboots/power loss. Verified on
+  the home PC that CUDA works for SYSTEM in session 0 (port listening + a real
+  transcription returned correct JSON). Also documents the sleep caveat
+  (`standby-timeout-ac`/`hibernate-timeout-ac = 0`) and management commands.
+- `PRATA-GPU-SERVER.md` — a copy-paste **install prompt for the work PC**. Drop
+  the repo on the clinic machine, paste the prompt into Cursor/Claude, and an
+  agent runs the whole work-scenario server setup (GPU/arch detection, build,
+  model, LAN firewall, SYSTEM-at-boot autostart, verification, set `WorkURL` +
+  rebuild) autonomously, pausing only for the single UAC approval and IT-policy
+  decisions. Explicitly LAN-only: never a Tailscale rule, patient audio stays on
+  the network.
 
 ### Changed
 
+- `internal/transcribe` — `WorkURL` is now set to the clinic GPU server's fixed
+  LAN IP (`http://10.64.3.60:8080/v1/audio/transcriptions`) instead of empty, so
+  the "Jobb" backend is configured. It is only reachable inside the clinic
+  network; selecting it off-site fails with an error cue (no silent fallback).
+  `PRATA-GPU-SERVER.md` records the work network (GPU server IP `10.64.3.60`,
+  subnet mask `255.255.255.192`, shared DNS) and warns that the `LocalSubnet`
+  only covers that small subnet — if dictation workstations sit elsewhere the
+  rule must be widened.
 - `internal/transcribe` — `Transcribe` now collapses the per-segment line
   breaks the backend returns in the `text` field into single spaces, so an
   injected dictation reads as one flowing prose block instead of a poem.

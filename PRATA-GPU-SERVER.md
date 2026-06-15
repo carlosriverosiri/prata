@@ -125,6 +125,82 @@ ingen kallstart per anrop (till skillnad från lokal Diktell-kallstart).
 > börjar lyssna på `0.0.0.0:8080`. Modellfilen är ~2,9 GiB (≈3,1 GB), samma
 > KB-Whisper-large som Diktell.
 
+## Steg 2b — Autostarta servern vid boot (hemma)
+
+Servern ska bete sig som Tailscale: igång efter omstart eller strömavbrott
+*utan* att någon loggar in. Den körs därför som en schemalagd uppgift som
+**SYSTEM, startad vid boot** (`AtStartup`) — inte knuten till din inloggning. Då
+startar den i session 0 vid uppstart, behöver inget lagrat lösenord (SYSTEM har
+inget), visar inget konsolfönster (session 0 har ingen interaktiv desktop), och
+får auto-omstart vid krasch.
+
+**Registrera uppgiften** (kör som administratör — UAC-ruta dyker upp):
+
+```powershell
+$TaskName  = "PrataWhisperServer"
+$exe       = "C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe"
+$args      = "-m ""C:\Dev\whisper-models\ggml-model.bin"" --host 0.0.0.0 --port 8080 --inference-path /v1/audio/transcriptions -l sv"
+$Action    = New-ScheduledTaskAction -Execute $exe -Argument $args
+$Trigger   = New-ScheduledTaskTrigger -AtStartup
+$Settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartInterval (New-TimeSpan -Minutes 1) -RestartCount 3
+$Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
+```
+
+- **SYSTEM / ServiceAccount / Highest** — kör vid boot utan inloggning, som en
+  tjänst, utan lagrat lösenord. Eftersom session 0 saknar interaktiv desktop
+  körs exe:n direkt — inget dölj-fönster-trick (VBScript) behövs.
+- **`AtStartup`** — utlöses vid uppstart, oberoende av inloggning. Överlever
+  omstart och strömavbrott (kommer igång vid nästa boot, precis som Tailscale).
+- **`RestartCount 3` / `RestartInterval 1 min`** — kraschar servern startas den
+  om, upp till tre gånger med en minuts mellanrum.
+- **`ExecutionTimeLimit 0`** — ingen tidsgräns; servern får köra hur länge som
+  helst.
+
+> **GeForce + session 0:** den enda tekniska osäkerheten var om CUDA fungerar för
+> SYSTEM i session 0 (inget interaktivt skrivbord). Det är verifierat att det
+> gör det på den här maskinen (se noten nedan) — ren GPU-beräkning behöver ingen
+> desktop.
+
+**Starta nu** utan att vänta på en omstart (kräver administratör eftersom
+uppgiften körs som SYSTEM — vid en riktig boot startar Schemaläggaren den själv
+utan UAC):
+
+```powershell
+Start-ScheduledTask -TaskName PrataWhisperServer
+```
+
+**Datorn får inte själv somna.** Skärmens viloläge är ofarligt (servern
+påverkas inte), men om hela maskinen går i vila/viloläge (S3/hibernate) stannar
+GPU:n och nätet — då är servern onåbar. Sätt systemets timeouts till 0 på
+nätström (skärmen får gärna släckas):
+
+```powershell
+powercfg /change standby-timeout-ac 0     # datorn somnar aldrig på nätström
+powercfg /change hibernate-timeout-ac 0
+```
+
+**Hantering** (start/stopp/borttagning kräver administratör eftersom uppgiften
+ägs av SYSTEM):
+
+```powershell
+Get-ScheduledTask -TaskName PrataWhisperServer                          # status
+Get-Process whisper-server | Select Id, StartTime                       # körs den?
+Stop-ScheduledTask  -TaskName PrataWhisperServer                        # stoppa servern
+Unregister-ScheduledTask -TaskName PrataWhisperServer -Confirm:$false   # ta bort autostart
+```
+
+> ✅ *Verifierat 2026-06-15 på hem-PC:n.* Uppgiften kör som
+> `NT AUTHORITY\SYSTEM`, port 8080 lyssnar på `0.0.0.0` och ett
+> transkriberings-anrop mot den SYSTEM-startade instansen gav korrekt JSON —
+> dvs **CUDA/GPU fungerar i session 0**. Ströminställningarna är redan rätt
+> (`standby-timeout-ac = 0`, `hibernate-timeout-ac = 0`), så datorn somnar aldrig
+> av sig själv på nätström. Nettoresultat: servern startar vid boot utan
+> inloggning och överlever omstart/strömavbrott — som Tailscale.
+
+> **Jobbet:** samma uppgift kan sättas upp där, men följ klinikens IT-policy för
+> tjänster/autostart. Skillnaden är brandväggsregeln (LAN, inte Tailscale).
+
 ## Steg 3 — Verifiera servern
 
 **Lokalt på servern.** Kontrollera att porten lyssnar och gör ett litet
@@ -240,6 +316,14 @@ New-NetFirewallRule `
   Brandvägg och portöppning kan dock styras centralt av klinikens IT — följ
   deras policy i stället för att öppna porten på egen hand.
 
+> ⚠️ **Viktigt — nätmasken begränsar vem som når servern.** På GPU-maskinen är
+> nätmasken `255.255.255.192`. Windows `LocalSubnet` i brandväggsregeln ovan
+> motsvarar det adressområde som hör ihop med den nätmasken på servern — inte
+> hela klinikens nät. Ligger dikterings-arbetsstationerna utanför det
+> området (troligt om de har annan IP/nätmask) når de inte servern. Då måste
+> `-RemoteAddress` vidgas till klienternas adressområde i stället för
+> `LocalSubnet` — men håll det internt, aldrig internet.
+
 > ⏳ *Läggs och verifieras på plats på jobbet.* Jobbservern får *aldrig* en
 > Tailscale-regel.
 
@@ -257,17 +341,60 @@ Endpointerna är hårdkodade konstanter i `internal/transcribe/client.go`
 ```go
 const (
 	HomeURL   = "http://100.87.6.56:8080/v1/audio/transcriptions" // hem-GPU via Tailscale
-	WorkURL   = ""                                                // sätts vid jobb-driftsättning
+	WorkURL   = "http://10.64.3.60:8080/v1/audio/transcriptions"  // jobb-GPU, fast LAN-IP
 	BergetURL = "https://api.berget.ai/v1/audio/transcriptions"
 )
 ```
 
 - **HomeURL** pekar på hem-serverns **Tailscale-IP**, så den fungerar oavsett
   vilket nät klienten sitter på (stuga, mobil-hotspot, hemnät).
-- **WorkURL** är tom tills jobb-servern driftsätts. När du byggt Steg 1–4 på
-  jobb-maskinen: sätt `WorkURL` till `http://<jobb-LAN-IP>:8080/v1/audio/transcriptions`
-  och bygg om. Att välja en backend med tom URL ger felton — aldrig tyst
-  fallback.
+- **WorkURL** pekar på jobb-serverns **fasta LAN-IP** (`10.64.3.60`). Den nås
+  bara inifrån klinikens nät, så att välja "Jobb" utanför kliniken ger felton —
+  aldrig tyst fallback. Ändras serverns adress: uppdatera konstanten och bygg om.
+
+### Hur klienten hittar servern (adressering)
+
+`WorkURL` är en kompilerad konstant — adressen bakas in i `prata.exe`. Servern
+lyssnar på `0.0.0.0:8080` och svarar oavsett om den nås via IP eller namn.
+
+**Nätverksinställningar på kliniken.** Vid varje ny datorinstallation knappas
+nätverket in manuellt på nätverkskortet (IPv4, statisk konfiguration — inte
+DHCP). **DNS är samma på alla maskiner**; **IP och nätmask varierar per dator**
+och sätts utifrån vilken plats i nätet maskinen får. GPU-servern är ingen
+undantag — den får sin egen IP och subnät precis som övriga arbetsstationer.
+
+| Värde | GPU-servern (den här maskinen) | Övriga datorer |
+|---|---|---|
+| IP | `10.64.3.60` | annan per maskin |
+| Nätmask | `255.255.255.192` | kan variera per maskin |
+| DNS 1 | `192.44.242.131` | samma |
+| DNS 2 | `192.44.243.131` | samma |
+
+`WorkURL` pekar på **GPU-maskinens** IP — inte klientens. På den här
+installationen:
+
+```go
+WorkURL = "http://10.64.3.60:8080/v1/audio/transcriptions"
+```
+
+Byter GPU-servern IP (ny maskin, annan nätmask): uppdatera `WorkURL` till den nya
+adressen och bygg om Prata. DNS-adresserna behöver normalt inte ändras.
+
+Brandväggsregeln (`LocalSubnet`) följer serverns nätmask — se varningen under
+Steg 4 → Jobbet om dikterings-arbetsstationerna har annan IP/nätmask än servern.
+
+Värdnamn fungerar också (delad DNS), t.ex.
+`http://RBS-PC:8080/v1/audio/transcriptions`, om GPU-maskinen är registrerad i
+DNS. Med manuellt satta IP:n per maskin är det enklast att använda IP direkt i
+`WorkURL`.
+
+Två saker att hålla reda på oavsett val:
+
+- `WorkURL` är en konstant, så en *ändrad* adress kräver ombyggnad av Prata och
+  omdistribution till arbetsstationerna.
+- Klient och server måste ligga på samma LAN/subnät som brandväggsregeln
+  (`LocalSubnet`) tillåter — sitter klienterna på ett annat subnät/VLAN måste
+  regeln vidgas, vilket klinikens IT i så fall styr.
 
 ### Villkorlig auth
 
@@ -306,6 +433,80 @@ Steg 3.
 > nyckel satt; tom URL och Berget-utan-nyckel felar). ⏳ Live-diktering mot
 > Hemma-servern testas av användaren med servern igång.
 
+## Installationsprompt — jobb-PC (klistra in i Cursor/Claude)
+
+Tanken med jobb-driftsättningen: checka ut Prata-repot på jobb-maskinen (det här
+dokumentet följer med), öppna Cursor/Claude i repo-mappen och klistra in prompten
+nedan. Agenten kör hela serveruppsättningen för **jobb-scenariot** (LAN-only) och
+stannar bara där du behöver godkänna (UAC) eller fatta ett beslut. Allt agenten
+behöver står i det här dokumentet.
+
+```text
+Du sätter upp Prata-GPU-servern på en JOBB-PC (klinik). Hela guiden finns i
+PRATA-GPU-SERVER.md i den här mappen — läs den först och följ den. Kör från
+Prata-repots rot (där dokumentet ligger). Det här är JOBB-scenariot, inte hemma:
+
+- Endast LAN. Tailscale är UTESLUTET. Patientljud får ALDRIG lämna klinikens nät.
+- Brandväggen scopas till LocalSubnet/Domain — lägg ALDRIG en Tailscale-regel.
+- Lämna HomeURL orörd. Rör inga hemma-specifika delar.
+
+Arbeta autonomt. Stanna bara för (a) UAC-godkännanden och (b) beslut som kräver
+mig. Slå ihop ALLA förhöjda steg i ETT enda elevererat anrop så jag bara behöver
+godkänna en (1) UAC-ruta. Verifiera varje steg innan du går vidare; rapportera
+kort vad som gjordes.
+
+Steg:
+
+1. FÖRUTSÄTTNINGAR. Kör `nvidia-smi`, fastställ GPU-modell och compute
+   capability och sätt `CMAKE_CUDA_ARCHITECTURES` därefter (RTX 50-serien =
+   Blackwell sm_120 -> 120; annat kort -> slå upp rätt arch-nummer). Kontrollera
+   att CUDA Toolkit (>=12.8 för Blackwell), CMake 3.20+ och Visual Studio Build
+   Tools 2022 finns. Bygger maskinen redan Diktell finns kedjan på plats; annars
+   följ avsnittet Förutsättningar. Ladda ner modellen (`ggml-model.bin`, samma
+   som Diktell) om den saknas.
+
+2. BYGG. Följ Steg 1 (whisper.cpp med CUDA) med rätt arch-värde. Verifiera att
+   `whisper-server.exe` byggts och att CUDA-backend hittar kortet.
+
+3. NÄTVERKSKORT. Nätverket knappas in manuellt på nätverkskortet (IPv4, statisk).
+   DNS är alltid `192.44.242.131` och `192.44.243.131` (samma på alla maskiner).
+   IP och nätmask varierar per dator — på GPU-servern (den här maskinen) är det
+   IP `10.64.3.60`, nätmask `255.255.255.192`. Bekräfta med `ipconfig` att
+   inställningarna stämmer; notera IP:n — den blir `WorkURL`.
+
+4. ETT FÖRHÖJT ANROP (en UAC) som gör allt nedan i följd:
+   a. Brandvägg: lägg LAN-regeln från "Steg 4 -> Jobbet" (LocalSubnet, Profile
+      Domain). OBS: `LocalSubnet` följer serverns nätmask — om
+      dikterings-arbetsstationerna har annan IP/nätmask når de inte servern.
+      Stanna och fråga mig om rätt adressområde (vidga `-RemoteAddress`, håll
+      det internt). Blockeras regeln eller styrs av GPO -> stanna och be mig
+      involvera klinikens IT.
+   b. Strömläge: `powercfg /change standby-timeout-ac 0` och
+      `powercfg /change hibernate-timeout-ac 0` så maskinen inte somnar (skärmen
+      får släckas). Styrs detta av GPO -> notera det.
+   c. Autostart: registrera SYSTEM/boot-uppgiften EXAKT som i Steg 2b
+      (AtStartup, ServiceAccount/Highest, restart 3x1 min, ExecutionTimeLimit 0).
+      Styr klinikens IT tjänster/autostart centralt -> stäm av med dem.
+   d. Starta uppgiften (Start-ScheduledTask).
+
+5. VERIFIERA. Vänta in modell-laddningen, bekräfta att processen kör som
+   NT AUTHORITY\SYSTEM, att port 8080 lyssnar på 0.0.0.0 och gör ett
+   transkriberings-anrop (Steg 3) — det bevisar även att GPU fungerar i
+   session 0. Testa om möjligt även från en andra arbetsstation på LAN:et mot
+   serverns LAN-IP.
+
+6. PEKA PRATA MOT SERVERN. `WorkURL` är redan satt i
+   `internal/transcribe/client.go` till `http://10.64.3.60:8080/v1/audio/transcriptions`
+   (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
+   fått en annan adress. Bygg om Prata (`install.ps1 -Local`). Notera att den
+   ombyggda `prata.exe` måste distribueras till de arbetsstationer som ska
+   diktera mot servern. Verifiera att backend "Jobb" går att välja och dikterar.
+
+7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
+   GPU/arch, modellsökväg, brandväggsregel, autostart-status, verifieringsresultat
+   och vilken WorkURL som sattes.
+```
+
 ## Felsökning
 
 > ⏳ *Växer allt eftersom vi stöter på saker.*
@@ -318,7 +519,8 @@ Steg 3.
 | Förutsättningar | Klar |
 | Steg 1 — Bygg whisper.cpp | ✅ Verifierat på RTX 5070 Ti (hem-PC) |
 | Steg 2 — Starta servern | ✅ Verifierat — modell laddad på GPU, lyssnar |
+| Steg 2b — Autostart (hemma) | ✅ Körs som SYSTEM vid boot — överlever omstart/strömavbrott, GPU verifierad i session 0 |
 | Steg 3 — Verifiera | ✅ Lokalt verifierat; ⏳ Tailscale-test (hemma) + LAN-test (jobbet) kvar |
 | Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n; LAN-regel borttagen |
-| Steg 4 — Brandvägg (jobbet/LAN) | ⏳ Läggs på plats på jobbet |
-| Steg 5 — Prata-klient | ✅ Backend-väljare byggd och testad; ⏳ live-diktering mot Hemma kvar |
+| Steg 4 — Brandvägg (jobbet/LAN) | ⏳ Läggs på plats på jobbet (obs LocalSubnet vs klienternas nätmask) |
+| Steg 5 — Prata-klient | ✅ Backend-väljare byggd och testad; WorkURL satt till `10.64.3.60` (jobb); ⏳ live-diktering kvar |
