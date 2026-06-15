@@ -1,4 +1,4 @@
-// Command popup-test verifies the quick-fix popup in isolation (no F9, no
+// Command popup-test verifies the quick-fix popup in isolation (no F8, no
 // dictionary, no inject-back). It opens a pre-filled modal text popup and
 // prints the outcome to stderr. SetProcessDPIAware is called first so the
 // popup's DPI sizing sees real per-monitor DPI instead of 96.

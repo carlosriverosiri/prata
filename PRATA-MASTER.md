@@ -8,11 +8,22 @@ Diktell på maskiner utan dedikerad GPU.
 
 ## Användarflöde
 
+### F1 — diktering
+
 1. Carlos håller `F1` nere
 2. Prata spelar in mikrofon-ljud (16 kHz mono PCM)
 3. När `F1` släpps: skicka ljudet till Berget AI
 4. Tillämpa dictionary-korrigeringar på returnerad text
-5. Skriv texten i aktivt fönster via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen)
+5. Återställ fönstret som var aktivt när `F1` trycktes ned och skriv texten där via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen). Om fönstret inte kan återställas avbryts injektionen med felton i stället för att text hamnar fel.
+6. Transkribering sker asynkront i en FIFO-worker, så en långsam Berget-runda blockerar inte nästa `F1`-inspelning.
+
+### F8 — dictionary quick-fix
+
+1. Carlos markerar ett feltranskriberat ord eller uttryck
+2. Trycker `F8`
+3. Prata kopierar markeringen och visar en liten popup över markeringen
+4. Carlos skriver rätt form och trycker Enter (Esc/klick utanför avbryter)
+5. Regeln sparas i `dictionary-corrections.txt`, dictionaryn laddas om, källfönstret återställs och den korrigerade texten klistras tillbaka
 
 ## Komponenter
 
@@ -55,7 +66,7 @@ Diktell på maskiner utan dedikerad GPU.
 
 ## Vad Prata ÄR
 
-- Två operationer (PTT, möjligen dictionary correction)
+- Två operationer: `F1` PTT-diktering och `F8` dictionary quick-fix
 - Helt lokal förutom HTTP-anropet till Berget AI
 - API-nyckel DPAPI-krypterad på maskinen
 - Audio feedback via korta toner: startton (880 Hz) vid inspelningsstart, stopptton (587 Hz) vid släpp, och en felton (dubbel 330 Hz-puls) på de tysta felvägarna i release-kedjan

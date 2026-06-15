@@ -12,8 +12,8 @@
 // to exit when the window is closed or deactivated.
 //
 // Prompt blocks until dismissed. In integration it must therefore run on
-// its own goroutine, never on the hotkey hook thread (a blocked hook
-// callback is uninstalled after ~300 ms).
+// its own goroutine, never on the RegisterHotKey message-loop thread, so
+// global hotkey handling stays responsive.
 package popup
 
 import (
@@ -218,10 +218,9 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 	defer procUnregisterClassW.Call(uintptr(unsafe.Pointer(className)), hInstance)
 
-	// Resolve the anchor (the foreground window's caret if it exposes one,
-	// else the mouse cursor), then the DPI and work area of that anchor's
-	// monitor, before sizing/positioning the window so it is crisp and
-	// on-screen.
+	// Resolve the anchor (UIA selection rectangle, legacy caret, then mouse
+	// cursor), then the DPI and work area of that anchor's monitor, before
+	// sizing/positioning the window so it is crisp and on-screen.
 	anchor := anchorPoint()
 	dpi, work := monitorMetrics(anchor)
 

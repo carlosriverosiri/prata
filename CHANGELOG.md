@@ -117,9 +117,10 @@ that point.
   start (880 Hz) and stop (587 Hz) tones in both pitch and rhythm. Same
   0.07 amplitude and the same in-memory winmm `PlaySoundW` mechanism;
   playback is best-effort and can never take the dictation loop down.
-  `cmd/prata` plays it on the four previously *silent* failure paths in
-  the release chain — transcribe error/timeout, empty transcription,
-  degenerate-transcription discard, and injection error. Rationale: the
+  `cmd/prata` plays it on previously *silent* failure paths in the release
+  chain — audio start/stop failure, transcribe error/timeout, empty
+  transcription, degenerate-transcription discard, and injection error.
+  Rationale: the
   production build (`-H windowsgui`) has no console, so these failures
   were completely invisible — the user heard the press/release cues but
   got no text and no indication why (surfaced by the Berget outage
@@ -149,12 +150,30 @@ that point.
 - `cmd/prata` transcription is now asynchronous: the processor goroutine
   hands each finished capture to a dedicated transcription worker over a
   buffered FIFO channel instead of calling Berget inline, then applies the
-  dictionary and injects the result when it comes back. A single worker
+  dictionary and injects the result when it comes back. Each capture carries
+  the foreground HWND from the F1 press; before injection the processor
+  restores and verifies that same window via `inject.RestoreForeground`, and
+  aborts with an error cue if focus cannot be restored, so a slow response
+  cannot land in a later-focused patient field or chat box. A single worker
   keeps injected text in dictation order. Previously a slow Berget response
   (~24s observed during a hiccup) blocked the whole loop, so F1 appeared
   dead until it returned; now capture stays responsive and the text lands,
   in order, when ready. If the queue fills under a sustained outage the
   capture is dropped with an error cue rather than stalling F1.
+- `cmd/prata` serializes all foreground/clipboard/SendInput work with an
+  input gate shared by PTT injection and F8 quick-fix. This prevents an async
+  transcription result from interleaving with F8's Ctrl+C/Ctrl+V sequence or
+  stealing focus from the popup. F8 now also plays the error cue on copy,
+  popup, restore, paste, missing-foreground, and rule-queue failures.
+- F8 rule persistence is no longer silently lossy under load. `dictAdds` is
+  buffered to the same bounded depth as transcription jobs, and a confirmed
+  F8 edit aborts paste-back with an error cue if the rule cannot be queued
+  within 500 ms. Showing corrected text while losing the persisted rule is
+  treated as unsafe.
+- `install.ps1` now preserves an existing
+  `%LOCALAPPDATA%\Prata\dictionary-corrections.txt` on install/upgrade and
+  writes the release copy to `dictionary-corrections.default.txt` instead.
+  F8 quick-fix rules are user data; updating Prata must not overwrite them.
 - Dictation now routes on the foreground window's class.
   `Chrome_WidgetWin_1` — the whole Chromium/Electron family plus the
   verified web-based journal system, which reports the same class — goes via

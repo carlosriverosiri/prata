@@ -16,10 +16,11 @@ import (
 func main() {
 	listener := hotkey.NewListener(nil, nil)
 
-	// SetOnF8 before Run so the hook thread observes the callback.
+	// SetOnF8 before Run so the RegisterHotKey message-loop thread observes
+	// the callback.
 	listener.SetOnF8(func() {
-		// onF8 runs on the hook thread and must return fast, so do the
-		// clipboard work (synthesized Ctrl+C plus reads) on a goroutine.
+		// onF8 runs on the message-loop thread and must return fast, so do
+		// the clipboard work (synthesized Ctrl+C plus reads) on a goroutine.
 		go func() {
 			text, ok, err := inject.CopySelection()
 			switch {

@@ -477,7 +477,7 @@ func ForegroundWindowClass() (string, bool) {
 // because AttachThreadInput and SetForegroundWindow are thread-affine.
 //
 // The bool return is a safety gate, not a courtesy: an orchestrator (the
-// F9 quick-fix flow) MUST abort paste-back when it is false, so a
+// F8 quick-fix flow) MUST abort paste-back when it is false, so a
 // correction is never injected into the wrong window after a failed focus
 // restore. A non-nil error means the restore could not even be attempted.
 func RestoreForeground(hwnd uintptr) (bool, error) {

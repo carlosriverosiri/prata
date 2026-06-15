@@ -27,6 +27,25 @@ jobs:
           go version
           gcc --version
 
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build all packages
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
       - name: Build prata.exe
         env:
           CGO_ENABLED: 1

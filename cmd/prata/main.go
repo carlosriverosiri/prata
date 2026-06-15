@@ -59,18 +59,33 @@ type dictAdd struct {
 // flight is dropped.
 var f8Busy atomic.Bool
 
+// inputMu serializes all foreground, clipboard, and SendInput work across
+// PTT injection and F8 quick-fix. Without this gate, an async transcription
+// result can interleave with F8's Ctrl+C/Ctrl+V or steal focus from the popup.
+var inputMu sync.Mutex
+
 // minCaptureBytes is the smallest PCM payload worth transcribing,
 // roughly 0.1s of audio. Derived from the transcribe format constants
 // so it tracks the sample rate.
 const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcribe.BitsPerSample / 8 / 10
 
+// transcribeJob carries a finished audio capture to the worker. targetHwnd
+// is the foreground window captured when F1 was pressed; the result must
+// return to that same window before injection, because async transcription
+// may finish after the user has focused something else.
+type transcribeJob struct {
+	pcm        []byte
+	targetHwnd uintptr
+}
+
 // transcribeResult carries a finished transcription from the worker
 // goroutine back to the processor. Keeping the blocking Berget call off the
 // processor means a slow response never freezes F1 capture.
 type transcribeResult struct {
-	text    string
-	elapsed time.Duration
-	err     error
+	text       string
+	elapsed    time.Duration
+	err        error
+	targetHwnd uintptr
 }
 
 // transcribeQueueDepth bounds how many finished captures can wait for
@@ -153,7 +168,7 @@ func main() {
 	// save+reload is handed over dictAdds to the processor goroutine, which
 	// owns d. SetOnF8 must run before listener.Run for the same
 	// happens-before guarantee the press/release callbacks rely on.
-	dictAdds := make(chan dictAdd, 1)
+	dictAdds := make(chan dictAdd, transcribeQueueDepth)
 	listener.SetOnF8(func() {
 		// Listener goroutine: must return quickly to keep the message
 		// loop responsive. Do only the cheap, time-critical work (grab
@@ -165,6 +180,7 @@ func main() {
 		sourceHwnd, ok := inject.ForegroundWindow()
 		if !ok {
 			f8Busy.Store(false)
+			cue.PlayError()
 			return
 		}
 		go f8Worker(sourceHwnd, dictAdds)
@@ -182,15 +198,34 @@ func main() {
 	// responsive even when one request is slow (~24s seen during a Berget
 	// hiccup). A single worker draining a FIFO queue preserves dictation
 	// order — injected text always matches the order spoken.
-	jobs := make(chan []byte, transcribeQueueDepth)
+	jobs := make(chan transcribeJob, transcribeQueueDepth)
 	results := make(chan transcribeResult, transcribeQueueDepth)
+	stopTranscription := make(chan struct{})
 	go func() {
-		for pcm := range jobs {
-			start := time.Now()
-			text, terr := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
-			results <- transcribeResult{text: text, elapsed: time.Since(start), err: terr}
+		defer close(results)
+		for {
+			select {
+			case <-stopTranscription:
+				return
+			case job, ok := <-jobs:
+				if !ok {
+					return
+				}
+				start := time.Now()
+				text, terr := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(job.pcm)))
+				result := transcribeResult{
+					text:       text,
+					elapsed:    time.Since(start),
+					err:        terr,
+					targetHwnd: job.targetHwnd,
+				}
+				select {
+				case results <- result:
+				case <-stopTranscription:
+					return
+				}
+			}
 		}
-		close(results)
 	}()
 
 	// Processor goroutine: drains events sequentially, owning the
@@ -200,7 +235,7 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(d, events, dictAdds, jobs, results)
+		processEvents(d, events, dictAdds, jobs, results, stopTranscription)
 	}()
 
 	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
@@ -287,16 +322,18 @@ func main() {
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
 // trivial and protects against future listener-state regressions.
-func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- []byte, results <-chan transcribeResult) {
+func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}) {
 	var session *audio.Session
+	var targetHwnd uintptr
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// Shutdown: close(events) ends the loop. Close jobs too so
-				// the worker drains and exits; any in-flight result is
-				// abandoned (the process is exiting anyway).
+				// Shutdown: close(events) ends the loop. Stop the worker too
+				// so an in-flight Berget result cannot block forever trying
+				// to send to a processor that has already exited.
+				close(stopTranscription)
 				close(jobs)
 				return
 			}
@@ -305,9 +342,15 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				if session != nil {
 					continue
 				}
+				targetHwnd = 0
+				if hwnd, ok := inject.ForegroundWindow(); ok {
+					targetHwnd = hwnd
+				}
 				s, err := audio.Start()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "audio start: %v\n", err)
+					cue.PlayError()
+					targetHwnd = 0
 					continue
 				}
 				session = s
@@ -320,8 +363,11 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				}
 				pcm, err := session.Stop()
 				session = nil
+				hwnd := targetHwnd
+				targetHwnd = 0
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "audio stop: %v\n", err)
+					cue.PlayError()
 					continue
 				}
 				cue.PlayStop()
@@ -340,7 +386,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				// full (sustained outage) drop with an error cue rather than
 				// stalling capture or piling up stale audio.
 				select {
-				case jobs <- pcm:
+				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd}:
 					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 				default:
 					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
@@ -348,7 +394,11 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				}
 			}
 
-		case res := <-results:
+		case res, ok := <-results:
+			if !ok {
+				results = nil
+				continue
+			}
 			// A finished transcription from the worker: apply corrections,
 			// guard against degenerate output, and inject. Production runs
 			// -H windowsgui (no console), so the error cue is the only
@@ -382,8 +432,23 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 			if !strings.HasSuffix(text, "\n") {
 				text += "\n"
 			}
-			if err := inject.TypeAuto(text); err != nil {
-				fmt.Fprintf(os.Stderr, "inject: %v\n", err)
+			if res.targetHwnd == 0 {
+				fmt.Fprintln(os.Stderr, "inject target missing, skipping")
+				cue.PlayError()
+				continue
+			}
+			inputMu.Lock()
+			restoreOK, injectErr := inject.RestoreForeground(res.targetHwnd)
+			if injectErr == nil && restoreOK {
+				injectErr = inject.TypeAuto(text)
+			}
+			inputMu.Unlock()
+			if injectErr != nil || !restoreOK {
+				if injectErr != nil && restoreOK {
+					fmt.Fprintf(os.Stderr, "inject: %v\n", injectErr)
+				} else {
+					fmt.Fprintf(os.Stderr, "inject restore foreground failed (ok=%v): %v\n", restoreOK, injectErr)
+				}
 				cue.PlayError()
 				continue
 			}
@@ -430,9 +495,13 @@ func preview(s string, n int) string {
 func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	defer f8Busy.Store(false)
 
+	inputMu.Lock()
+	defer inputMu.Unlock()
+
 	sel, ok, err := inject.CopySelection()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "f8 copy selection: %v\n", err)
+		cue.PlayError()
 		return
 	}
 	if !ok {
@@ -447,6 +516,7 @@ func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	edited, ok, err := popup.Prompt(core)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "f8 popup: %v\n", err)
+		cue.PlayError()
 		return
 	}
 	if !ok {
@@ -460,14 +530,17 @@ func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 		return
 	}
 
-	// Hand the rule to the processor goroutine (it owns d). Non-blocking, so
-	// the worker never blocks or leaks if the processor is busy or has
-	// already exited at shutdown. Sent before the foreground gate so the
-	// rule persists even if paste-back is aborted.
+	// Hand the rule to the processor goroutine (it owns d). This is sent
+	// before the foreground gate so the rule persists even if paste-back is
+	// aborted. If the processor is overloaded, abort paste-back too; showing
+	// corrected text while silently losing the rule is worse than asking the
+	// user to retry.
 	select {
 	case dictAdds <- dictAdd{wrong: core, correct: edited}:
-	default:
-		fmt.Fprintln(os.Stderr, "dict rule dropped (processor busy)")
+	case <-time.After(500 * time.Millisecond):
+		fmt.Fprintln(os.Stderr, "dict rule queue timeout, aborting paste-back")
+		cue.PlayError()
+		return
 	}
 
 	// Foreground gate: only paste once the source window is confirmed
@@ -475,6 +548,7 @@ func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	ok, err = inject.RestoreForeground(sourceHwnd)
 	if err != nil || !ok {
 		fmt.Fprintf(os.Stderr, "f8 restore foreground failed (ok=%v): %v\n", ok, err)
+		cue.PlayError()
 		return
 	}
 
@@ -482,6 +556,7 @@ func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	// the dictation path) — this replaces an inline selection.
 	if err := inject.TypeAuto(leading + edited + trailing); err != nil {
 		fmt.Fprintf(os.Stderr, "f8 paste-back: %v\n", err)
+		cue.PlayError()
 	}
 }
 

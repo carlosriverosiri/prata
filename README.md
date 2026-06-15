@@ -1,8 +1,8 @@
 # Prata
 
 Push-to-talk Swedish dictation for Windows. Hold **F1**, speak,
-release — your speech is transcribed and typed into whatever window has
-focus. Transcription runs on [Berget AI](https://berget.ai) using
+release — your speech is transcribed and typed back into the window that
+was active when you started dictating. Transcription runs on [Berget AI](https://berget.ai) using
 KBLab's `kb-whisper-large` model.
 
 Prata is a lightweight background utility: no application window, just a
@@ -16,9 +16,17 @@ Berget, applies a correction dictionary, and inserts the result.
   any foreground application.
 - **Swedish transcription** through Berget AI (`KBLab/kb-whisper-large`).
 - **Gentle audio cues** — a higher tone when recording starts, a lower
-  tone when it stops, synthesised in-process (no sound files).
+  tone when it stops, and a distinct double low pulse when a capture,
+  transcription, injection, or quick-fix step fails. Cues are synthesised
+  in-process (no sound files).
 - **Correction dictionary** — word-boundary text replacements fix
   recurring Whisper errors (e.g. `adoption` → `abduktion`).
+- **F8 quick-fix** — select a mis-transcribed word or phrase, tap **F8**,
+  edit it in a small popup anchored over the selection, and press Enter.
+  Prata saves the rule to the dictionary and pastes the corrected text back.
+- **Async transcription** — slow Berget responses do not freeze the next
+  F1 capture. Dictations are transcribed by one FIFO worker and injected
+  back into the window that was active when each capture started.
 - **Hybrid text injection** — routed on the foreground window's class.
   Chromium/Electron apps and the web-based journal receive the text via
   SendInput Unicode, leaving the clipboard untouched (so a copied
@@ -37,8 +45,10 @@ Berget, applies a correction dictionary, and inserts the result.
 ## How it works
 
 ```
-F1 held  ──► WASAPI capture (16 kHz mono PCM)
-release  ──► WAV encode ──► Berget AI ──► dictionary corrections ──► inject (SendInput or clipboard, by class)
+F1 held  ──► capture target window + WASAPI capture (16 kHz mono PCM)
+release  ──► WAV encode ──► Berget AI ──► dictionary corrections ──► restore target ──► inject (SendInput or clipboard, by class)
+
+F8 tap   ──► copy current selection ──► popup edit ──► save dictionary rule ──► restore source ──► paste corrected text
 ```
 
 ## Requirements
@@ -70,6 +80,10 @@ The installer:
 1. Downloads the latest release to `%LOCALAPPDATA%\Prata`.
 2. Prompts for your Berget API key and encrypts it with DPAPI.
 3. Registers a Task Scheduler entry so Prata starts at login.
+
+On upgrades, an existing `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
+is preserved because F8 quick-fix rules are user data. The release copy is
+saved next to it as `dictionary-corrections.default.txt` for reference.
 
 Start it immediately without re-logging in:
 
@@ -122,13 +136,26 @@ Matching is case-sensitive with Unicode-aware word boundaries
 `PRATA_DICT_PATH`, falling back
 to `dictionary-corrections.txt` next to the executable. If it is missing
 or malformed, Prata logs a warning and runs without corrections.
+The installer seeds this file on first install and preserves it on upgrades;
+new release defaults are written to `dictionary-corrections.default.txt`.
+
+When developing with `go run ./cmd/prata/`, set `PRATA_DICT_PATH` to the
+repo file if you want the same rules as the installed app; otherwise the
+temporary Go build-cache executable will look for a dictionary next to
+itself.
 
 ## Usage
 
 1. Start Prata (autostarts at login, or run `prata.exe`).
 2. Hold **F1**. You hear the start tone; speak.
 3. Release. You hear the stop tone; a moment later the transcribed text
-   is inserted into the focused window.
+   is inserted into the window that was active when you pressed F1. If that
+   window cannot be safely restored, Prata skips the injection and plays the
+   error cue instead of typing into the wrong place.
+4. To add a dictionary rule, select the incorrect word/phrase, tap **F8**,
+   edit the popup text, then press **Enter**. Press **Esc** or click away to
+   cancel. F8 and PTT injections are serialized so their clipboard and
+   keystroke operations cannot interleave.
 
 When run from a terminal, status messages go to stderr (`recording...`,
 `transcribing...`, injected text and latency). Press **Ctrl+C** to quit.

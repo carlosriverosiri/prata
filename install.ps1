@@ -39,7 +39,10 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
 }
 
-$Files = @("prata.exe", "prata-setkey.exe", "dictionary-corrections.txt")
+$BinaryFiles = @("prata.exe", "prata-setkey.exe")
+$DictionaryFile = "dictionary-corrections.txt"
+$InstalledDictionary = Join-Path $InstallDir $DictionaryFile
+$DefaultDictionary = Join-Path $InstallDir "dictionary-corrections.default.txt"
 
 if ($Local) {
     Write-Host "Source: current directory (local mode)"
@@ -52,12 +55,22 @@ if ($Local) {
     & go build -ldflags="-s -w" -o prata-setkey.exe ./cmd/prata-setkey/
     if ($LASTEXITCODE -ne 0) { Write-Error "go build prata-setkey.exe failed" }
 
-    foreach ($File in $Files) {
+    foreach ($File in $BinaryFiles) {
         if (-not (Test-Path $File)) {
             Write-Error "Missing $File in current directory"
         }
         Copy-Item $File (Join-Path $InstallDir $File) -Force
         Write-Host "  copied $File"
+    }
+    if (-not (Test-Path $DictionaryFile)) {
+        Write-Error "Missing $DictionaryFile in current directory"
+    }
+    if (-not (Test-Path $InstalledDictionary)) {
+        Copy-Item $DictionaryFile $InstalledDictionary -Force
+        Write-Host "  copied $DictionaryFile"
+    } else {
+        Copy-Item $DictionaryFile $DefaultDictionary -Force
+        Write-Host "  kept existing $DictionaryFile (sample updated as dictionary-corrections.default.txt)"
     }
 } else {
     $Repo = "carlosriverosiri/prata"
@@ -68,7 +81,7 @@ if ($Local) {
     $Version = $Release.tag_name
     Write-Host "Version: $Version"
 
-    foreach ($File in $Files) {
+    foreach ($File in $BinaryFiles) {
         $Asset = $Release.assets | Where-Object { $_.name -eq $File }
         if (-not $Asset) {
             Write-Error "Asset $File not found in release $Version"
@@ -76,6 +89,17 @@ if ($Local) {
         $Dest = Join-Path $InstallDir $File
         Write-Host "  downloading $File..."
         Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Dest
+    }
+    $DictAsset = $Release.assets | Where-Object { $_.name -eq $DictionaryFile }
+    if (-not $DictAsset) {
+        Write-Error "Asset $DictionaryFile not found in release $Version"
+    }
+    if (-not (Test-Path $InstalledDictionary)) {
+        Write-Host "  downloading $DictionaryFile..."
+        Invoke-WebRequest -Uri $DictAsset.browser_download_url -OutFile $InstalledDictionary
+    } else {
+        Write-Host "  keeping existing $DictionaryFile (downloading sample as dictionary-corrections.default.txt)..."
+        Invoke-WebRequest -Uri $DictAsset.browser_download_url -OutFile $DefaultDictionary
     }
 }
 
