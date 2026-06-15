@@ -1,6 +1,6 @@
 // Command prata-setkey encrypts the supplied Berget API key with
 // Windows DPAPI and saves it to %LOCALAPPDATA%\Prata\apikey.dat for
-// later use by ptt-test (and the production daemon).
+// later use by the prata daemon.
 //
 // Usage:
 //

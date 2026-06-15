@@ -148,6 +148,16 @@ go build -ldflags="-s -w" -o prata-setkey.exe ./cmd/prata-setkey/
 `CGO_ENABLED=1` is required (it is the default when a C compiler is
 present).
 
+> **Antivirus / EDR note.** Behavioural security products (e.g. Webroot
+> SecureAnywhere) may block a freshly built, unsigned `prata.exe` from
+> launching — Prata registers global hotkeys, captures the microphone, and
+> synthesizes keystrokes, which reads as suspicious for an unknown binary.
+> Symptoms are loader-level rejections ("not a valid Win32 application" /
+> "Access denied") with no crash logged. For development, `go run
+> ./cmd/prata/` runs from the Go build cache and is typically tolerated.
+> For deployment, allowlist the install folder or code-sign the binary.
+> See PRATA-DESIGN-LOG.md (2026-06-15).
+
 ## Project layout
 
 | Path | Purpose |
@@ -168,9 +178,11 @@ present).
 
 The `cmd/*-test/` directories (`hotkey-test`, `f9-test`, `record-test`,
 `inject-test`, `popup-test`, `transcribe-test`, `wav-roundtrip-test`,
-`sanity-test`, `tray-test`) are isolated smoke-test and calibration utilities
-for individual subsystems. `sanity-test` prints gzip compression ratios for
-built-in example strings to calibrate the degenerate-output threshold.
+`sanity-test`, `tray-test`, `regkey-test`) are isolated smoke-test and
+calibration utilities for individual subsystems. `sanity-test` prints gzip
+compression ratios for built-in example strings to calibrate the
+degenerate-output threshold; `regkey-test` is the `RegisterHotKey` canary
+(see ADR 2026-06-09).
 
 ## Releasing
 

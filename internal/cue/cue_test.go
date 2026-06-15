@@ -71,3 +71,26 @@ func TestStartAndStopTonesDiffer(t *testing.T) {
 		t.Error("start and stop tones are identical; they must be distinguishable")
 	}
 }
+
+func TestMakeErrorWAVHeaderAndLength(t *testing.T) {
+	wav := makeErrorWAV(330)
+
+	gapSamples := sampleRate * gapMs / 1000
+	dataLen := (2*expectedSamples + gapSamples) * 2
+	if len(wav) != 44+dataLen {
+		t.Fatalf("len(wav) = %d, want %d", len(wav), 44+dataLen)
+	}
+	if got := string(wav[0:4]); got != "RIFF" {
+		t.Errorf("RIFF magic = %q, want %q", got, "RIFF")
+	}
+	if got := binary.LittleEndian.Uint32(wav[40:44]); got != uint32(dataLen) {
+		t.Errorf("data size = %d, want %d", got, dataLen)
+	}
+}
+
+func TestErrorCueDiffersFromStartAndStop(t *testing.T) {
+	errWAV := makeErrorWAV(330)
+	if bytes.Equal(errWAV, makeToneWAV(880)) || bytes.Equal(errWAV, makeToneWAV(587)) {
+		t.Error("error cue is identical to a start/stop tone; it must be distinguishable")
+	}
+}

@@ -297,7 +297,11 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				start := time.Now()
 				text, err := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
 				if err != nil {
+					// Production runs -H windowsgui (no console), so the
+					// error cue is the only failure signal the user gets;
+					// same on the three discard paths below.
 					fmt.Fprintf(os.Stderr, "transcribe: %v\n", err)
+					cue.PlayError()
 					continue
 				}
 				if d != nil {
@@ -307,6 +311,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				// no clear speech) would otherwise inject a bare newline.
 				if strings.TrimSpace(text) == "" {
 					fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", time.Since(start).Seconds())
+					cue.PlayError()
 					continue
 				}
 				// A Whisper repetition loop (common on long digit strings)
@@ -316,6 +321,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				// user can re-dictate.
 				if sanity.IsDegenerate(text) {
 					fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
+					cue.PlayError()
 					continue
 				}
 				if !strings.HasSuffix(text, "\n") {
@@ -324,6 +330,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				elapsed := time.Since(start)
 				if err := inject.TypeAuto(text); err != nil {
 					fmt.Fprintf(os.Stderr, "inject: %v\n", err)
+					cue.PlayError()
 					continue
 				}
 				fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, elapsed.Seconds())

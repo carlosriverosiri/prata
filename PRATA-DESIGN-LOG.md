@@ -241,3 +241,79 @@ override is deferred until a real Fn-layer problem appears.
   Prata's quick-fix never fires. Accepted — Prata's F9 is effectively
   office-scoped. Optional refinement: point PRATA_DICT_PATH at Diktell's
   dictionary file on that machine so both apps share one rule set there.
+
+### 2026-06-15: Webroot SecureAnywhere blocks the freshly-built unsigned binary; `go run` is the verified test path
+
+**Context:**
+
+End-to-end dictation was re-verified on a secondary machine: F1-hold →
+WASAPI capture → Berget → injection works (four consecutive dictations,
+~2.1–2.7 s round-trip, in line with the documented baseline). The earlier
+"context deadline exceeded" failures were the Berget outage of
+2026-06-10/11, not an app defect — and they are now audible via the
+`PlayError` cue added the same week.
+
+Separately, a real deployment obstacle surfaced. A locally built
+`prata.exe` placed in the working tree (`C:\Dev\prata`) refuses to launch:
+PowerShell reports "not a valid Win32 application" and `cmd.exe` reports
+"Access denied" (Swedish: "Åtkomst nekad"). Both are launch-time loader
+rejections, not crashes — the Windows Application event log records no
+fault from Prata.
+
+The binary itself is sound. The PE was validated by hand: correct `MZ` and
+`PE\0\0` signatures, machine type `0x8664` (amd64), full length with
+non-zero data through the final bytes (not truncated/gutted). A copy of the
+exe under a *different name* is blocked identically, the file carries no
+Mark-of-the-Web (no `Zone.Identifier` stream) and no deny ACL, and
+`Get-MpThreatDetection` shows nothing.
+
+Root cause: the active security product is **Webroot SecureAnywhere**
+(confirmed via the `root\SecurityCenter2` `AntiVirusProduct` class; Windows
+Defender is present but passive, and `Get-MpPreference` fails with
+`0x800106ba` because WinDefend is not the primary engine). Webroot's
+behavioural/journaling model blocks unknown, unsigned, zero-prevalence
+executables until it decides they are safe — and a brand-new Go binary that
+registers global hotkeys, captures the microphone, and synthesizes
+keystrokes is a textbook "suspicious unknown". This is the concrete
+materialization of the AV/EDR-suspicion risk anticipated in the
+2026-06-09 ADR (one of the motivations for leaving `WH_KEYBOARD_LL`),
+except here Webroot blocks the *executable image at launch*, independent of
+the hotkey mechanism.
+
+Key asymmetry: `go run ./cmd/prata/` runs fine, because it executes the
+compiled binary from the Go build cache under `%LOCALAPPDATA%\go-build`,
+which Webroot tolerates, whereas an unsigned exe in a user dev folder is
+blocked. (`go run` resolves the dictionary via `os.Executable()` to the
+cache directory, so the dictionary soft-degrades to "disabled" unless
+`PRATA_DICT_PATH` is set — that env var is the dev workaround, not a bug.)
+
+**Decision (interim):**
+
+For development and testing on Webroot-managed machines, run via
+`go run ./cmd/prata/` with `PRATA_DICT_PATH` pointing at the repo's
+`dictionary-corrections.txt`. No code change is warranted — the binary is
+correct; the obstacle is host policy.
+
+**Options for production deployment (not yet chosen):**
+
+- **Webroot folder/file allowlist (override):** add `%LOCALAPPDATA%\Prata`
+  (or the published exe hash) to Webroot's allow list. Simplest for a
+  single known machine; does not scale to "see and forget" distribution and
+  may require admin/console access on managed hospital machines.
+- **Authenticode code signing:** sign `prata.exe` (and `prata-setkey.exe`)
+  with a real certificate. The durable fix — a signed, reputable publisher
+  identity is what lets Webroot (and SmartScreen, and Defender) trust the
+  binary without per-machine overrides. Cost: a code-signing certificate
+  (OV/EV) and a signing step in `release.yml`. This is the path that aligns
+  with the installer-based "see and forget" goal.
+- **Reputation seasoning:** unsigned binaries eventually gain prevalence/age
+  and unblock themselves. Unreliable and unacceptable for a clinical tool —
+  rejected.
+
+**Consequences:**
+
+- The dictation pipeline is verified working on this machine; the only
+  blocker to running the *installed* build is host AV policy, not Prata.
+- Code signing is now the leading candidate for the next deployment-
+  hardening task and should be folded into the release workflow before
+  wider rollout.

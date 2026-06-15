@@ -58,7 +58,7 @@ Diktell på maskiner utan dedikerad GPU.
 - Två operationer (PTT, möjligen dictionary correction)
 - Helt lokal förutom HTTP-anropet till Berget AI
 - API-nyckel DPAPI-krypterad på maskinen
-- Audio feedback minimal eller frånvarande (under utvärdering)
+- Audio feedback via korta toner: startton (880 Hz) vid inspelningsstart, stopptton (587 Hz) vid släpp, och en felton (dubbel 330 Hz-puls) på de tysta felvägarna i release-kedjan
 - Single binary, ingen runtime, ingen modellfil
 - Hårdkodade konstanter (ingen `config.toml`)
 

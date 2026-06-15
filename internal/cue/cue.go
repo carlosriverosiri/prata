@@ -1,9 +1,10 @@
 // Package cue plays short, gentle audio tones that signal push-to-talk
-// state changes (recording start/stop). Tones are generated in-process
-// as PCM, wrapped in a WAV header, and played from memory via winmm
-// PlaySound (SND_MEMORY|SND_ASYNC), so playback never blocks the caller
-// and no sound files are needed. Amplitude is capped well below full
-// scale so the cues stay unobtrusive at any system volume.
+// state changes (recording start/stop) and dictation failures. Tones are
+// generated in-process as PCM, wrapped in a WAV header, and played from
+// memory via winmm PlaySound (SND_MEMORY|SND_ASYNC), so playback never
+// blocks the caller and no sound files are needed. Amplitude is capped
+// well below full scale so the cues stay unobtrusive at any system
+// volume.
 package cue
 
 import (
@@ -22,6 +23,7 @@ const (
 	amplitude = 0.07
 	toneMs    = 110 // length of each cue tone
 	fadeMs    = 12  // fade in/out to avoid clicks
+	gapMs     = 70  // silence between the two error-cue pulses
 )
 
 const (
@@ -36,11 +38,13 @@ var (
 
 	startWAV []byte // higher tone: recording started
 	stopWAV  []byte // lower tone: recording stopped
+	errorWAV []byte // double low pulse: dictation failed, nothing injected
 )
 
 func init() {
-	startWAV = makeToneWAV(880) // higher
-	stopWAV = makeToneWAV(587)  // lower, so the two are distinguishable
+	startWAV = makeToneWAV(880)  // higher
+	stopWAV = makeToneWAV(587)   // lower, so the two are distinguishable
+	errorWAV = makeErrorWAV(330) // double low pulse, unlike either tone
 }
 
 // PlayStart plays the "recording started" cue. Non-blocking.
@@ -48,6 +52,14 @@ func PlayStart() { play(startWAV) }
 
 // PlayStop plays the "recording stopped" cue. Non-blocking.
 func PlayStop() { play(stopWAV) }
+
+// PlayError plays the "dictation failed, nothing injected" cue: a double
+// low pulse, distinct from the single start/stop tones in both pitch and
+// rhythm. In the production build (-H windowsgui, no console) this cue
+// is the only failure signal the user gets. Non-blocking and
+// best-effort — a playback failure is silently ignored, so the cue can
+// never take the dictation loop down.
+func PlayError() { play(errorWAV) }
 
 func play(wav []byte) {
 	if len(wav) == 0 {
@@ -63,6 +75,24 @@ func play(wav []byte) {
 }
 
 func makeToneWAV(freq float64) []byte {
+	return wrapWAV(tonePCM(freq))
+}
+
+// makeErrorWAV builds the error cue: two pulses of the same low tone
+// separated by a brief silence, so it reads as "error" rather than as
+// another start/stop tone.
+func makeErrorWAV(freq float64) []byte {
+	pulse := tonePCM(freq)
+	gap := make([]int16, sampleRate*gapMs/1000)
+	pcm := make([]int16, 0, 2*len(pulse)+len(gap))
+	pcm = append(pcm, pulse...)
+	pcm = append(pcm, gap...)
+	pcm = append(pcm, pulse...)
+	return wrapWAV(pcm)
+}
+
+// tonePCM synthesizes one sine pulse at freq with fade in/out.
+func tonePCM(freq float64) []int16 {
 	n := sampleRate * toneMs / 1000
 	fade := sampleRate * fadeMs / 1000
 	pcm := make([]int16, n)
@@ -76,7 +106,7 @@ func makeToneWAV(freq float64) []byte {
 		s := math.Sin(2 * math.Pi * freq * float64(i) / float64(sampleRate))
 		pcm[i] = int16(s * env * amplitude * 32767)
 	}
-	return wrapWAV(pcm)
+	return pcm
 }
 
 func wrapWAV(pcm []int16) []byte {

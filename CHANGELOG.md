@@ -8,18 +8,6 @@ that point.
 
 ## [Unreleased]
 
-### Changed
-
-- `internal/hotkey` rewritten from `WH_KEYBOARD_LL` to `RegisterHotKey`
-  (ADR 2026-06-09 in PRATA-DESIGN-LOG.md). PTT gesture changes from
-  **Ctrl+Win-hold** to **F1-hold**; F9 (dictionary quick-fix) moves from
-  the low-level hook to a conditional `RegisterHotKey` registration. The
-  `WH_KEYBOARD_LL` failure class — silent unhook on 300 ms callback
-  timeout, hook invalidation across sleep/resume, AV/EDR keylogger
-  signature — leaves the codebase entirely. The public `Listener`
-  interface (`NewListener`, `SetOnF9`, `Run`, `Stop`) is unchanged;
-  `cmd/prata` is untouched except user-facing strings and stale comments.
-
 ### Added
 
 - `internal/hotkey/listener.go` — `SetOnF9` registers a callback that
@@ -83,16 +71,16 @@ that point.
   blank lines, and unrelated rules verbatim; a missing file is created.
   `Load`/`Apply` and their `cmd/prata` caller are unchanged. Stdlib only.
 - F9 step C1 — primitives ahead of the quick-fix orchestrator (no
-  orchestrator yet). `internal/hotkey` now passes injected events through
-  the low-level hook: when `LLKHF_INJECTED` is set the event goes straight
-  to `CallNextHookEx` before any Ctrl+Win or F9 logic, so our own
-  synthesized Ctrl+C / Ctrl+V / Unicode input reaches the target app but is
-  never read as a hotkey. `internal/inject` exposes `ForegroundWindow` (the
+  orchestrator yet). `internal/inject` exposes `ForegroundWindow` (the
   foreground HWND; `ForegroundWindowClass` now goes through it, unchanged
   behavior) and `RestoreForeground`, which reattaches input to the target
   window's thread (`AttachThreadInput`), calls `SetForegroundWindow`, and
   confirms the window actually became foreground — the safety gate the
-  orchestrator will use to abort paste-back on a failed focus restore.
+  orchestrator uses to abort paste-back on a failed focus restore. (The
+  injected-event hook filtering originally added here — `LLKHF_INJECTED` →
+  `CallNextHookEx` passthrough — is obsolete under the `RegisterHotKey`
+  rewrite below, which cannot self-trigger from synthesized
+  Ctrl+C/Ctrl+V/Unicode input.)
 - F9 step C2 — the `cmd/prata` quick-fix orchestrator that wires the
   primitives together (no device test yet). A global F9 tap grabs the
   foreground selection (`inject.CopySelection`), splits off its leading/
@@ -111,9 +99,32 @@ that point.
   session is not reloaded. `processEvents` is restructured from a `range`
   loop to a `for`/`select` that keeps the existing shutdown semantics
   (a closed `events` channel still returns).
+- `internal/cue` — `PlayError()`, an audible error cue: a double low
+  pulse (2 × 330 Hz, 110 ms each, 70 ms gap), distinct from the single
+  start (880 Hz) and stop (587 Hz) tones in both pitch and rhythm. Same
+  0.07 amplitude and the same in-memory winmm `PlaySoundW` mechanism;
+  playback is best-effort and can never take the dictation loop down.
+  `cmd/prata` plays it on the four previously *silent* failure paths in
+  the release chain — transcribe error/timeout, empty transcription,
+  degenerate-transcription discard, and injection error. Rationale: the
+  production build (`-H windowsgui`) has no console, so these failures
+  were completely invisible — the user heard the press/release cues but
+  got no text and no indication why (surfaced by the Berget outage
+  2026-06-10/11). The stderr lines remain for terminal runs. The
+  deliberate "no audio captured" skip (an accidental brief tap) stays
+  cue-free so accidental taps are not punished with an alarm.
 
 ### Changed
 
+- `internal/hotkey` rewritten from `WH_KEYBOARD_LL` to `RegisterHotKey`
+  (ADR 2026-06-09 in PRATA-DESIGN-LOG.md). PTT gesture changes from
+  **Ctrl+Win-hold** to **F1-hold**; F9 (dictionary quick-fix) moves from
+  the low-level hook to a conditional `RegisterHotKey` registration. The
+  `WH_KEYBOARD_LL` failure class — silent unhook on 300 ms callback
+  timeout, hook invalidation across sleep/resume, AV/EDR keylogger
+  signature — leaves the codebase entirely. The public `Listener`
+  interface (`NewListener`, `SetOnF9`, `Run`, `Stop`) is unchanged;
+  `cmd/prata` is untouched except user-facing strings and stale comments.
 - Dictation now routes on the foreground window's class.
   `Chrome_WidgetWin_1` — the whole Chromium/Electron family plus the
   verified web-based journal system, which reports the same class — goes via
