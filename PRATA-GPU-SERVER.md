@@ -47,6 +47,36 @@ plats för Diktell.
 
 ## Förutsättningar
 
+> **Har du Diktell installerat på maskinen? Då är du nästan klar** — se
+> snabbspåret nedan. Diktell levererar alla tre förutsättningarna (byggkedja,
+> GPU-drivrutin, KB-Whisper-modellen) som servern behöver.
+
+### Snabbspår — Diktell redan installerat
+
+**Byggkedja** (CUDA Toolkit, CMake, Visual Studio Build Tools 2022) finns redan
+på plats om maskinen kompilerar Diktell. Inget extra att installera.
+
+**KB-Whisper-modellen** finns redan — det är *exakt* samma fil (`ggml-model.bin`)
+som Diktell laddar. Hitta sökvägen:
+
+```powershell
+Get-Content C:\Dev\diktell\config.toml | Select-String "model_path"
+# typiskt: model_path = "models/ggml-model.bin"
+# dvs C:\Dev\diktell\models\ggml-model.bin
+```
+
+Du kan antingen peka servern direkt på Diktells modell, eller kopiera filen till
+en egen katalog om du vill hålla dem separata. På den här maskinen lades en kopia
+i `C:\Dev\whisper-models\ggml-model.bin` — det är den path som
+autostart-uppgiften och Steg 2-kommandot använder. Byt path i kommandona om du
+väljer en annan plats.
+
+**Gå direkt till Steg 1 — Bygg whisper.cpp.** Det är det enda som saknas.
+
+---
+
+### Fullinstallation — ny maskin utan Diktell
+
 Server-maskinen behöver:
 
 - Ett RTX 50-kort (Blackwell, compute capability sm_120). Gäller både 5070 Ti
@@ -54,14 +84,12 @@ Server-maskinen behöver:
 - NVIDIA-drivrutin 570+ och CUDA Toolkit 12.8 eller senare (Blackwell kräver
   minst 12.8).
 - CMake 3.20+, Visual Studio Build Tools 2022 med C++-arbetsbörda, Git.
-- KB-Whisper-large GGML-modellen (`ggml-model.bin`, ~3,1 GB) — samma fil som
-  Diktell.
 
-Om maskinen redan bygger Diktell finns hela byggkedjan på plats. Annars: se
-Diktells `docs/03-dev-environment.md` för CUDA/CMake/Build Tools-installationen
-(~30 min).
+Se Diktells `docs/03-dev-environment.md` för CUDA/CMake/Build
+Tools-installationen (~30 min).
 
-Hämta modellen om den inte redan finns på maskinen:
+**Hämta KB-Whisper-large** (modellen som Diktell och servern båda använder,
+~3 GB — ta en kopp kaffe):
 
 ```powershell
 New-Item -ItemType Directory -Path C:\Dev\whisper-models -Force
@@ -70,7 +98,15 @@ Invoke-WebRequest `
   -OutFile "C:\Dev\whisper-models\ggml-model.bin"
 ```
 
+Det här är **KB-Whisper-large** från KBLab — en svensk Whisper-variant tränad på
+svenska texter. Det är den enda modellen som används; generisk Whisper ger sämre
+resultat på svenska och används inte.
+
 ## Steg 1 — Bygg whisper.cpp med CUDA
+
+whisper.cpp är *serverprogrammet* — det som exponerar KB-Whisper-modellen som
+en HTTP-endpoint. Det är inte modellen i sig; modellen har du redan (se
+Förutsättningar). Här laddar du ned och kompilerar serveringen en gång:
 
 ```powershell
 cd C:\Dev
@@ -97,7 +133,11 @@ Resultat: serverbinären hamnar i `build\bin\Release\whisper-server.exe`.
 > 12.0, 16 GB VRAM*. `system_info` rapporterar `CUDA : ARCHS = 1200` och
 > `BLACKWELL_NATIVE_FP4 = 1` — rätt arkitektur byggd.
 
-## Steg 2 — Starta servern
+## Steg 2 — Starta servern med KB-Whisper
+
+Kommandot pekar servern på **KB-Whisper-large** (`ggml-model.bin`) — exakt samma
+modell som Diktell laddar. Justera `-m`-sökvägen om du lade modellen på en annan
+plats (se Förutsättningar → Snabbspår).
 
 ```powershell
 C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe `
@@ -108,7 +148,9 @@ C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe `
   -l sv
 ```
 
-- `-m` — sökväg till modellen (samma `ggml-model.bin` som Diktell).
+- `-m` — sökväg till **KB-Whisper-large** (`ggml-model.bin`). Har du Diktell
+  kan du även peka direkt på `C:\Dev\diktell\models\ggml-model.bin` — det är
+  samma fil.
 - `--host 0.0.0.0` — lyssna på alla nätverksinterface så andra maskiner på
   LAN:et kan nå servern. Default `127.0.0.1` betyder *bara den här maskinen*.
 - `--port 8080` — serverns port (default).
