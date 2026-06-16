@@ -47,17 +47,29 @@ plats för Diktell.
 
 ## Förutsättningar
 
-> **Har du Diktell installerat på maskinen? Då är du nästan klar** — se
-> snabbspåret nedan. Diktell levererar alla tre förutsättningarna (byggkedja,
-> GPU-drivrutin, KB-Whisper-modellen) som servern behöver.
+### Två separata komponenter — viktigt att hålla isär
 
-### Snabbspår — Diktell redan installerat
+Servern består av **två delar** som hanteras på olika sätt:
+
+| Komponent | Vad det är | Hur det hamnar på maskinen |
+|---|---|---|
+| **whisper.cpp** | Serverprogrammet — open source C++ som tar emot HTTP-anrop och kör inferens | Byggs från källkod i Steg 1 (en gång) |
+| **KB-Whisper-large** (`ggml-model.bin`) | Modellen — en färdigtränad fil från KBLab. Det är den som avgör att du får svenska och inte generisk Whisper | Laddas ned (Alternativ B) eller finns redan via Diktell (Alternativ A) |
+
+Du "bygger" alltså **inte** KB-Whisper — den är färdigtränad av KBLab och laddas
+ned som en enstaka ~3 GB-fil. Det är `-m`-flaggan i Steg 2 som pekar
+serverprogrammet på just KB-Whisper-filen. Den garantin sitter i det kommandot,
+inte i bygget.
+
+---
+
+### Alternativ A — Diktell redan installerat på maskinen
 
 **Byggkedja** (CUDA Toolkit, CMake, Visual Studio Build Tools 2022) finns redan
-på plats om maskinen kompilerar Diktell. Inget extra att installera.
+på plats. Inget extra att installera.
 
-**KB-Whisper-modellen** finns redan — det är *exakt* samma fil (`ggml-model.bin`)
-som Diktell laddar. Hitta sökvägen:
+**KB-Whisper-modellen** finns redan — det är *exakt* samma `ggml-model.bin` som
+Diktell laddar. Hitta sökvägen:
 
 ```powershell
 Get-Content C:\Dev\diktell\config.toml | Select-String "model_path"
@@ -65,17 +77,16 @@ Get-Content C:\Dev\diktell\config.toml | Select-String "model_path"
 # dvs C:\Dev\diktell\models\ggml-model.bin
 ```
 
-Du kan antingen peka servern direkt på Diktells modell, eller kopiera filen till
-en egen katalog om du vill hålla dem separata. På den här maskinen lades en kopia
-i `C:\Dev\whisper-models\ggml-model.bin` — det är den path som
-autostart-uppgiften och Steg 2-kommandot använder. Byt path i kommandona om du
-väljer en annan plats.
+Du kan peka servern direkt på Diktells modell, eller kopiera filen till en egen
+katalog. På den här maskinen finns en kopia i
+`C:\Dev\whisper-models\ggml-model.bin` — det är den path autostart-uppgiften och
+Steg 2-kommandot använder. Byt path om du väljer en annan plats.
 
-**Gå direkt till Steg 1 — Bygg whisper.cpp.** Det är det enda som saknas.
+**→ Gå direkt till Steg 1.** Det enda som saknas är serverprogrammet whisper.cpp.
 
 ---
 
-### Fullinstallation — ny maskin utan Diktell
+### Alternativ B — ny maskin utan Diktell
 
 Server-maskinen behöver:
 
@@ -88,8 +99,7 @@ Server-maskinen behöver:
 Se Diktells `docs/03-dev-environment.md` för CUDA/CMake/Build
 Tools-installationen (~30 min).
 
-**Hämta KB-Whisper-large** (modellen som Diktell och servern båda använder,
-~3 GB — ta en kopp kaffe):
+**Hämta KB-Whisper-large** från KBLab (~3 GB — ta en kopp kaffe):
 
 ```powershell
 New-Item -ItemType Directory -Path C:\Dev\whisper-models -Force
@@ -98,15 +108,16 @@ Invoke-WebRequest `
   -OutFile "C:\Dev\whisper-models\ggml-model.bin"
 ```
 
-Det här är **KB-Whisper-large** från KBLab — en svensk Whisper-variant tränad på
-svenska texter. Det är den enda modellen som används; generisk Whisper ger sämre
-resultat på svenska och används inte.
+KB-Whisper-large är en svensk Whisper-variant tränad av KBLab på svenska texter.
+Generisk Whisper ger sämre resultat på svenska och används inte.
 
-## Steg 1 — Bygg whisper.cpp med CUDA
+**→ Fortsätt till Steg 1.**
 
-whisper.cpp är *serverprogrammet* — det som exponerar KB-Whisper-modellen som
-en HTTP-endpoint. Det är inte modellen i sig; modellen har du redan (se
-Förutsättningar). Här laddar du ned och kompilerar serveringen en gång:
+## Steg 1 — Bygg whisper.cpp (serverprogrammet)
+
+Det här steget bygger **serverprogrammet** whisper.cpp — inte modellen. Modellen
+(`ggml-model.bin`) är redan på plats efter Alternativ A eller B ovan. Steg 1
+behöver bara göras en gång per maskin:
 
 ```powershell
 cd C:\Dev
@@ -137,7 +148,7 @@ Resultat: serverbinären hamnar i `build\bin\Release\whisper-server.exe`.
 
 Kommandot pekar servern på **KB-Whisper-large** (`ggml-model.bin`) — exakt samma
 modell som Diktell laddar. Justera `-m`-sökvägen om du lade modellen på en annan
-plats (se Förutsättningar → Snabbspår).
+plats (se Förutsättningar → Alternativ A eller B).
 
 ```powershell
 C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe `
