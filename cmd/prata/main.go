@@ -4,12 +4,12 @@
 // menu (or Ctrl+C when run from a terminal).
 //
 // The API key comes from the BERGET_API_KEY environment variable, or a
-// DPAPI-encrypted file written by prata-setkey (see internal/auth).
+// DPAPI-encrypted file written by `prata --set-key` (see internal/auth).
 //
 // Usage:
 //
-//	$env:BERGET_API_KEY = "..."
-//	prata
+//	prata                    run the daemon
+//	prata --set-key <key>    encrypt and store the Berget API key, then exit
 package main
 
 import (
@@ -36,6 +36,7 @@ import (
 	"github.com/carlosriveros/prata/internal/single"
 	"github.com/carlosriveros/prata/internal/transcribe"
 	"github.com/carlosriveros/prata/internal/tray"
+	"github.com/carlosriveros/prata/internal/ui"
 	"github.com/carlosriveros/prata/internal/update"
 )
 
@@ -162,7 +163,54 @@ func saveBackendPref(b transcribe.Backend) {
 	}
 }
 
+// dispatchSubcommand handles one-shot CLI subcommands that must run instead
+// of the daemon. It parses args manually rather than via the flag package,
+// whose usage/error output goes to stderr — invisible under -H windowsgui.
+// All feedback is shown through a message box. It returns true when a
+// subcommand was handled and the caller should exit without starting the
+// daemon. This is maintenance-path code, deliberately separate from the
+// dictation hot path.
+func dispatchSubcommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "--set-key":
+		runSetKey(args[1:])
+		return true
+	default:
+		return false
+	}
+}
+
+// runSetKey encrypts the supplied Berget API key with user-scope DPAPI and
+// writes it to %LOCALAPPDATA%\Prata\apikey.dat via auth.SaveAPIKey, then
+// reports the outcome in a message box. Pure argument form
+// (`prata --set-key <key>`); there is no interactive prompt because
+// windowsgui builds have no stdin. It writes per-user at medium integrity and
+// never elevates.
+func runSetKey(args []string) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		ui.MessageBox("Prata", "Kunde inte spara nyckeln: ingen nyckel angiven.", ui.IconError)
+		return
+	}
+	key := strings.TrimSpace(args[0])
+	if err := auth.SaveAPIKey(key); err != nil {
+		ui.MessageBox("Prata", fmt.Sprintf("Kunde inte spara nyckeln: %v.", err), ui.IconError)
+		return
+	}
+	ui.MessageBox("Prata", "Nyckeln sparad.", ui.IconInfo)
+}
+
 func main() {
+	// One-shot subcommands (e.g. --set-key) run instead of the daemon and
+	// exit. Dispatch before any daemon setup (DPI, single-instance, audio) so
+	// a maintenance command never trips the "already running" guard or spins
+	// up subsystems it doesn't need.
+	if dispatchSubcommand(os.Args[1:]) {
+		return
+	}
+
 	// Per-monitor DPI awareness must be set before any window or HICON is
 	// created (the tray icon below), so it renders crisp on scaled displays.
 	tray.SetProcessDPIAware()

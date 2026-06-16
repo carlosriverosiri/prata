@@ -8,6 +8,19 @@ that point.
 
 ## [Unreleased]
 
+### Added
+
+- `internal/ui` — minimal Win32 `MessageBox` helper (user32 `MessageBoxW` via
+  syscall, UTF-16 strings) for GUI feedback in windowsgui builds that have no
+  console. Reusable by later maintenance subcommands; kept off the dictation
+  hot path.
+- `prata --set-key <key>` — folds the standalone `prata-setkey` flow into the
+  main binary as a subcommand. Manual `os.Args` parsing dispatched before any
+  daemon setup; reuses `auth.SaveAPIKey` (user-scope DPAPI,
+  `%LOCALAPPDATA%\Prata\apikey.dat`, no elevation) and reports success/failure
+  via the new message box. `cmd/prata-setkey` stays buildable as a thin wrapper
+  over the same `auth` function (removed in a later phase).
+
 ### Changed
 
 - Renamed tray backend labels: Hemma→Rngv GPU-server, Jobb→Rum1 GPU-server,
