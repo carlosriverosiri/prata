@@ -405,13 +405,14 @@ Add a **notify-only** update check, not a self-updater. Three pieces:
   fine for a manual, occasional click. Failures degrade to a "could not
   check" balloon, never a crash.
 
-### 2026-06-16: En-fil maskinbred installation (self-elevating eller IT-driven), signering som förutsättning för Fas 5+
+### 2026-06-16: En-fil maskinbred installation (Gren A: USB + lokal admin), signering förberedd men deferrad
 
-**Status:** Antaget i princip. **Fas 0 (leveransgren + cert-genomförbarhet) är
-pending IT-bekräftelse** och blockerar implementation av Fas 5 och framåt. Fas
-2–4 är rena, osignerade refaktorer som byggs och testas med `go build`/`go run`
-och kan löpa parallellt med cert-/IT-processen — de har värde oavsett
-installationsmodell.
+**Status:** Antaget. **Fas 0 besvarad (2026-06-16): Gren A i småskalig form** —
+~10–12 klinikdatorer, inloggade kliniker har lokal admin (UAC fungerar),
+distribution via USB-minne manuellt per maskin (inte Intune nu). Designen förblir
+förberedd för IT-driven distribution (Intune/SCCM) senare. Fas 2–4 är rena,
+osignerade refaktorer som kan köras direkt; Fas 5+ är avblockerade — signering är
+inte längre en grind (se beslut 1).
 
 **Bakgrund**
 
@@ -429,39 +430,38 @@ ordlista): det finns **ingen maskinbred skrivbar data**. Därför behövs **inge
 skrivbar state per-användare i `%LOCALAPPDATA%\Prata`. Det eliminerar hela
 ACL-/multisession-write-problematiken.
 
-**Fas 0 — leveransgren (pending IT-bekräftelse; blockerar Fas 5+)**
+**Fas 0 — leveransgren (besvarad 2026-06-16: Gren A, småskalig)**
 
 Vem som kör den förhöjda installationen avgör de yttre villkoren, inte
-`--install`-logiken (som är **identisk** i båda grenarna). De två grenarna är
-**likvärdiga** — valet styrs av klinikens verklighet, inte av en preferens:
+`--install`-logiken (som är **identisk** i båda grenarna):
 
-- **Gren A — klinikern har lokal admin.** Self-elevating binär: dubbelklick →
-  `ShellExecute "runas"` → UAC → maskinbred install. Kräver **publik
-  EV-Authenticode-signering** för reputation (annars blockerar SmartScreen/EDR
-  den okända, förhöjda installern).
-- **Gren B — ingen clinician-admin (vanligast på managed sjukhus-PC).** IT kör
-  samma `--install` en gång per maskin, förhöjt, via sitt verktyg
-  (SCCM/Intune/GPO). Då ersätter **IT-allowlisting** (hash/sökväg, eller IT:s
-  eget interna cert i EDR/AppLocker) den publika EV-signeringen helt.
+- **Gren A — klinikern har lokal admin. ← VALD NU.** Self-elevating binär:
+  dubbelklick → `ShellExecute "runas"` → UAC → maskinbred install. Skala: ~10–12
+  klinikdatorer, distribution via **USB-minne**, manuellt per maskin. Inget
+  publikt cert krävs vid denna skala (se nedan + beslut 1).
+- **Gren B — ingen clinician-admin (framtida skalning, inte nu).** IT kör samma
+  `--install` en gång per maskin, förhöjt, via sitt verktyg (SCCM/Intune/GPO),
+  med **IT-allowlisting** (hash/sökväg, eller IT:s eget interna cert i
+  EDR/AppLocker) i stället för publik signering. Designen förblir förberedd för
+  detta, men det är inte målet nu.
 
-**Gren B är inte en nödfallback.** Eftersom den tar bort hela EV-cert-beroendet
-— och eftersom klinikern oftast *saknar* lokal admin — kan Gren B vara den
-**snabbare vägen att skeppa**, och därmed ett potentiellt förstahandsval.
-IT-allowlisting är ett fullgott alternativ till publik signering.
-
-**Praktisk blockerare att notera:** EV-cert kräver oftast en registrerad
-organisation. Cert-genomförbarheten (Gren A) måste bekräftas, inte antas — och
-är en av anledningarna till att Gren B kan vinna på ledtid.
+**Varför signering kan deferras nu.** USB-kopierade exe:er saknar normalt
+Mark-of-the-Web → SmartScreen triggar inte. Vid denna skala (~12 maskiner) +
+lokal admin + USB ersätter **per-maskin-allowlisting** (beslut 9) publik
+signering helt. Publikt EV-cert (kräver oftast registrerad organisation) blir
+relevant först vid skalning till IT-driven distribution.
 
 **Beslut**
 
-1. **Signering = förutsättning för Fas 5+ (Fas 1).** En signerad/allowlistad
-   binär supersedar update-ADR:n (2026-06-15) som förkastade self-update med
-   motiveringen att download-and-execute är vad beteende-AV/EDR flaggar — det
-   enda som ändrar den kalkylen är en betrodd publisher-identitet (publikt
-   EV-cert i Gren A, eller IT-allowlisting i Gren B). **Saknas både cert och
-   IT-allowlisting stannar Fas 5+;** Fas 2–4 (rena refaktorer) byggs osignerat
-   och påverkas inte.
+1. **Signering = förberett, deferrat steg (Fas 1) — inte en grind.** Vid den
+   valda skalan (Gren A, USB, lokal admin) behövs **inget publikt EV-cert för att
+   skeppa**: USB-binärer saknar Mark-of-the-Web (ingen SmartScreen) och
+   per-maskin-allowlisting (beslut 9) täcker AV/EDR. Signering implementeras
+   därför som en **förberedd hook i `release.yml` som är no-op tills ett cert
+   finns**. Detta omvärderar (men river inte) update-ADR:n (2026-06-15):
+   self-update förblir avstängt tills en betrodd publisher-identitet finns; den
+   körbara distributionen nu är USB + per-maskin-allowlisting. Publikt cert blir
+   krav först vid IT-driven skalning (Gren B).
 2. **Installationsplats.** Binär i `%ProgramFiles%\Prata` (skrivskyddad för
    icke-admin — daemonen kan inte modifiera sin egen image). All skrivbar state
    per-användare i `%LOCALAPPDATA%\Prata`. **Inget `%ProgramData%`.**
@@ -501,6 +501,16 @@ organisation. Cert-genomförbarheten (Gren A) måste bekräftas, inte antas — 
    per-användare `backend.txt`-override — **inte** separata namngivna builds per
    plats eller per gren. Samma `prata.exe` kör daemon, `--install`,
    `--uninstall` och `--set-key`.
+9. **AV/EDR-allowlisting (del av install-rutinen).** Designloggen dokumenterar
+   att Webroot blockerar osignerade binärer vid start (ADR 2026-06-15). Två
+   vägar designas, så installationen funkar oavsett vilket skydd maskinen kör
+   (vilken AV bekräftas med IT):
+   - **Windows Defender:** den förhöjda `--install` lägger undantaget själv —
+     `Add-MpPreference -ExclusionPath "%ProgramFiles%\Prata"` — under den
+     befintliga UAC-förhöjningen, ingen extra prompt.
+   - **Tredjeparts-EDR (Webroot e.d.):** undantaget kan inte sättas
+     programmatiskt; det görs i EDR-konsolen och dokumenteras som ett steg i
+     **USB-runbooken**.
 
 **Invarianter (patientsäkerhet — får inte ändras)**
 
@@ -531,19 +541,19 @@ organisation. Cert-genomförbarheten (Gren A) måste bekräftas, inte antas — 
 
 **Konsekvenser**
 
-- Cert/allowlisting är kritisk väg för Fas 5+, men inte för Fas 2–4 — dessa
-  byggs osignerat och levererar värde oavsett (särskilt Fas 4, som fixar "ny
-  användare → Berget-utan-nyckel → felton" i sig). EV-cert-ledtiden stallar
-  alltså inte kodbart arbete.
+- **Signering är inte kritisk väg nu.** Med Gren A/USB/allowlisting byggs Fas
+  2–4 osignerat och Fas 5+ är avblockerade. Cert blir kritisk väg först vid
+  IT-driven skalning (Gren B). EV-cert-ledtiden stallar inget kodbart arbete.
 - `%ProgramFiles%`-placeringen gör att en körande exe inte kan skriva över sig
-  själv → uppdatering måste stoppa task + alla instanser, kopiera, omregistrera,
-  starta om (Fas 6).
+  själv → uppdatering (manuell USB-omkörning) måste stoppa task + alla instanser,
+  kopiera, omregistrera, starta om (Fas 6). Ingen nedladdning — inte network
+  self-update.
 - **Post-install-start är interaktivt-only.** "Starta i aktuell session efter
-  install" gäller **Gren A** (interaktiv UAC-förhöjning). Körs `--install` som
-  SYSTEM via SCCM (**Gren B**) finns **ingen interaktiv session** — då startar
-  Prata först vid nästa inloggning via den maskinbreda tasken. Startsteget måste
-  greenas så det inte felar under SYSTEM-kontext (ingen session att starta i är
-  ett förväntat, icke-fatalt utfall).
+  install" gäller den valda **Gren A** (interaktiv UAC-förhöjning) — fungerar nu.
+  Skulle `--install` framöver köras som SYSTEM via SCCM (**Gren B**) finns ingen
+  interaktiv session, och Prata startar då först vid nästa inloggning via tasken.
+  Startsteget greenas så det inte felar under SYSTEM-kontext (förväntat,
+  icke-fatalt).
 - **Multisession:** den maskinbreda tasken startar Prata i varje session vid
   inloggning. Redan inloggade sessioner uppdateras/startar först vid nästa
   inloggning.
@@ -554,13 +564,14 @@ organisation. Cert-genomförbarheten (Gren A) måste bekräftas, inte antas — 
   hålls **strikt isär** från daemon-hot-pathen — runtime förblir minimal även
   när binären får ett install-läge.
 
-**Faslagd plan (sammanfattning; implementation Fas 1+ avvaktar godkännande +
-Fas 0-svar)**
+**Faslagd plan (sammanfattning; implementation Fas 1+ avvaktar godkännande)**
 
-- **Fas 0** — Gating (ingen kod): bekräfta gren A/B + cert-genomförbarhet med
-  IT. Blockerar Fas 5+.
-- **Fas 1** — Signering/allowlisting i `release.yml` (Gren A: EV-cert; Gren B:
-  dokumentera IT-allowlisting).
+- **Fas 0** — BESVARAD (2026-06-16): Gren A, ~12 maskiner, USB, lokal admin
+  finns. Avblockerad.
+- **Fas 1** — Signtool-hook i `release.yml` (**deferrad, no-op tills cert finns**)
+  + USB-install-rutin/runbook med AV-allowlisting (Defender via
+  `Add-MpPreference` i `--install`; tredjeparts-EDR i konsolen). **Inte längre en
+  grind** för Fas 5+.
 - **Fas 2** — `--set-key` som subkommando (ren argform) + `MessageBoxW`-helper.
   Osignerad refaktor.
 - **Fas 3** — Ordlista: `go:embed` baslinje + per-användare-override; ändra
@@ -568,10 +579,11 @@ Fas 0-svar)**
   refaktor.
 - **Fas 4** — Default-backend Berget → Jobb (build-konstant). Osignerad
   refaktor, värdefull i sig.
-- **Fas 5** — `--install`/`--uninstall` (self-elevation Gren A / no-op förhöjd
-  Gren B; ProgramFiles-kopiering; maskinbred task; migration per beslut 7;
-  interaktivt-only start). **Kräver Fas 1.**
-- **Fas 6** — Uppdateringsflöde (stoppa task+instanser, kopiera, omregistrera,
-  starta om); uppdatera tray-/update-strängar. **Kräver Fas 1.**
-- **Fas 7** — `release.yml` + docs (README, PRATA-MASTER, CHANGELOG); omdefiniera
-  eller ta bort `install.ps1`.
+- **Fas 5** — `--install`/`--uninstall` self-elevating (`ShellExecute "runas"`),
+  **USB-orienterad, ingen download-wrapper**; ProgramFiles-kopiering; maskinbred
+  task; Defender-undantag; migration per beslut 7; interaktiv start (Gren A).
+- **Fas 6** — Uppdateringsflöde (manuell USB-omkörning: stoppa task+instanser,
+  kopiera, omregistrera, starta om); uppdatera tray-/update-strängar.
+- **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering
+  kvar som **förberedd hook, inte krav**; docs (README, PRATA-MASTER, CHANGELOG);
+  omdefiniera eller ta bort `install.ps1`.
