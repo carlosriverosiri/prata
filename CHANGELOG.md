@@ -31,6 +31,14 @@ that point.
 
 ### Changed
 
+- Default backend changed from Berget to **Work** (the local "Jobb" GPU
+  server). When `backend.txt` is missing, unreadable, or names an unknown
+  backend, `loadBackendPref` now returns `transcribe.Work` instead of
+  `transcribe.Berget`. A fresh install with no preference lands on a local GPU
+  server that needs no API key, rather than Berget-without-a-key surfacing as
+  an error cue on the first F1. An existing valid `backend.txt` is still
+  honored unchanged (per-user override wins). Hard-coded default — one binary,
+  no separate build, no ldflags.
 - `dict.resolvePath` and `cmd/prata`'s `loadDict` no longer compute the
   dictionary path independently: `loadDict` delegates to `dict.LoadDefault`, so
   the daemon, `dict.Save`, and `dict.Reload` always agree on the override

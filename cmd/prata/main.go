@@ -123,18 +123,23 @@ func backendPrefPath() string {
 }
 
 // loadBackendPref reads the persisted backend ID and resolves it to a
-// Backend, falling back to Berget when the file is missing or names an
-// unknown backend. Berget is the safe default: it works from any network
-// (given a key) and matches Prata's original behaviour.
+// Backend, falling back to Work (the local "Jobb" GPU server) when the file
+// is missing/unreadable or names an unknown backend. Work is the safe default
+// for a fresh install: a local GPU server needs no API key, so a new clinic
+// user with no backend.txt lands on a working transcriber instead of
+// Berget-without-a-key, which would only surface as an error cue on the first
+// F1. A broken or foreign backend.txt falls back the same way and never
+// silently to Berget (see PRATA-DESIGN-LOG, decisions 5 and 8). This default
+// is hard-coded — one binary, no separate build, no ldflags.
 func loadBackendPref() transcribe.Backend {
 	data, err := os.ReadFile(backendPrefPath())
 	if err != nil {
-		return transcribe.Berget
+		return transcribe.Work
 	}
 	if b, ok := transcribe.BackendByName(strings.TrimSpace(string(data))); ok {
 		return b
 	}
-	return transcribe.Berget
+	return transcribe.Work
 }
 
 // saveBackendPref persists the chosen backend by stable ID. Failures are logged,
