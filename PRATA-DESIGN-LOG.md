@@ -587,3 +587,53 @@ relevant först vid skalning till IT-driven distribution.
 - **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering
   kvar som **förberedd hook, inte krav**; docs (README, PRATA-MASTER, CHANGELOG);
   omdefiniera eller ta bort `install.ps1`.
+
+### 2026-06-16: Ordlista — embeddad baslinje + per-användare-override (Fas 3 implementerad)
+
+**Status:** Implementerad. Genomför Fas 3 i installer-planen ovan.
+
+**Vad som gjordes**
+
+- Baslinjen (`dictionary-corrections.txt`) `go:embed`:as nu i binären som en
+  **immutabel** lager (`internal/dict/dictionary-corrections.txt`, byte-identisk
+  kopia av rot-filen). Den laddas alltid — ordlistan kan inte längre "tyst
+  inaktiveras" för att en fil saknas bredvid exet.
+- **Override** läggs ovanpå baslinjen (`dict.LoadDefault` → `loadLayered` →
+  `mergeRules`): en override-post **lägger till** eller **ersätter per nyckel**
+  en baslinjepost. Ersättning sker på första (och enda eldande) förekomsten, så
+  override vinner under first-match-wins.
+- **Sökvägsupplösning enad.** `resolvePath` (dict) returnerar OVERRIDE-sökvägen:
+  `PRATA_DICT_PATH` (dev) → annars `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`.
+  `cmd/prata`s `loadDict` delegerar till `dict.LoadDefault` — de räknar inte
+  längre ut sökväg oberoende, så daemon/`Save`/`Reload` är alltid överens.
+- **F9/`dict.Save` skriver ENDAST till override-filen** (skapar
+  `%LOCALAPPDATA%\Prata` vid behov), aldrig baslinjen, aldrig bredvid exet.
+- **Biverkan löst:** `go run`-quirken (`os.Executable` → byggcache → ordlistan
+  inaktiverades) är borta eftersom baslinjen alltid är embeddad.
+- **Transient dubblett:** rot-`dictionary-corrections.txt` finns kvar tills Fas 7
+  (den skeppas fortfarande av `release.yml`/`install.ps1`; ofarlig — runtime
+  läser inte längre bredvid exet). Borttagning + paketeringsstädning = Fas 7.
+
+**Byggtids-fold-in — GRÄNSSNITT designat nu, implementation faslagd (Fas 5/6)**
+
+Värdefulla override-poster ska kunna "vikas in" i den embeddade baslinjen inför
+en release, så att de skeppas till alla användare. Kontraktet:
+
+- **Form:** ett litet Go-CLI, `cmd/dict-foldin` (stdlib-only, ingen
+  daemon-koppling), körs **manuellt av utvecklaren** före en release-build —
+  inte i daemon-hot-pathen, inte automatiskt i CI.
+- **Anrop:**
+  `dict-foldin --override <path> [--baseline internal/dict/dictionary-corrections.txt] [--dry-run]`
+  - `--override` (obligatorisk): källan att vika in (typiskt en användares
+    `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`).
+  - `--baseline` (default `internal/dict/dictionary-corrections.txt`): målet som
+    embeddas vid nästa build — den **enda** baslinjekällan.
+  - `--dry-run`: skriv ut diffen (skulle-läggas-till / skulle-ersättas), skriv
+    inget.
+- **Semantik:** identisk med runtime-`mergeRules` — per nyckel lägg till eller
+  ersätt på plats; bevara kommentarer, tomrader och ordning i baslinjen; hoppa
+  över tomma/identitetsregler (som `Save`). **Tar aldrig bort** baslinjeregler.
+- **Utdata:** uppdaterad baslinjefil (idempotent) + en kort rapport
+  (added/replaced/skipped). Exit ≠ 0 vid parsefel i någon fil.
+- **Invariant:** baslinjen förblir den enda embeddade källan; verktyget
+  redigerar bara den filen, rör aldrig användarens override.

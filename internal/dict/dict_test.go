@@ -260,6 +260,109 @@ func TestApplyReplacesAllAdjacentOccurrences(t *testing.T) {
 	}
 }
 
+func TestSaveCreatesLocalAppDataOverride(t *testing.T) {
+	// Force the %LOCALAPPDATA% branch of resolvePath (no PRATA_DICT_PATH):
+	// F9/Save must write to %LOCALAPPDATA%\Prata\dictionary-corrections.txt
+	// and create the Prata directory if missing.
+	tmp := t.TempDir()
+	t.Setenv("PRATA_DICT_PATH", "")
+	t.Setenv("LOCALAPPDATA", tmp)
+
+	ok, err := Save("foo", "bar")
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !ok {
+		t.Fatal("Save = false, want true")
+	}
+	want := filepath.Join(tmp, "Prata", "dictionary-corrections.txt")
+	if got := readFile(t, want); got != "foo = bar\n" {
+		t.Errorf("override file %q = %q, want %q", want, got, "foo = bar\n")
+	}
+}
+
+func TestBaselineEmbedParses(t *testing.T) {
+	rules, err := parse(strings.NewReader(baselineData))
+	if err != nil {
+		t.Fatalf("embedded baseline does not parse: %v", err)
+	}
+	if len(rules) == 0 {
+		t.Error("embedded baseline parsed to 0 rules")
+	}
+}
+
+func TestMergeRulesOverrideReplacesInPlaceAndAppends(t *testing.T) {
+	base := []rule{{key: "a", replacement: "1"}, {key: "b", replacement: "2"}}
+	over := []rule{{key: "a", replacement: "99"}, {key: "c", replacement: "3"}}
+	got := mergeRules(base, over)
+	want := []rule{
+		{key: "a", replacement: "99"}, // replaced in place
+		{key: "b", replacement: "2"},  // baseline kept
+		{key: "c", replacement: "3"},  // appended
+	}
+	if len(got) != len(want) {
+		t.Fatalf("merged len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("rule %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLoadLayeredMergesOverrideFile(t *testing.T) {
+	baseline := "a = 1\nb = 2\n"
+	overridePath := filepath.Join(t.TempDir(), "override.txt")
+	if err := os.WriteFile(overridePath, []byte("a = 99\nc = 3\n"), 0o644); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+	rules, err := loadLayered(baseline, overridePath)
+	if err != nil {
+		t.Fatalf("loadLayered: %v", err)
+	}
+	d := &Dict{rules: rules}
+	if got := d.Apply("a"); got != "99" {
+		t.Errorf("override should win over baseline: Apply(a) = %q, want %q", got, "99")
+	}
+	if got := d.Apply("b"); got != "2" {
+		t.Errorf("baseline-only rule lost: Apply(b) = %q, want %q", got, "2")
+	}
+	if got := d.Apply("c"); got != "3" {
+		t.Errorf("override-only rule lost: Apply(c) = %q, want %q", got, "3")
+	}
+}
+
+func TestLoadLayeredMissingOverrideUsesBaseline(t *testing.T) {
+	baseline := "a = 1\n"
+	rules, err := loadLayered(baseline, filepath.Join(t.TempDir(), "absent.txt"))
+	if err != nil {
+		t.Fatalf("loadLayered with missing override: %v", err)
+	}
+	d := &Dict{rules: rules}
+	if got := d.Apply("a"); got != "1" {
+		t.Errorf("baseline not applied: Apply(a) = %q, want %q", got, "1")
+	}
+}
+
+func TestLoadDefaultLayersBaselineAndOverride(t *testing.T) {
+	path := seedDict(t, "zzzuniquekey = OVERRIDDEN\n")
+	d, err := LoadDefault()
+	if err != nil {
+		t.Fatalf("LoadDefault: %v", err)
+	}
+	if got := d.Apply("zzzuniquekey"); got != "OVERRIDDEN" {
+		t.Errorf("override rule not applied: Apply = %q, want %q", got, "OVERRIDDEN")
+	}
+	// The baseline must be layered in too: the merged dict has more than the
+	// single override rule. (Avoids coupling to specific baseline entries.)
+	if len(d.rules) <= 1 {
+		t.Errorf("baseline not layered in: got %d rules, want > 1", len(d.rules))
+	}
+	if d.path != path {
+		t.Errorf("Dict.path = %q, want override path %q", d.path, path)
+	}
+}
+
 func TestReloadPicksUpSavedRule(t *testing.T) {
 	seedDict(t, "foo = bar\n")
 

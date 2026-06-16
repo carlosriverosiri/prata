@@ -103,28 +103,15 @@ type transcribeResult struct {
 // capture with an error cue so the user re-dictates instead.
 const transcribeQueueDepth = 8
 
-// loadDict resolves the dictionary path (PRATA_DICT_PATH env var, or
-// "dictionary-corrections.txt" next to the executable as a fallback)
-// and returns the parsed Dict. A nil return paired with a non-nil
-// error means dict corrections will be disabled but the app should
-// still run.
+// loadDict builds the active dictionary: the embedded baseline with the
+// per-user override (PRATA_DICT_PATH or %LOCALAPPDATA%\Prata\...) layered on
+// top. Path resolution lives entirely in the dict package (LoadDefault), so
+// loadDict and dict.Save/Reload can never disagree about where the override
+// is. A nil return paired with a non-nil error means dict corrections are
+// disabled but the app should still run; in practice the embedded baseline
+// loads even when no override file exists.
 func loadDict() (*dict.Dict, error) {
-	path := os.Getenv("PRATA_DICT_PATH")
-	if path == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("locate executable: %w", err)
-		}
-		path = filepath.Join(filepath.Dir(exe), "dictionary-corrections.txt")
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	return dict.Load(f)
+	return dict.LoadDefault()
 }
 
 // backendPrefPath is where the active backend choice is stored:

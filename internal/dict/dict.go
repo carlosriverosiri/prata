@@ -17,10 +17,22 @@
 // with the same key has nothing left to match, so a duplicate key
 // further down the file is dead. Save deduplicates on write by
 // replacing the existing line in place rather than appending a second.
+//
+// The active dictionary is built in two layers (see LoadDefault):
+//
+//	baseline  embedded in the binary at build time (immutable, ships to
+//	          every user); the single source folded-in valuable terms.
+//	override  a per-user file (PRATA_DICT_PATH or
+//	          %LOCALAPPDATA%\Prata\dictionary-corrections.txt) layered on
+//	          top — an override rule adds to, or replaces by key, a baseline
+//	          rule. F9/Save writes only the override; the baseline is never
+//	          touched and nothing is ever written next to the executable
+//	          (its directory is read-only once installed under ProgramFiles).
 package dict
 
 import (
 	"bufio"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +42,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 )
+
+// baselineData is the immutable baseline dictionary embedded at build time.
+// It always loads, even when no override file exists, so corrections are
+// never silently disabled (and `go run` works without a file next to the
+// build-cache executable). Valuable override entries are folded into this
+// file before a release build (see PRATA-DESIGN-LOG, fold-in tool).
+//
+//go:embed dictionary-corrections.txt
+var baselineData string
 
 type rule struct {
 	key         string
@@ -53,6 +74,70 @@ func Load(r io.Reader) (*Dict, error) {
 		return nil, err
 	}
 	return &Dict{rules: rules}, nil
+}
+
+// LoadDefault builds the active dictionary: the embedded baseline with the
+// per-user override file (resolvePath) layered on top. A missing override
+// file is fine — the baseline alone applies. The returned Dict remembers the
+// override path, so Reload re-layers from the same place.
+func LoadDefault() (*Dict, error) {
+	path, err := resolvePath()
+	if err != nil {
+		return nil, err
+	}
+	rules, err := loadLayered(baselineData, path)
+	if err != nil {
+		return nil, err
+	}
+	return &Dict{rules: rules, path: path}, nil
+}
+
+// loadLayered parses baseline, then merges the override file at overridePath
+// on top (mergeRules). A non-existent override file is not an error: the
+// baseline rules are returned unchanged. Shared by LoadDefault and Reload.
+func loadLayered(baseline, overridePath string) ([]rule, error) {
+	base, err := parse(strings.NewReader(baseline))
+	if err != nil {
+		return nil, fmt.Errorf("parse baseline: %w", err)
+	}
+	data, err := os.ReadFile(overridePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return base, nil
+		}
+		return nil, fmt.Errorf("read override %s: %w", overridePath, err)
+	}
+	over, err := parse(strings.NewReader(string(data)))
+	if err != nil {
+		return nil, err
+	}
+	return mergeRules(base, over), nil
+}
+
+// mergeRules layers override rules on top of base. An override rule whose key
+// already exists in base replaces that rule in place — at the first (and
+// only firing) occurrence, so override wins under first-match-wins Apply. A
+// new key is appended after the baseline. Within override, a repeated key
+// follows the same rule, so the last occurrence wins (matching Save).
+func mergeRules(base, override []rule) []rule {
+	merged := make([]rule, len(base))
+	copy(merged, base)
+
+	firstIdx := make(map[string]int, len(merged))
+	for i, r := range merged {
+		if _, ok := firstIdx[r.key]; !ok {
+			firstIdx[r.key] = i
+		}
+	}
+	for _, r := range override {
+		if i, ok := firstIdx[r.key]; ok {
+			merged[i] = r
+		} else {
+			firstIdx[r.key] = len(merged)
+			merged = append(merged, r)
+		}
+	}
+	return merged
 }
 
 // parse reads dictionary rules from r in file order. It is shared by
@@ -172,10 +257,11 @@ func isWordChar(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
-// Reload re-reads the dictionary file and replaces this Dict's rules in
-// place, so a long-running instance picks up rules added by Save. It
-// reads the file the Dict was loaded from when known, otherwise the
-// default location (resolvePath). On error the existing rules are kept.
+// Reload rebuilds this Dict's rules in place from the embedded baseline plus
+// the override file, so a long-running instance picks up rules added by Save.
+// The override path is the one this Dict was loaded with when known,
+// otherwise the default location (resolvePath). On error the existing rules
+// are kept.
 func (d *Dict) Reload() error {
 	path := d.path
 	if path == "" {
@@ -186,13 +272,7 @@ func (d *Dict) Reload() error {
 		path = p
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open dictionary: %w", err)
-	}
-	defer f.Close()
-
-	rules, err := parse(f)
+	rules, err := loadLayered(baselineData, path)
 	if err != nil {
 		return err
 	}
@@ -202,8 +282,10 @@ func (d *Dict) Reload() error {
 	return nil
 }
 
-// Save adds or updates the rule "wrong = correct" in the dictionary
-// file (resolvePath) and reports whether a write happened.
+// Save adds or updates the rule "wrong = correct" in the per-user override
+// file (resolvePath) and reports whether a write happened. The embedded
+// baseline is never modified, and nothing is ever written next to the
+// executable.
 //
 // Both fields are trimmed. Nothing is written — (false, nil) — when
 // either field is empty or the rule is an identity (wrong == correct).
@@ -213,7 +295,7 @@ func (d *Dict) Reload() error {
 // appended. This is required for correctness, not tidiness — matching
 // is first-match-wins, so a duplicate appended at the end would never
 // fire. Comments, blank lines, and unrelated rules are preserved
-// verbatim. A missing dictionary file is created.
+// verbatim. A missing override file (and its parent directory) is created.
 func Save(wrong, correct string) (bool, error) {
 	wrong = strings.TrimSpace(wrong)
 	correct = strings.TrimSpace(correct)
@@ -269,23 +351,27 @@ func Save(wrong, correct string) (bool, error) {
 	}
 
 	out := strings.Join(lines, newline) + newline
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, fmt.Errorf("create override directory: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
 		return false, fmt.Errorf("write dictionary: %w", err)
 	}
 	return true, nil
 }
 
-// resolvePath returns the dictionary file location: PRATA_DICT_PATH if
-// set, otherwise "dictionary-corrections.txt" next to the executable.
-// It mirrors loadDict in cmd/prata, kept here so Save and Reload need
-// no caller wiring (that caller is intentionally left untouched).
+// resolvePath returns the per-user override file location, in priority order:
+//
+//  1. PRATA_DICT_PATH (env) — highest priority, for development.
+//  2. %LOCALAPPDATA%\Prata\dictionary-corrections.txt — the normal location.
+//
+// The baseline always comes from the embedded copy; this returns only the
+// override path. cmd/prata's loadDict resolves the same way (it delegates to
+// LoadDefault), so the two never disagree. The path is deliberately not next
+// to the executable: ProgramFiles is read-only for non-admins once installed.
 func resolvePath() (string, error) {
 	if p := os.Getenv("PRATA_DICT_PATH"); p != "" {
 		return p, nil
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate executable: %w", err)
-	}
-	return filepath.Join(filepath.Dir(exe), "dictionary-corrections.txt"), nil
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Prata", "dictionary-corrections.txt"), nil
 }

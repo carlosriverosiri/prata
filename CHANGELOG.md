@@ -20,8 +20,25 @@ that point.
   `%LOCALAPPDATA%\Prata\apikey.dat`, no elevation) and reports success/failure
   via the new message box. `cmd/prata-setkey` stays buildable as a thin wrapper
   over the same `auth` function (removed in a later phase).
+- Dictionary **embedded baseline + per-user override**. The baseline
+  (`dictionary-corrections.txt`) is now `go:embed`-ed into the binary as an
+  immutable layer that always loads. A per-user override is layered on top
+  (`dict.LoadDefault`): an override rule adds to, or replaces by key, a
+  baseline rule (`mergeRules`). The override path is `PRATA_DICT_PATH` (dev) or
+  `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`. `internal/dict/dict_test`
+  covers merging/override-wins, missing-override fallback, the embedded
+  baseline parsing, and `Save` creating the `%LOCALAPPDATA%` override.
 
 ### Changed
+
+- `dict.resolvePath` and `cmd/prata`'s `loadDict` no longer compute the
+  dictionary path independently: `loadDict` delegates to `dict.LoadDefault`, so
+  the daemon, `dict.Save`, and `dict.Reload` always agree on the override
+  location. Resolution no longer looks next to the executable (ProgramFiles is
+  read-only once installed); F9/`dict.Save` writes only to the override file
+  (creating `%LOCALAPPDATA%\Prata` if needed) and never touches the baseline.
+  Side effect: this also fixes the `go run` case where the dictionary was
+  disabled because no file sat next to the build-cache executable.
 
 - Renamed tray backend labels: Hemma→Rngv GPU-server, Jobb→Rum1 GPU-server,
   Berget→Berget Ai (display only, backend mapping unchanged).
