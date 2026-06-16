@@ -33,7 +33,7 @@ func TestTranscribeBergetSendsAuthAndFields(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("secret-key", Backend{Name: "Berget", URL: srv.URL, RequiresKey: true})
+	c := newTestClient("secret-key", Backend{ID: "Berget", DisplayName: "Berget Ai", URL: srv.URL, RequiresKey: true})
 	text, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -67,7 +67,7 @@ func TestTranscribeLocalBackendSendsNoAuth(t *testing.T) {
 	defer srv.Close()
 
 	// A key is present but the local backend must never send it.
-	c := newTestClient("secret-key", Backend{Name: "Hemma", URL: srv.URL, RequiresKey: false})
+	c := newTestClient("secret-key", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
 	text, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -81,7 +81,7 @@ func TestTranscribeLocalBackendSendsNoAuth(t *testing.T) {
 }
 
 func TestTranscribeEmptyURLFails(t *testing.T) {
-	c := newTestClient("", Backend{Name: "Jobb", URL: "", RequiresKey: false})
+	c := newTestClient("", Backend{ID: "Jobb", DisplayName: "Rum1 GPU-server", URL: "", RequiresKey: false})
 	_, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err == nil {
 		t.Fatal("Transcribe with empty URL: want error, got nil")
@@ -128,7 +128,7 @@ func TestTranscribeNormalizesSegmentedText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("", Backend{Name: "Hemma", URL: srv.URL, RequiresKey: false})
+	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
 	got, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -141,13 +141,13 @@ func TestTranscribeNormalizesSegmentedText(t *testing.T) {
 
 func TestBackendByName(t *testing.T) {
 	for _, want := range Backends {
-		got, ok := BackendByName(want.Name)
+		got, ok := BackendByName(want.ID)
 		if !ok {
-			t.Errorf("BackendByName(%q) not found", want.Name)
+			t.Errorf("BackendByName(%q) not found", want.ID)
 			continue
 		}
 		if got != want {
-			t.Errorf("BackendByName(%q) = %+v, want %+v", want.Name, got, want)
+			t.Errorf("BackendByName(%q) = %+v, want %+v", want.ID, got, want)
 		}
 	}
 	if _, ok := BackendByName("Nonexistent"); ok {

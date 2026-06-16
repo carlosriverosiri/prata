@@ -134,7 +134,7 @@ func backendPrefPath() string {
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Prata", "backend.txt")
 }
 
-// loadBackendPref reads the persisted backend name and resolves it to a
+// loadBackendPref reads the persisted backend ID and resolves it to a
 // Backend, falling back to Berget when the file is missing or names an
 // unknown backend. Berget is the safe default: it works from any network
 // (given a key) and matches Prata's original behaviour.
@@ -149,7 +149,7 @@ func loadBackendPref() transcribe.Backend {
 	return transcribe.Berget
 }
 
-// saveBackendPref persists the chosen backend by name. Failures are logged,
+// saveBackendPref persists the chosen backend by stable ID. Failures are logged,
 // not fatal: a write error just means the choice will not survive a restart.
 func saveBackendPref(b transcribe.Backend) {
 	path := backendPrefPath()
@@ -157,7 +157,7 @@ func saveBackendPref(b transcribe.Backend) {
 		fmt.Fprintf(os.Stderr, "backend pref mkdir: %v\n", err)
 		return
 	}
-	if err := os.WriteFile(path, []byte(b.Name+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(b.ID+"\n"), 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "backend pref write: %v\n", err)
 	}
 }
@@ -204,7 +204,7 @@ func main() {
 	active := loadBackendPref()
 	client := transcribe.NewClient(apiKey)
 	client.SetBackend(active)
-	fmt.Fprintf(os.Stderr, "active backend: %s (%s)\n", active.Name, active.URL)
+	fmt.Fprintf(os.Stderr, "active backend: %s (%s)\n", active.DisplayName, active.URL)
 
 	// Buffered so the listener's message-loop goroutine never blocks.
 	// Size 4 covers any realistic press/release burst.
@@ -308,16 +308,17 @@ func main() {
 	t.SetOnCheckUpdate(func() {
 		go checkForUpdate(t)
 	})
-	// Backend selector (Hemma / Jobb / Berget) as radio items in the tray
-	// menu, with the persisted choice pre-selected. Switching is deliberate
-	// and visible: the tray updates the tooltip and shows a balloon, the new
-	// choice is persisted, and the client routes the next dictation there.
-	// Must be set before t.Run is launched (the menu is built in Run).
+	// Backend selector (Rngv GPU-server / Rum1 GPU-server / Berget Ai) as radio
+	// items in the tray menu, with the persisted choice pre-selected. The saved
+	// ID (Hemma/Jobb/Berget) is stable; display names can change without breaking
+	// backend.txt. Switching is deliberate and visible: the tray updates the
+	// tooltip and shows a balloon, the new choice is persisted, and the client
+	// routes the next dictation there. Must be set before t.Run is launched.
 	backendNames := make([]string, len(transcribe.Backends))
 	activeIdx := 0
 	for i, b := range transcribe.Backends {
-		backendNames[i] = b.Name
-		if b.Name == active.Name {
+		backendNames[i] = b.DisplayName
+		if b.ID == active.ID {
 			activeIdx = i
 		}
 	}
@@ -332,13 +333,13 @@ func main() {
 		// choice — but the user is told why a dictation may fail.
 		switch {
 		case b.RequiresKey && apiKey == "":
-			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Varning: ingen API-nyckel. Kör prata-setkey.", b.Name))
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Varning: ingen API-nyckel. Kör prata-setkey.", b.DisplayName))
 		case b.URL == "":
-			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Servern är inte konfigurerad än.", b.Name))
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Servern är inte konfigurerad än.", b.DisplayName))
 		default:
-			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s", b.Name))
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s", b.DisplayName))
 		}
-		fmt.Fprintf(os.Stderr, "backend switched: %s (%s)\n", b.Name, b.URL)
+		fmt.Fprintf(os.Stderr, "backend switched: %s (%s)\n", b.DisplayName, b.URL)
 	})
 	trayDone := make(chan error, 1)
 	go func() {
@@ -619,11 +620,13 @@ func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 		return
 	}
 	if !ok {
+		cue.PlayError()
 		return // nothing selected; clipboard already restored by CopySelection
 	}
 
 	leading, core, trailing := splitEnvelope(sel)
 	if core == "" {
+		cue.PlayError()
 		return // selection was empty or all whitespace
 	}
 

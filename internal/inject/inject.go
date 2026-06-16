@@ -33,6 +33,12 @@ const (
 	interEventDelay  = 2 * time.Millisecond
 	pasteSettleDelay = 50 * time.Millisecond
 
+	// copySettleTimeout is how long CopySelection waits for the clipboard
+	// sequence number to change after Ctrl+C. Chromium/Webdoc often needs
+	// more than a fixed short sleep; polling the seq avoids a race.
+	copySettleTimeout = 300 * time.Millisecond
+	copySettlePoll    = 10 * time.Millisecond
+
 	// focusSettle is how long RestoreForeground waits after
 	// SetForegroundWindow before confirming the window actually became
 	// foreground. Tuned conservatively; revisit during device testing.
@@ -82,6 +88,7 @@ var (
 	procGlobalSize                 = kernel32.NewProc("GlobalSize")
 	procRtlMoveMemory              = kernel32.NewProc("RtlMoveMemory")
 	procGetCurrentThreadId         = kernel32.NewProc("GetCurrentThreadId")
+	procGetClipboardSequenceNumber = user32.NewProc("GetClipboardSequenceNumber")
 )
 
 // Type sends text to the foreground window via clipboard paste. Direct
@@ -218,9 +225,14 @@ func TypeAuto(text string) error {
 // The clipboard is cleared before the copy so that an empty clipboard
 // afterwards reliably means nothing was selected. Without clearing first,
 // a no-op Ctrl+C (nothing selected) would leave the prior text in place
-// and we would misreport it as the selection. In that "nothing selected"
-// case ok is false. Non-text prior formats (images, files, rich text)
-// are not preserved.
+// and we would misreport it as the selection.
+//
+// After Ctrl+C the clipboard sequence number is polled (not a fixed sleep)
+// until it changes from the post-clear baseline, then CF_UNICODETEXT is
+// read once. Slow targets such as Chromium/Webdoc often need >50 ms to
+// populate the clipboard; gating on the sequence number avoids losing the
+// race on a single short F8 tap. In a "nothing selected" case ok is false.
+// Non-text prior formats (images, files, rich text) are not preserved.
 func CopySelection() (text string, ok bool, err error) {
 	previous, hadPrevious, _ := getClipboardText()
 
@@ -228,12 +240,18 @@ func CopySelection() (text string, ok bool, err error) {
 		return "", false, err
 	}
 
+	// seqBefore must be captured AFTER clear: EmptyClipboard bumps the
+	// sequence number itself; reading before clear would make the gate
+	// fire on our own clear rather than the app's copy response.
+	seqBefore := getClipboardSequenceNumber()
+
 	if err := sendChord(vkC); err != nil {
 		return "", false, err
 	}
-	time.Sleep(pasteSettleDelay)
 
-	text, ok, err = getClipboardText()
+	if waitClipboardSequenceChange(seqBefore, copySettleTimeout, copySettlePoll) {
+		text, ok, err = getClipboardText()
+	}
 
 	if hadPrevious {
 		_ = setClipboardText(previous)
@@ -243,7 +261,32 @@ func CopySelection() (text string, ok bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	return text, ok, nil
+	if !ok || text == "" {
+		return "", false, nil
+	}
+	return text, true, nil
+}
+
+// getClipboardSequenceNumber returns the current clipboard sequence number.
+// GetClipboardSequenceNumber does not require OpenClipboard.
+func getClipboardSequenceNumber() uint32 {
+	seq, _, _ := procGetClipboardSequenceNumber.Call()
+	return uint32(seq)
+}
+
+// waitClipboardSequenceChange polls until the clipboard sequence number
+// differs from before, or timeout elapses. Returns false on timeout.
+func waitClipboardSequenceChange(before uint32, timeout, interval time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if getClipboardSequenceNumber() != before {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(interval)
+	}
 }
 
 func clearClipboard() error {

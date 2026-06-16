@@ -242,7 +242,7 @@ func (t *Tray) SetOnCheckUpdate(cb func()) {
 
 // SetBackends configures the backend radio items shown at the top of the
 // right-click menu, with active pre-selected (bulleted). The active name is
-// also appended to the tooltip ("Prata — Hemma"). Like SetOnCheckUpdate it
+// also appended to the tooltip ("Prata — Rngv GPU-server"). Like SetOnCheckUpdate it
 // MUST be called before Run: the menu and tooltip are built in Run, and the
 // fields are read on the message-loop thread.
 func (t *Tray) SetBackends(names []string, active int) {
@@ -527,7 +527,7 @@ func (t *Tray) showBalloon(title, text string) {
 }
 
 // tooltipText is the base tooltip plus the active backend name when a
-// backend selector is configured, e.g. "Prata — Hemma".
+// backend selector is configured, e.g. "Prata — Rngv GPU-server".
 func (t *Tray) tooltipText() string {
 	if n := len(t.backendNames); n > 0 && t.activeBackend >= 0 && t.activeBackend < n {
 		return t.tooltip + " — " + t.backendNames[t.activeBackend]
@@ -560,8 +560,8 @@ func (t *Tray) buildMenu() (uintptr, error) {
 		return 0, fmt.Errorf("CreatePopupMenu failed: %v", sysErr)
 	}
 
-	// Backend radio items (Hemma / Jobb / Berget) at the top, followed by a
-	// separator. The active one is bulleted per-open in showMenu.
+	// Backend radio items (Rngv GPU-server / Rum1 GPU-server / Berget Ai) at the
+	// top, followed by a separator. The active one is bulleted per-open in showMenu.
 	for i, name := range t.backendNames {
 		p, err := syscall.UTF16PtrFromString(name)
 		if err != nil {

@@ -2,7 +2,7 @@
 
 > **Status:** utkast under uppbyggnad. Fylls på steg för steg allt eftersom
 > varje steg verifieras på riktig hårdvara.
-> **Senast uppdaterad:** 2026-06-15
+> **Senast uppdaterad:** 2026-06-16
 
 ## Syfte
 
@@ -45,7 +45,40 @@ som Diktell redan använder — byte-identiskt modellbeteende, ingen
 formatkonvertering; (2) den återanvänder den CUDA-byggkedja du redan har på
 plats för Diktell.
 
-## Förutsättningar
+## Verifierad topologi (2026-06-16)
+
+Tabellen beskriver den faktiska driftsättningen efter att rum 4 (klient) skulle
+nå GPU-servern i rum 1. Använd den som referens vid felsökning på nya maskiner.
+
+| Maskin (Tailscale-namn) | LAN-IP | Tailscale-IP | Roll | Nyckelfakta |
+|---|---|---|---|---|
+| **rum-ett** | `10.64.3.60` (statisk) | `100.80.217.12` | Jobb-PC, **GPU — server** | `whisper-server` port 8080, autostart vid boot |
+| **rum4-9700k** | `10.64.3.59` | `100.78.209.16` | Jobb-PC, **utan GPU — klient** | Kör Prata, backend Rum1 GPU-server |
+| **ringvagen** | — | `100.87.6.56` | Hem-PC (Windows 11), GPU — server | Backend Rngv GPU-server, nås via Tailscale |
+| **ringvagen-wsl** | — | `100.115.64.39` | WSL på hem-PC | Cursor SSH, **ej** i transkriberingsvägen |
+
+**Vald produktionsväg i kliniken:** rum4 → rum-ett **direkt över LAN**
+(`10.64.3.59 → 10.64.3.60`, samma subnät, Ethernet). Patientljudet stannar
+därmed inom sjukhuset — inget Tailscale-relä inblandat. Tailscale behålls som
+fallback och för fjärråtkomst hemma.
+
+**Tailscale är ett mesh (tailnet), inte parvisa uppkopplingar.** Varje maskin
+som loggats in med samma konto blir en nod och når alla andra via sin `100.x`-IP.
+Man "kopplar inte upp mot" en enskild maskin.
+
+**Fallback om LAN-vägen stängs** (segmentering): peka Jobb-backenden till rum-etts
+Tailscale-IP `100.80.217.12` i stället för LAN-IP. Kontrollera då med
+`tailscale status` att kopplingen står som **direct** (inte **relay**) — relay
+innebär att krypterad trafik går ut via ett DERP-relä utanför huset. Detta är
+en nödfallback, inte produktionsvägen (patientljud ska stanna på LAN).
+
+**Känd varning (MagicDNS):** `tailscale status` kan rapportera att MagicDNS inte
+kunde sätta DNS-konfigurationen ("filen används av en annan process"). Konsekvens:
+använd `100.x`-IP-adresser, inte värdnamn, tills det är löst. Blockerar inte
+IP-trafiken.
+
+**Mätt latens (2026-06-16, rum-ett GPU):** ca **1,4 s** per diktering. Jämför
+Berget Ai ~2,6 s (mätt 2026-05-27).
 
 ### Två separata komponenter — viktigt att hålla isär
 
@@ -178,6 +211,10 @@ ingen kallstart per anrop (till skillnad från lokal Diktell-kallstart).
 > börjar lyssna på `0.0.0.0:8080`. Modellfilen är ~2,9 GiB (≈3,1 GB), samma
 > KB-Whisper-large som Diktell.
 
+> ✅ *Verifierat 2026-06-16 på rum-ett (klinik).* GPU-processen syns i
+> `nvidia-smi`, endpointen svarar på `http://10.64.3.60:8080/v1/audio/transcriptions`,
+> live-diktering från rum4 ger ca 1,4 s latens per anrop.
+
 ## Steg 2b — Autostarta servern vid boot (hemma)
 
 Servern ska bete sig som Tailscale: igång efter omstart eller strömavbrott
@@ -251,7 +288,12 @@ Unregister-ScheduledTask -TaskName PrataWhisperServer -Confirm:$false   # ta bor
 > av sig själv på nätström. Nettoresultat: servern startar vid boot utan
 > inloggning och överlever omstart/strömavbrott — som Tailscale.
 
-> **Jobbet:** samma uppgift kan sättas upp där, men följ klinikens IT-policy för
+> ✅ *Verifierat 2026-06-16 på rum-ett (klinik).* Uppgiften **`PrataWhisperServer`**
+> startar servern vid boot utan inloggning. Se avsnittet om brandväggen under
+> Steg 4 — SYSTEM-autostart triggar **aldrig** den interaktiva brandväggsdialogen,
+> så en explicit inbound-regel måste läggas manuellt.
+
+> **Jobbet:** samma uppgift gäller där, men följ klinikens IT-policy för
 > tjänster/autostart. Skillnaden är brandväggsregeln (LAN, inte Tailscale).
 
 ## Steg 3 — Verifiera servern
@@ -301,15 +343,34 @@ en dikteringsklient.
 
 **Jobbet — internt på klinikens LAN.** På jobbet är det tvärtom: dikteringen
 sker från andra arbetsstationer på *samma* nät som GPU-maskinen, och patientljud
-får aldrig lämna det nätet. Byt då `127.0.0.1` mot serverns LAN-IP (`ipconfig`
-på servern). Kräver LAN-brandväggsregeln (Steg 4 → Jobbet).
+får aldrig lämna det nätet. Testa från klientmaskinen (t.ex. rum4), **inte bara
+lokalt på servern** — se avsnittet "Servern fungerar lokalt men inte från
+klienten" under Felsökning.
 
-> ⏳ *Verifieras på plats på jobbet med en andra arbetsstation.*
+PowerShell **på klientmaskinen** (t.ex. rum4):
+
+```powershell
+Test-NetConnection 10.64.3.60 -Port 8080
+# TcpTestSucceeded : True  ← krävs innan Prata kan diktera
+```
+
+> ✅ *Verifierat 2026-06-16.* Från rum4 (`10.64.3.59`) mot rum-ett (`10.64.3.60`):
+> `TcpTestSucceeded : True` efter brandväggsregeln lagts på servern. Live-diktering
+> mot Rum1 GPU-server fungerar.
 
 ## Steg 4 — Brandväggsregel (inbound)
 
 Windows Defender släpper inte in trafik till serverporten förrän en inbound-regel
-lagts. Vilken regel beror på *platsen* — och de två platserna har medvetet olika
+lagts. **Det här är det vanligaste felet vid ny driftsättning** — servern verkar
+fungera på GPU-maskinen men når inte från klienter (se Felsökning).
+
+> **SYSTEM-autostart och brandväggen.** När `whisper-server` startas via
+> schemaläggningsuppgiften (`PrataWhisperServer`, SYSTEM vid boot) triggas **aldrig**
+> den interaktiva brandväggsdialogen som dyker upp vid manuell start. Inkommande
+> TCP 8080 är därför blockerat som standard tills du lägger en explicit regel —
+> även om servern lyssnar på `0.0.0.0:8080`.
+
+Vilken regel beror på *platsen* — och de två platserna har medvetet olika
 åtkomstmodell:
 
 | Plats | Åtkomst | Regel |
@@ -369,6 +430,24 @@ New-NetFirewallRule `
   Brandvägg och portöppning kan dock styras centralt av klinikens IT — följ
   deras policy i stället för att öppna porten på egen hand.
 
+**Diagnosregel (vid felsökning).** Om du behöver snabbt bekräfta att brandväggen
+är rotorsaken kan du temporärt lägga en bredare regel — kör som administratör
+**på GPU-servern**:
+
+```powershell
+New-NetFirewallRule -DisplayName "Prata Whisper Server 8080" `
+  -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any
+```
+
+Verifiera därefter från klientmaskinen (`Test-NetConnection 10.64.3.60 -Port 8080`).
+Strama sedan åt regeln (servern saknar auth):
+
+```powershell
+Set-NetFirewallRule -DisplayName "Prata Whisper Server 8080" `
+  -RemoteAddress 10.64.3.0/24
+# eller explicit lista: -RemoteAddress 10.64.3.59,10.64.3.61
+```
+
 > ⚠️ **Viktigt — nätmasken begränsar vem som når servern.** På GPU-maskinen är
 > nätmasken `255.255.255.192`. Windows `LocalSubnet` i brandväggsregeln ovan
 > motsvarar det adressområde som hör ihop med den nätmasken på servern — inte
@@ -377,14 +456,25 @@ New-NetFirewallRule `
 > `-RemoteAddress` vidgas till klienternas adressområde i stället för
 > `LocalSubnet` — men håll det internt, aldrig internet.
 
-> ⏳ *Läggs och verifieras på plats på jobbet.* Jobbservern får *aldrig* en
-> Tailscale-regel.
+> ✅ *Verifierat 2026-06-16 på rum-ett.* Rotorsak till att rum4 inte nådde servern
+> var **saknad inbound-regel**, inte LAN-segmentering (rum4 `10.64.3.59` och
+> rum-ett `10.64.3.60` ligger i samma subnät). Efter regeln:
+> `Test-NetConnection` från rum4 → `TcpTestSucceeded : True`, live-diktering
+> fungerar. Jobbservern får *aldrig* en Tailscale-regel.
 
 ## Steg 5 — Peka Prata mot servern
 
-Prata har nu en **backend-väljare** med tre alternativ: **Hemma**, **Jobb** och
-**Berget**. Hemma och Jobb är lokala whisper.cpp-GPU-servrar (ingen auth);
-Berget är moln-fallbacken (Bearer-autentiserad).
+Prata har en **backend-väljare** med tre alternativ i tray-menyn:
+
+| Plats (infra) | Tray-ID (sparas i `backend.txt`) | Visningsnamn i menyn |
+|---|---|---|
+| Hem-GPU (Tailscale) | `Hemma` | Rngv GPU-server |
+| Jobb-GPU (LAN) | `Jobb` | Rum1 GPU-server |
+| Moln | `Berget` | Berget Ai |
+
+Rngv och Rum1 är lokala whisper.cpp-GPU-servrar (ingen auth); Berget Ai är
+moln-fallbacken (Bearer-autentiserad). ID:t är stabilt och sparas i
+`backend.txt`; visningsnamnen kan ändras i kod utan att bryta befintliga val.
 
 ### Endpoint-konstanter
 
@@ -402,8 +492,9 @@ const (
 - **HomeURL** pekar på hem-serverns **Tailscale-IP**, så den fungerar oavsett
   vilket nät klienten sitter på (stuga, mobil-hotspot, hemnät).
 - **WorkURL** pekar på jobb-serverns **fasta LAN-IP** (`10.64.3.60`). Den nås
-  bara inifrån klinikens nät, så att välja "Jobb" utanför kliniken ger felton —
-  aldrig tyst fallback. Ändras serverns adress: uppdatera konstanten och bygg om.
+  bara inifrån klinikens nät, så att välja Rum1 GPU-server utanför kliniken ger
+  felton — aldrig tyst fallback. Ändras serverns adress: uppdatera konstanten
+  och bygg om.
 
 ### Hur klienten hittar servern (adressering)
 
@@ -416,12 +507,12 @@ DHCP). **DNS är samma på alla maskiner**; **IP och nätmask varierar per dator
 och sätts utifrån vilken plats i nätet maskinen får. GPU-servern är ingen
 undantag — den får sin egen IP och subnät precis som övriga arbetsstationer.
 
-| Värde | GPU-servern (den här maskinen) | Övriga datorer |
-|---|---|---|
-| IP | `10.64.3.60` | annan per maskin |
-| Nätmask | `255.255.255.192` | kan variera per maskin |
-| DNS 1 | `192.44.242.131` | samma |
-| DNS 2 | `192.44.243.131` | samma |
+| Värde | GPU-servern (rum-ett) | Klient (rum4) | Övriga datorer |
+|---|---|---|---|
+| IP | `10.64.3.60` | `10.64.3.59` | annan per maskin |
+| Nätmask | `255.255.255.192` | samma subnät | kan variera per maskin |
+| DNS 1 | `192.44.242.131` | samma | samma |
+| DNS 2 | `192.44.243.131` | samma | samma |
 
 `WorkURL` pekar på **GPU-maskinens** IP — inte klientens. På den här
 installationen:
@@ -451,40 +542,50 @@ Två saker att hålla reda på oavsett val:
 
 ### Villkorlig auth
 
-Bara Berget skickar `Authorization: Bearer <nyckel>`. De lokala GPU-servrarna
+Bara Berget Ai skickar `Authorization: Bearer <nyckel>`. De lokala GPU-servrarna
 får aldrig nyckeln. API-nyckeln laddas numera "best-effort": saknas den startar
-Prata ändå (lokala backends behöver ingen), men Berget rapporterar fel om det
+Prata ändå (lokala backends behöver ingen), men Berget Ai rapporterar fel om det
 väljs utan nyckel.
 
 ### Välja backend
 
-Högerklicka tray-ikonen → välj **Hemma / Jobb / Berget** (radioknappar, aktivt
-val är prickat). Aktiv backend visas alltid:
+Högerklicka tray-ikonen → välj **Rngv GPU-server / Rum1 GPU-server / Berget Ai**
+(radioknappar, aktivt val är prickat). Aktiv backend visas alltid:
 
-- i tray-tooltipen (`Prata — Hemma`), och
-- som en balong när du byter (`Aktiv transkribering: Hemma`).
+- i tray-tooltipen (`Prata — Rngv GPU-server`), och
+- som en balong när du byter (`Aktiv transkribering: Rngv GPU-server`).
 
-Valet sparas i `%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart.
-Standard vid första start är **Berget** (fungerar överallt med nyckel).
+Valet sparas som stabilt ID (`Hemma`, `Jobb` eller `Berget`) i
+`%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart. Standard vid första
+start är **Berget Ai** (fungerar överallt med nyckel).
 
 **Ingen tyst failover:** är vald server nere får du felton vid diktering, inte
 ett tyst byte till en annan backend. Byte sker bara när *du* väljer i menyn.
 
 ### Testa
 
-1. Starta servern på GPU-maskinen (Steg 2-kommandot).
-2. Kör Prata (`prata.exe`, eller `go run ./cmd/prata` för loggar i terminalen).
-3. Högerklicka tray-ikonen → **Hemma**. Tooltipen blir `Prata — Hemma`.
-4. Håll **F1**, diktera, släpp — texten transkriberas mot GPU-servern.
+**Klinik (rum4 → rum-ett):**
+
+1. Bekräfta att GPU-servern kör på rum-ett (`Get-Process whisper-server` eller
+   att schemaläggningsuppgiften `PrataWhisperServer` är igång).
+2. Från rum4: `Test-NetConnection 10.64.3.60 -Port 8080` → `TcpTestSucceeded : True`.
+3. Kör Prata på rum4. Högerklicka tray-ikonen → **Rum1 GPU-server**.
+4. Håll **F1**, diktera, släpp — texten transkriberas mot GPU-servern (~1,4 s).
+
+**Hemma (Tailscale):**
+
+1. Starta servern på hem-PC:n (Steg 2-kommandot eller autostart).
+2. Kör Prata. Högerklicka tray-ikonen → **Rngv GPU-server**.
+3. Håll **F1**, diktera, släpp.
 
 Snabbtest av nåbarhet utan Prata (t.ex. från MacBook över Tailscale) — se
 Steg 3.
 
 > ✅ *Implementerat och verifierat 2026-06-15:* bygger rent (`go build`,
-> `go vet`), enhetstester för backend-routing och villkorlig auth passerar
-> (Berget skickar Bearer + fält; lokal backend skickar ingen auth även med
-> nyckel satt; tom URL och Berget-utan-nyckel felar). ⏳ Live-diktering mot
-> Hemma-servern testas av användaren med servern igång.
+> `go vet`), enhetstester för backend-routing och villkorlig auth passerar.
+> ✅ *Live-diktering verifierad 2026-06-16:* rum4 → rum-ett (Rum1 GPU-server,
+> LAN, ~1,4 s latens). ⏳ Live-diktering mot Rngv GPU-server (Tailscale) återstår
+> som separat test.
 
 ## Installationsprompt — jobb-PC (klistra in i Cursor/Claude)
 
@@ -528,12 +629,13 @@ Steg:
    inställningarna stämmer; notera IP:n — den blir `WorkURL`.
 
 4. ETT FÖRHÖJT ANROP (en UAC) som gör allt nedan i följd:
-   a. Brandvägg: lägg LAN-regeln från "Steg 4 -> Jobbet" (LocalSubnet, Profile
-      Domain). OBS: `LocalSubnet` följer serverns nätmask — om
-      dikterings-arbetsstationerna har annan IP/nätmask når de inte servern.
-      Stanna och fråga mig om rätt adressområde (vidga `-RemoteAddress`, håll
-      det internt). Blockeras regeln eller styrs av GPO -> stanna och be mig
-      involvera klinikens IT.
+   a. Brandvägg: lägg LAN-regeln från "Steg 4 -> Jobbet". Om osäker, använd
+      diagnosregeln (-Profile Any) först och verifiera från klientmaskinen med
+      Test-NetConnection; strama sedan åt med -RemoteAddress. OBS: SYSTEM-autostart
+      triggar ALDRIG brandväggsdialogen — regeln måste läggas explicit. Om
+      LocalSubnet inte räcker (klient utanför serverns subnät), stanna och fråga
+      mig om rätt adressområde. Blockeras regeln eller styrs av GPO -> stanna
+      och be mig involvera klinikens IT.
    b. Strömläge: `powercfg /change standby-timeout-ac 0` och
       `powercfg /change hibernate-timeout-ac 0` så maskinen inte somnar (skärmen
       får släckas). Styrs detta av GPO -> notera det.
@@ -543,17 +645,17 @@ Steg:
    d. Starta uppgiften (Start-ScheduledTask).
 
 5. VERIFIERA. Vänta in modell-laddningen, bekräfta att processen kör som
-   NT AUTHORITY\SYSTEM, att port 8080 lyssnar på 0.0.0.0 och gör ett
-   transkriberings-anrop (Steg 3) — det bevisar även att GPU fungerar i
-   session 0. Testa om möjligt även från en andra arbetsstation på LAN:et mot
-   serverns LAN-IP.
+   NT AUTHORITY\SYSTEM, att port 8080 lyssnar på 0.0.0.0. Testa från en
+   ANDRA arbetsstation på LAN:et (inte bara lokalt på servern). Test-NetConnection
+   mot serverns LAN-IP ska ge TcpTestSucceeded : True. Gör ett transkriberings-anrop
+   (Steg 3).
 
 6. PEKA PRATA MOT SERVERN. `WorkURL` är redan satt i
    `internal/transcribe/client.go` till `http://10.64.3.60:8080/v1/audio/transcriptions`
    (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
    fått en annan adress. Bygg om Prata (`install.ps1 -Local`). Notera att den
    ombyggda `prata.exe` måste distribueras till de arbetsstationer som ska
-   diktera mot servern. Verifiera att backend "Jobb" går att välja och dikterar.
+   diktera mot servern. Verifiera att backend Rum1 GPU-server går att välja och dikterar.
 
 7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
    GPU/arch, modellsökväg, brandväggsregel, autostart-status, verifieringsresultat
@@ -562,7 +664,77 @@ Steg:
 
 ## Felsökning
 
-> ⏳ *Växer allt eftersom vi stöter på saker.*
+### Servern fungerar lokalt men inte från klienten
+
+**Symptom:** GPU-servern svarar när du öppnar `http://10.64.3.60:8080` *på
+servermaskinen*, men klienten (t.ex. rum4) får timeout eller Prata spelar
+felton vid diktering.
+
+**Varför det ser förvirrande ut:** lokal åtkomst till maskinens egen IP går via
+loopback och **passerar aldrig Windows-brandväggen**. En anslutning från en
+annan maskin gör det. Att servern "fungerar lokalt" bevisar därför *inte* att
+klienter kan nå den — bara att processen lyssnar.
+
+**Felsökningsordning:**
+
+| Steg | Hypotes | Kommando / åtgärd | Typiskt utfall |
+|---|---|---|---|
+| 1 | Servern nere | `Get-Process whisper-server` på GPU-maskinen | Process saknas → starta uppgiften |
+| 2 | Fel port | `Test-NetConnection 10.64.3.60 -Port 8080` från klient | Servern lyssnar på **8080**, inte 8000 |
+| 3 | Bunden till localhost | Testa `10.64.3.60` lokalt *på servern* | Fungerar lokalt men inte från klient → brandvägg, inte bindning |
+| 4 | LAN-segmentering | `Test-NetConnection` från klient, titta på `SourceAddress` | Samma subnät (t.ex. `10.64.3.59 → 10.64.3.60`) → segmentering utesluten |
+| 5 | **Brandvägg** | Lägg inbound-regel (Steg 4 → Jobbet) | **Vanligaste rotorsaken** vid SYSTEM-autostart |
+
+**Verifiering efter brandväggsfix** (PowerShell på klientmaskinen):
+
+```powershell
+Test-NetConnection 10.64.3.60 -Port 8080
+# TcpTestSucceeded : True
+```
+
+> ✅ *Verifierat 2026-06-16:* rum4 kunde inte nå rum-ett trots att servern svarade
+> lokalt. Rotorsak: saknad inbound-regel. Efter regeln: live-diktering fungerar.
+
+### Verifiera att KB-Whisper-Large körs
+
+KB-Whisper-Large är en finjustering av OpenAI:s whisper-large — identisk
+arkitektur och vokabulär. Modellens interna metadata avslöjar **inte** om det är
+KB-versionen. Verifiera istället på två sätt:
+
+1. **Ursprung (identitet).** Kontrollera vilken `.bin` servern startades med:
+
+   ```powershell
+   Get-CimInstance Win32_Process -Filter "Name='whisper-server.exe'" |
+     Select-Object -ExpandProperty CommandLine
+   ```
+
+   Titta på `-m`/`--model`-argumentet. En `ggml-model.bin` från
+   `KBLab/kb-whisper-large` är rätt; ett generiskt `ggml-large-v3.bin` från
+   whisper.cpp:s standardnedladdning är fel modell.
+
+2. **Beteende (klinisk bekräftelse).** Diktera samma svenska mening med medicinska
+   termer mot **Rum1 GPU-server** respektive **Berget Ai** (bekräftad
+   KB-Whisper-Large) och jämför. Identiskt felmönster ⇒ samma modell, och
+   `dictionary-corrections.txt` är rätt kalibrerad.
+
+### Prata-klientinstallation — kända problem
+
+- **AV/EDR-blockering:** osignerad `prata.exe` kan blockeras av Webroot/SmartScreen
+  på nya maskiner (loaderfel utan krasch). Allowlista `%LOCALAPPDATA%\Prata` eller
+  signera binären.
+- **Offline/USB:** `install.ps1 -Local` bygger från källkod och kräver Go +
+  C-verktygskedja. För maskiner utan det: kopiera förbyggda filer manuellt till
+  `%LOCALAPPDATA%\Prata` (`prata.exe`, `prata-setkey.exe`,
+  `dictionary-corrections.txt`).
+- **Autostart:** schemaläggningsuppgiften **`Prata`** startar klienten vid
+  inloggning (skilj från serveruppgiften **`PrataWhisperServer`** på GPU-maskinen).
+
+### Öppna säkerhetspunkter
+
+- **Strama åt brandväggsregeln** på GPU-servern: byt från `-Profile Any` till
+  `-RemoteAddress` med kända klient-IP:n (se Steg 4 → Jobbet).
+- **Rotera Berget-nyckeln** om den exponerats i klartext under felsökning; kör
+  `prata-setkey` igen på berörda maskiner.
 
 ## Status
 
@@ -573,7 +745,7 @@ Steg:
 | Steg 1 — Bygg whisper.cpp | ✅ Verifierat på RTX 5070 Ti (hem-PC) |
 | Steg 2 — Starta servern | ✅ Verifierat — modell laddad på GPU, lyssnar |
 | Steg 2b — Autostart (hemma) | ✅ Körs som SYSTEM vid boot — överlever omstart/strömavbrott, GPU verifierad i session 0 |
-| Steg 3 — Verifiera | ✅ Lokalt verifierat; ⏳ Tailscale-test (hemma) + LAN-test (jobbet) kvar |
-| Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n; LAN-regel borttagen |
-| Steg 4 — Brandvägg (jobbet/LAN) | ⏳ Läggs på plats på jobbet (obs LocalSubnet vs klienternas nätmask) |
-| Steg 5 — Prata-klient | ✅ Backend-väljare byggd och testad; WorkURL satt till `10.64.3.60` (jobb); ⏳ live-diktering kvar |
+| Steg 3 — Verifiera | ✅ Lokalt + LAN från rum4→rum-ett (2026-06-16); ⏳ Tailscale-test (hemma) kvar |
+| Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n (ringvagen) |
+| Steg 4 — Brandvägg (jobbet/LAN) | ✅ Verifierad på rum-ett (2026-06-16); rotorsak vid fel: saknad inbound-regel |
+| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); Rum1 GPU-server produktionsväg |

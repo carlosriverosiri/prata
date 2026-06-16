@@ -8,6 +8,30 @@ that point.
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed tray backend labels: Hemma→Rngv GPU-server, Jobb→Rum1 GPU-server,
+  Berget→Berget Ai (display only, backend mapping unchanged).
+- `Backend` struct split: `Name` → stable `ID` (persisted in `backend.txt`)
+  + `DisplayName` (tray menu, tooltip, user-facing messages). Existing
+  `backend.txt` files with `Hemma`/`Jobb`/`Berget` continue to work.
+- Documentation synced across `PRATA-MASTER.md`, `PRATA-GPU-SERVER.md`, and
+  `README.md` for multi-backend support and the new display names.
+- `PRATA-GPU-SERVER.md` — verified clinic deployment (2026-06-16): topology
+  (rum-ett/rum4), firewall as root cause when server works locally but not
+  from client, LAN verification rum4→rum-ett, ~1.4 s latency, KB-Whisper
+  verification, and expanded troubleshooting section.
+
+### Fixed
+
+- F8 dictionary quick-fix failed silently on the first tap in Chromium/Webdoc
+  because `CopySelection` read the clipboard after a fixed 50 ms sleep — too
+  short for async copy handlers. Holding F8 worked only because RegisterHotKey
+  auto-repeat fired many attempts until one won the race. `CopySelection` now
+  gates on `GetClipboardSequenceNumber` (captured after `clearClipboard`, then
+  polled until it changes, ~300 ms timeout) before reading `CF_UNICODETEXT`.
+  Empty or failed captures now play the error cue instead of returning silently.
+
 ### Added
 
 - `internal/transcribe` — selectable transcription **backends**. A `Backend`

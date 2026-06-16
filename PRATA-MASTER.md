@@ -4,8 +4,9 @@
 
 En minimal Windows-native push-to-talk dikteringsapp för svensk medicinsk diktering med
 `KBLab/kb-whisper-large`. Transkribering sker mot en vald backend: en lokal whisper.cpp-GPU-server
-över nätverket (Hemma / Jobb) eller Berget AI som moln-fallback. Designad som komplement till
-Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen beskrivs i `PRATA-GPU-SERVER.md`.
+över nätverket (**Rngv GPU-server** / **Rum1 GPU-server**) eller **Berget Ai** som moln-fallback.
+Designad som komplement till Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen
+beskrivs i `PRATA-GPU-SERVER.md`.
 
 ## Användarflöde
 
@@ -13,7 +14,7 @@ Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen beskrivs i `PRAT
 
 1. Carlos håller `F1` nere
 2. Prata spelar in mikrofon-ljud (16 kHz mono PCM)
-3. När `F1` släpps: skicka ljudet till vald backend (Hemma / Jobb / Berget)
+3. När `F1` släpps: skicka ljudet till vald backend (Rngv GPU-server / Rum1 GPU-server / Berget Ai)
 4. Normalisera svaret till löpande prosa (kollapsa Whispers per-segment-radbrytningar till mellanslag, som Diktell) och tillämpa dictionary-korrigeringar på texten
 5. Återställ fönstret som var aktivt när `F1` trycktes ned och skriv texten där via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen). Om fönstret inte kan återställas avbryts injektionen med felton i stället för att text hamnar fel.
 6. Transkribering sker asynkront i en FIFO-worker, så en långsam backend-runda blockerar inte nästa `F1`-inspelning.
@@ -31,7 +32,7 @@ Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen beskrivs i `PRAT
 - **Hotkey** — global F1 (PTT) och F8 (dictionary quick-fix) via `RegisterHotKey`
 - **Audio capture** — 16 kHz mono PCM via WASAPI (`malgo` Go-binding för miniaudio)
 - **HTTP client** — POST multipart till vald backend; OpenAI-kompatibel form (`file`, `model`, `language`, `response_format`)
-- **Backend-väljare** — Hemma / Jobb / Berget som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong, valet sparas i `%LOCALAPPDATA%\Prata\backend.txt`. Villkorlig auth (bara Berget skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
+- **Backend-väljare** — Rngv GPU-server / Rum1 GPU-server / Berget Ai som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong. Valet sparas som stabilt ID (`Hemma` / `Jobb` / `Berget`) i `%LOCALAPPDATA%\Prata\backend.txt` — visningsnamnen kan ändras utan att bryta sparade val. Villkorlig auth (bara Berget Ai skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
 - **Dictionary** — Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp) från `dictionary-corrections.txt`
 - **Text injection** — klassbaserad routing: Chromium/Electron (klass `Chrome_WidgetWin_1`, inkl. webbjournalen) → `SendInput` Unicode, hela strängen i ett anrop, urklippet rörs aldrig; övriga fönster → urklipps-paste (`CF_UNICODETEXT`, spara/återställ). Se Beslut 6.
 
@@ -76,8 +77,8 @@ Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen beskrivs i `PRAT
 ## Vad Prata ÄR
 
 - Två operationer: `F1` PTT-diktering och `F8` dictionary quick-fix
-- Helt lokal förutom HTTP-anropet till vald transkriberings-backend (lokal GPU-server på nätet, eller Berget AI)
-- API-nyckel DPAPI-krypterad på maskinen (behövs bara för Berget-backenden)
+- Helt lokal förutom HTTP-anropet till vald transkriberings-backend (lokal GPU-server på nätet, eller Berget Ai)
+- API-nyckel DPAPI-krypterad på maskinen (behövs bara för Berget Ai-backenden)
 - Audio feedback via korta toner: startton (880 Hz) vid inspelningsstart, stopptton (587 Hz) vid släpp, och en felton (dubbel 330 Hz-puls) på de tysta felvägarna i release-kedjan
 - Single binary, ingen runtime, ingen modellfil
 - Hårdkodade endpoint-konstanter; backend-*valet* sparas som tillstånd (inte config) i `backend.txt`

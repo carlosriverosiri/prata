@@ -2,19 +2,30 @@
 
 Push-to-talk Swedish dictation for Windows. Hold **F1**, speak,
 release — your speech is transcribed and typed back into the window that
-was active when you started dictating. Transcription runs on [Berget AI](https://berget.ai) using
-KBLab's `kb-whisper-large` model.
+was active when you started dictating. Transcription uses KBLab's
+`kb-whisper-large` model against a **selected backend**: a local whisper.cpp
+GPU server over the network (**Rngv GPU-server** at home, **Rum1 GPU-server**
+at the clinic) or **[Berget Ai](https://berget.ai)** as the cloud fallback.
 
 Prata is a lightweight background utility: no application window, just a
-single system-tray icon you can right-click to quit. It registers a global
-hotkey, captures the microphone while the keys are held, sends the audio to
-Berget, applies a correction dictionary, and inserts the result.
+single system-tray icon you can right-click to quit or switch backend. It
+registers a global hotkey, captures the microphone while the key is held,
+sends the audio to the active backend, applies a correction dictionary, and
+inserts the result.
 
 ## Features
 
 - **Push-to-talk** via a global F1 hotkey (`RegisterHotKey`) — works in
   any foreground application.
-- **Swedish transcription** through Berget AI (`KBLab/kb-whisper-large`).
+- **Swedish transcription** via `KBLab/kb-whisper-large` — against a local
+  GPU server (whisper.cpp over the LAN/Tailscale) or Berget Ai in the cloud.
+- **Backend selector** — right-click the tray icon and pick **Rngv GPU-server**,
+  **Rum1 GPU-server**, or **Berget Ai** (radio items). The active backend is
+  shown in the tooltip and a balloon on change. The choice is persisted as a
+  stable ID (`Hemma` / `Jobb` / `Berget`) in `%LOCALAPPDATA%\Prata\backend.txt`.
+  Local GPU backends need no API key; Berget Ai requires one. No silent failover
+  — if the chosen server is down you get an error cue, not an automatic switch.
+  See [`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) for server setup.
 - **Gentle audio cues** — a higher tone when recording starts, a lower
   tone when it stops, and a distinct double low pulse when a capture,
   transcription, injection, or quick-fix step fails. Cues are synthesised
@@ -24,7 +35,7 @@ Berget, applies a correction dictionary, and inserts the result.
 - **F8 quick-fix** — select a mis-transcribed word or phrase, tap **F8**,
   edit it in a small popup anchored over the selection, and press Enter.
   Prata saves the rule to the dictionary and pastes the corrected text back.
-- **Async transcription** — slow Berget responses do not freeze the next
+- **Async transcription** — a slow backend response does not freeze the next
   F1 capture. Dictations are transcribed by one FIFO worker and injected
   back into the window that was active when each capture started.
 - **Hybrid text injection** — routed on the foreground window's class.
@@ -35,6 +46,7 @@ Berget, applies a correction dictionary, and inserts the result.
   clipboard content preserved and restored. Anything uncertain defaults to
   clipboard paste.
 - **Encrypted API key** at rest via Windows DPAPI (per-user, per-machine).
+  Required only for the Berget Ai backend; local GPU servers take no auth.
 - **Single-instance guard** — a named mutex prevents two copies from
   double-typing.
 - **System-tray icon** — a small red Prata icon in the notification area;
@@ -51,7 +63,7 @@ Berget, applies a correction dictionary, and inserts the result.
 
 ```
 F1 held  ──► capture target window + WASAPI capture (16 kHz mono PCM)
-release  ──► WAV encode ──► Berget AI ──► dictionary corrections ──► restore target ──► inject (SendInput or clipboard, by class)
+release  ──► WAV encode ──► active backend ──► dictionary corrections ──► restore target ──► inject (SendInput or clipboard, by class)
 
 F8 tap   ──► copy current selection ──► popup edit ──► save dictionary rule ──► restore source ──► paste corrected text
 ```
@@ -59,7 +71,9 @@ F8 tap   ──► copy current selection ──► popup edit ──► save di
 ## Requirements
 
 - **Windows 10/11.**
-- A **Berget AI API key** (the transcription backend).
+- A **Berget Ai API key** if you use the cloud backend (not needed for the
+  local GPU servers). The installer prompts for one; Prata starts without a
+  key and the local backends still work.
 - For building from source only:
   - **Go** (version pinned in `go.mod`).
   - A **C toolchain** — audio capture uses
@@ -83,7 +97,8 @@ iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 
 The installer:
 
 1. Downloads the latest release to `%LOCALAPPDATA%\Prata`.
-2. Prompts for your Berget API key and encrypts it with DPAPI.
+2. Prompts for your Berget Ai API key and encrypts it with DPAPI (needed
+   only for the cloud backend).
 3. Registers a Task Scheduler entry so Prata starts at login.
 
 On upgrades, an existing `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
@@ -129,9 +144,25 @@ them the same way.
 
 ## Configuration
 
+### Transcription backend
+
+Right-click the tray icon and choose one of three backends:
+
+| Display name | Stable ID | Where it points |
+|---|---|---|
+| Rngv GPU-server | `Hemma` | Home GPU server over Tailscale |
+| Rum1 GPU-server | `Jobb` | Clinic GPU server on the LAN |
+| Berget Ai | `Berget` | Berget Ai cloud API |
+
+The active choice is saved to `%LOCALAPPDATA%\Prata\backend.txt` as the
+stable ID and survives restarts. Default on first run is Berget Ai. Endpoint
+URLs are hardcoded constants in the binary — see
+[`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) for server setup and how to
+change them.
+
 ### API key
 
-Two ways to provide the Berget key, checked in this order:
+Two ways to provide the Berget Ai key, checked in this order:
 
 1. **`BERGET_API_KEY`** environment variable (handy for development).
 2. **Encrypted file** at `%LOCALAPPDATA%\Prata\apikey.dat`, written by
@@ -172,12 +203,14 @@ itself.
 ## Usage
 
 1. Start Prata (autostarts at login, or run `prata.exe`).
-2. Hold **F1**. You hear the start tone; speak.
-3. Release. You hear the stop tone; a moment later the transcribed text
+2. Right-click the tray icon and confirm the active backend (Rngv GPU-server,
+   Rum1 GPU-server, or Berget Ai). Switch if needed.
+3. Hold **F1**. You hear the start tone; speak.
+4. Release. You hear the stop tone; a moment later the transcribed text
    is inserted into the window that was active when you pressed F1. If that
    window cannot be safely restored, Prata skips the injection and plays the
    error cue instead of typing into the wrong place.
-4. To add a dictionary rule, select the incorrect word/phrase, tap **F8**,
+5. To add a dictionary rule, select the incorrect word/phrase, tap **F8**,
    edit the popup text, then press **Enter**. Press **Esc** or click away to
    cancel. F8 and PTT injections are serialized so their clipboard and
    keystroke operations cannot interleave.
@@ -216,9 +249,9 @@ present).
 | Path | Purpose |
 | --- | --- |
 | `cmd/prata/` | Main push-to-talk application. |
-| `cmd/prata-setkey/` | Encrypts the Berget API key to disk (DPAPI). |
+| `cmd/prata-setkey/` | Encrypts the Berget Ai API key to disk (DPAPI). |
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
-| `internal/transcribe/` | Berget AI HTTP client + PCM→WAV encoder. |
+| `internal/transcribe/` | Multi-backend transcription client + PCM→WAV encoder. |
 | `internal/hotkey/` | Global `RegisterHotKey` listener for F1 (PTT) and F8 (dictionary quick-fix). |
 | `internal/inject/` | Hybrid text injection — SendInput Unicode for allowlisted (Chromium/Electron) windows, clipboard paste with preservation otherwise. |
 | `internal/dict/` | Word-boundary correction dictionary. |
@@ -226,7 +259,7 @@ present).
 | `internal/auth/` | DPAPI key encryption (`crypt32.dll`). |
 | `internal/single/` | Single-instance named-mutex guard. |
 | `internal/cue/` | In-process audio cue tones (winmm `PlaySoundW`). |
-| `internal/tray/` | System-tray icon + right-click "Avsluta" menu (P/Invoke `shell32`/`user32`). |
+| `internal/tray/` | System-tray icon, backend selector, update check, and Avsluta menu (P/Invoke `shell32`/`user32`). |
 | `internal/icon/` | Embedded application icon (`//go:embed Prata.ico`). |
 
 The `cmd/*-test/` directories (`hotkey-test`, `f8-test`, `record-test`,
@@ -261,6 +294,6 @@ cues) is direct P/Invoke against Windows DLLs via `syscall`.
 Personal project, Windows-only. See [`CHANGELOG.md`](CHANGELOG.md) for the
 development history and [`PRATA-DESIGN-LOG.md`](PRATA-DESIGN-LOG.md) for
 architecture decision records.
-[`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) is a work-in-progress guide for
-running a local KB-Whisper GPU server on the LAN as an alternative
-transcription backend to Berget AI.
+[`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) documents how to run a local
+KB-Whisper GPU server on the LAN (home via Tailscale, clinic via LAN-only)
+as an alternative to Berget Ai.

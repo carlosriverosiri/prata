@@ -28,7 +28,7 @@ const (
 // from any network the client sits on (cabin, mobile hotspot, home LAN).
 // WorkURL targets the work GPU server on the clinic LAN at its fixed IP
 // (10.64.3.60). It is only reachable from inside the clinic network, so
-// selecting "Jobb" off-site fails with an error cue rather than falling back
+// selecting Rum1 GPU-server off-site fails with an error cue rather than falling back
 // silently. Prata follows "edit constant + recompile", no config file — change
 // this and rebuild if the server is re-addressed.
 const (
@@ -43,7 +43,8 @@ const (
 // backend swapped under the user in a patient-data tool is a safety problem,
 // not a convenience (see PRATA-GPU-SERVER.md, "Ingen automatisk failover").
 type Backend struct {
-	Name        string // shown in the tray menu and tooltip
+	ID          string // stable identifier for persistence and lookup (backend.txt)
+	DisplayName string // shown in the tray menu, tooltip, and user-facing messages
 	URL         string // full OpenAI-compatible transcription endpoint
 	RequiresKey bool   // Berget needs a Bearer key; local GPU servers do not
 }
@@ -51,19 +52,19 @@ type Backend struct {
 // The selectable backends. Home and Work are local whisper.cpp GPU servers
 // (no auth); Berget is the cloud fallback (Bearer-authenticated).
 var (
-	Home   = Backend{Name: "Hemma", URL: HomeURL, RequiresKey: false}
-	Work   = Backend{Name: "Jobb", URL: WorkURL, RequiresKey: false}
-	Berget = Backend{Name: "Berget", URL: BergetURL, RequiresKey: true}
+	Home   = Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: HomeURL, RequiresKey: false}
+	Work   = Backend{ID: "Jobb", DisplayName: "Rum1 GPU-server", URL: WorkURL, RequiresKey: false}
+	Berget = Backend{ID: "Berget", DisplayName: "Berget Ai", URL: BergetURL, RequiresKey: true}
 )
 
 // Backends is the selectable list, in tray-menu order.
 var Backends = []Backend{Home, Work, Berget}
 
-// BackendByName returns the predefined backend with the given name. It is
+// BackendByName returns the predefined backend with the given stable ID. It is
 // used to resolve a persisted selection back to a Backend on startup.
-func BackendByName(name string) (Backend, bool) {
+func BackendByName(id string) (Backend, bool) {
 	for _, b := range Backends {
-		if b.Name == name {
+		if b.ID == id {
 			return b, true
 		}
 	}
@@ -126,10 +127,10 @@ type transcriptionResponse struct {
 func (c *Client) Transcribe(wav io.Reader) (string, error) {
 	b := c.ActiveBackend()
 	if b.URL == "" {
-		return "", fmt.Errorf("backend %q has no configured URL", b.Name)
+		return "", fmt.Errorf("backend %q has no configured URL", b.DisplayName)
 	}
 	if b.RequiresKey && c.apiKey == "" {
-		return "", fmt.Errorf("backend %q requires an API key but none is set", b.Name)
+		return "", fmt.Errorf("backend %q requires an API key but none is set", b.DisplayName)
 	}
 
 	var body bytes.Buffer
@@ -168,13 +169,13 @@ func (c *Client) Transcribe(wav io.Reader) (string, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("post to %s backend: %w", b.Name, err)
+		return "", fmt.Errorf("post to %s backend: %w", b.DisplayName, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("%s backend returned %d: %s", b.Name, resp.StatusCode, string(errBody))
+		return "", fmt.Errorf("%s backend returned %d: %s", b.DisplayName, resp.StatusCode, string(errBody))
 	}
 
 	var out transcriptionResponse
