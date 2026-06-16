@@ -404,3 +404,174 @@ Add a **notify-only** update check, not a self-updater. Three pieces:
 - The check needs network and GitHub's unauthenticated API (60 req/h per IP);
   fine for a manual, occasional click. Failures degrade to a "could not
   check" balloon, never a crash.
+
+### 2026-06-16: En-fil maskinbred installation (self-elevating eller IT-driven), signering som förutsättning för Fas 5+
+
+**Status:** Antaget i princip. **Fas 0 (leveransgren + cert-genomförbarhet) är
+pending IT-bekräftelse** och blockerar implementation av Fas 5 och framåt. Fas
+2–4 är rena, osignerade refaktorer som byggs och testas med `go build`/`go run`
+och kan löpa parallellt med cert-/IT-processen — de har värde oavsett
+installationsmodell.
+
+**Bakgrund**
+
+Prata installeras idag per användare: `install.ps1` kopierar binärerna till
+`%LOCALAPPDATA%\Prata` och registrerar en Task Scheduler-uppgift `"Prata"` för
+en enskild användare. På en klinik med delade PC, där användare byter dator, är
+detta fel modell — varje användare måste installera om, och separata filer
+(`prata-setkey.exe`, `dictionary-corrections.txt`, `install.ps1`) gör paketet
+ömtåligt. Målet: **en fil** som installerar allt, och **en installation som
+gäller samtliga användare** på maskinen.
+
+En arkitektonisk följd av besluten nedan (per-användare-nyckel + per-användare-
+ordlista): det finns **ingen maskinbred skrivbar data**. Därför behövs **inget
+`%ProgramData%`** — binären ligger skrivskyddad i `%ProgramFiles%\Prata`, all
+skrivbar state per-användare i `%LOCALAPPDATA%\Prata`. Det eliminerar hela
+ACL-/multisession-write-problematiken.
+
+**Fas 0 — leveransgren (pending IT-bekräftelse; blockerar Fas 5+)**
+
+Vem som kör den förhöjda installationen avgör de yttre villkoren, inte
+`--install`-logiken (som är **identisk** i båda grenarna). De två grenarna är
+**likvärdiga** — valet styrs av klinikens verklighet, inte av en preferens:
+
+- **Gren A — klinikern har lokal admin.** Self-elevating binär: dubbelklick →
+  `ShellExecute "runas"` → UAC → maskinbred install. Kräver **publik
+  EV-Authenticode-signering** för reputation (annars blockerar SmartScreen/EDR
+  den okända, förhöjda installern).
+- **Gren B — ingen clinician-admin (vanligast på managed sjukhus-PC).** IT kör
+  samma `--install` en gång per maskin, förhöjt, via sitt verktyg
+  (SCCM/Intune/GPO). Då ersätter **IT-allowlisting** (hash/sökväg, eller IT:s
+  eget interna cert i EDR/AppLocker) den publika EV-signeringen helt.
+
+**Gren B är inte en nödfallback.** Eftersom den tar bort hela EV-cert-beroendet
+— och eftersom klinikern oftast *saknar* lokal admin — kan Gren B vara den
+**snabbare vägen att skeppa**, och därmed ett potentiellt förstahandsval.
+IT-allowlisting är ett fullgott alternativ till publik signering.
+
+**Praktisk blockerare att notera:** EV-cert kräver oftast en registrerad
+organisation. Cert-genomförbarheten (Gren A) måste bekräftas, inte antas — och
+är en av anledningarna till att Gren B kan vinna på ledtid.
+
+**Beslut**
+
+1. **Signering = förutsättning för Fas 5+ (Fas 1).** En signerad/allowlistad
+   binär supersedar update-ADR:n (2026-06-15) som förkastade self-update med
+   motiveringen att download-and-execute är vad beteende-AV/EDR flaggar — det
+   enda som ändrar den kalkylen är en betrodd publisher-identitet (publikt
+   EV-cert i Gren A, eller IT-allowlisting i Gren B). **Saknas både cert och
+   IT-allowlisting stannar Fas 5+;** Fas 2–4 (rena refaktorer) byggs osignerat
+   och påverkas inte.
+2. **Installationsplats.** Binär i `%ProgramFiles%\Prata` (skrivskyddad för
+   icke-admin — daemonen kan inte modifiera sin egen image). All skrivbar state
+   per-användare i `%LOCALAPPDATA%\Prata`. **Inget `%ProgramData%`.**
+3. **Berget-nyckel.** Behåll per-användare user-scope DPAPI (status quo) via
+   `prata --set-key`. **Ingen** `CRYPTPROTECT_LOCAL_MACHINE` — det skulle
+   exponera nyckeln för alla på en delad PC. Krävs ej för Jobb/Hemma.
+4. **Ordlista.** `go:embed` av delad baslinje + per-användare-override i
+   `%LOCALAPPDATA%\Prata`. Sidesteppar både skrivrättighet i ProgramFiles och
+   multisession-write-racen mot en delad fil. F8 skriver till overriden.
+   `resolvePath` (dict.go) **och** `loadDict` (main.go) räknar idag ut sökväg
+   oberoende och **måste ändras tillsammans**. En **byggtidsrutin** designas för
+   att vika in värdefulla override-tillägg i baslinjen vid release
+   (klinikkorrigeringar är domänkunskap, inte personlig preferens);
+   implementationen får faslägga, men gränssnittet designas.
+5. **Default-backend Jobb.** `loadBackendPref`-defaulten ändras Berget → Jobb
+   som build-konstant; `backend.txt` per-användare överrider. Annars träffar en
+   ny användare Berget-utan-nyckel vid F1 → felton.
+6. **Autostart.** En maskinbred Task Scheduler-uppgift, trigger AtLogon för
+   **alla** användare (Principal `BUILTIN\Users`, LogonType Interactive,
+   RunLevel Limited), startar Prata i varje användares session. **Task Scheduler
+   > HKLM\Run** motiveras av RunLevel-kontroll (medium IL, se invariant),
+   startvillkor och robusthet; HKLM\Run nämns som enklare fallback.
+7. **Migration (spänner alla profiler; data bara för installerande användare).**
+   `--install` upptäcker och städar bort tidigare per-användare-install. Cleanup
+   av gamla autostarter **måste spänna samtliga användarprofiler** — admin kan
+   enumerera och ta bort gamla `"Prata"`-tasks och `%LOCALAPPDATA%`-exe-kopior
+   tvärs alla användare. Men **per-användare-DATA kan inte migreras tvärs
+   användare:** `apikey.dat` är user-scope DPAPI och är oläsbar för
+   installeraren. Endast den **installerande användarens** data migreras (Gren
+   A: bevara `apikey.dat`/`backend.txt`, migrera ev. gammal ordlista →
+   override). Övriga användare får **färska defaults vid första körning** —
+   acceptabelt, eftersom Jobb inte kräver nyckel och ordlistebaslinjen är
+   embeddad. `--uninstall` tar bort ProgramFiles-mappen + den maskinbreda
+   tasken. (Rör **inte** `PrataWhisperServer` — det är GPU-serverns task, en
+   annan sak.)
+8. **En (1) binär.** Leveransen är **en enda binär** med Jobb-default inbyggd +
+   per-användare `backend.txt`-override — **inte** separata namngivna builds per
+   plats eller per gren. Samma `prata.exe` kör daemon, `--install`,
+   `--uninstall` och `--set-key`.
+
+**Invarianter (patientsäkerhet — får inte ändras)**
+
+- **UIPI / medium IL.** Daemonen kör på medium IL (Task Scheduler RunLevel
+  Limited). **Bara** install-åtgärden förhöjer. En förhöjd daemon bryter
+  SendInput-injicering i ett icke-förhöjt Webdoc **tyst** — hård invariant.
+- **windowsgui = ingen konsol.** All installer-/update-feedback via `MessageBoxW`
+  (inkl. "UAC avbruten", fel, klart). `--set-key` som **ren argform**
+  (`--set-key <key>`), ingen interaktiv prompt.
+- **Single-instance-mutexen är redan sessionsbunden** (oprefixat namn i
+  `single.Acquire` = `Local\`). Verifieras och dokumenteras — ändras inte. Det
+  är detta som gör att Prata får en instans *per session* på en delad PC.
+
+**Alternativ som förkastades**
+
+- **HKLM\Run** i stället för Task Scheduler — ingen RunLevel-/villkorskontroll,
+  kan stängas av per användare i Aktivitetshanteraren. Behålls bara som
+  nödfallback.
+- **Machine-scope DPAPI** för Berget-nyckeln — exponerar hemligheten för alla på
+  maskinen; onödigt då Berget är nedprioriterad.
+- **Delad skrivbar ordlista i `%ProgramData%`** — kräver ACL-vidgning + atomisk
+  write + tvärprocess-lås mot multisession-race; mycket maskineri mot
+  minimalism. Per-användare-override ger samma nytta utan racen.
+- **MSI/Inno/NSIS/WiX** — externa paketeringsverktyg bryter
+  en-fil-/stdlib-only-principen.
+- **Separata namngivna builds per plats/gren** — bryter en-binär-principen;
+  ersätts av Jobb-default + per-användare-override (beslut 5 och 8).
+
+**Konsekvenser**
+
+- Cert/allowlisting är kritisk väg för Fas 5+, men inte för Fas 2–4 — dessa
+  byggs osignerat och levererar värde oavsett (särskilt Fas 4, som fixar "ny
+  användare → Berget-utan-nyckel → felton" i sig). EV-cert-ledtiden stallar
+  alltså inte kodbart arbete.
+- `%ProgramFiles%`-placeringen gör att en körande exe inte kan skriva över sig
+  själv → uppdatering måste stoppa task + alla instanser, kopiera, omregistrera,
+  starta om (Fas 6).
+- **Post-install-start är interaktivt-only.** "Starta i aktuell session efter
+  install" gäller **Gren A** (interaktiv UAC-förhöjning). Körs `--install` som
+  SYSTEM via SCCM (**Gren B**) finns **ingen interaktiv session** — då startar
+  Prata först vid nästa inloggning via den maskinbreda tasken. Startsteget måste
+  greenas så det inte felar under SYSTEM-kontext (ingen session att starta i är
+  ett förväntat, icke-fatalt utfall).
+- **Multisession:** den maskinbreda tasken startar Prata i varje session vid
+  inloggning. Redan inloggade sessioner uppdateras/startar först vid nästa
+  inloggning.
+- **Blast radius:** `release.yml` (skeppar idag `prata.exe`, `prata-setkey.exe`,
+  `dictionary-corrections.txt`, `install.ps1`), update-ADR:n och tray-strängen
+  ("Kör om installationskommandot") måste uppdateras i takt (Fas 1/6/7).
+- "See and forget" och minimalism bevaras genom att install-/update-kodvägen
+  hålls **strikt isär** från daemon-hot-pathen — runtime förblir minimal även
+  när binären får ett install-läge.
+
+**Faslagd plan (sammanfattning; implementation Fas 1+ avvaktar godkännande +
+Fas 0-svar)**
+
+- **Fas 0** — Gating (ingen kod): bekräfta gren A/B + cert-genomförbarhet med
+  IT. Blockerar Fas 5+.
+- **Fas 1** — Signering/allowlisting i `release.yml` (Gren A: EV-cert; Gren B:
+  dokumentera IT-allowlisting).
+- **Fas 2** — `--set-key` som subkommando (ren argform) + `MessageBoxW`-helper.
+  Osignerad refaktor.
+- **Fas 3** — Ordlista: `go:embed` baslinje + per-användare-override; ändra
+  `resolvePath` + `loadDict` tillsammans; designa byggtids-fold-in. Osignerad
+  refaktor.
+- **Fas 4** — Default-backend Berget → Jobb (build-konstant). Osignerad
+  refaktor, värdefull i sig.
+- **Fas 5** — `--install`/`--uninstall` (self-elevation Gren A / no-op förhöjd
+  Gren B; ProgramFiles-kopiering; maskinbred task; migration per beslut 7;
+  interaktivt-only start). **Kräver Fas 1.**
+- **Fas 6** — Uppdateringsflöde (stoppa task+instanser, kopiera, omregistrera,
+  starta om); uppdatera tray-/update-strängar. **Kräver Fas 1.**
+- **Fas 7** — `release.yml` + docs (README, PRATA-MASTER, CHANGELOG); omdefiniera
+  eller ta bort `install.ps1`.
