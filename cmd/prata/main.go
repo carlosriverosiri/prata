@@ -31,6 +31,7 @@ import (
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/icon"
 	"github.com/carlosriveros/prata/internal/inject"
+	"github.com/carlosriveros/prata/internal/installer"
 	"github.com/carlosriveros/prata/internal/popup"
 	"github.com/carlosriveros/prata/internal/sanity"
 	"github.com/carlosriveros/prata/internal/single"
@@ -169,6 +170,9 @@ func dispatchSubcommand(args []string) bool {
 	switch args[0] {
 	case "--set-key":
 		runSetKey(args[1:])
+		return true
+	case "--install":
+		installer.Run()
 		return true
 	default:
 		return false

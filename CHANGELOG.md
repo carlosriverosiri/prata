@@ -10,6 +10,25 @@ that point.
 
 ### Added
 
+- `internal/installer` + `prata --install` — machine-wide, self-elevating
+  install (clean-install happy path). Checks token elevation
+  (`OpenProcessToken`/`GetTokenInformation`); if not elevated, re-launches
+  itself with `--install` via `ShellExecuteW` verb `runas` (a declined UAC
+  prompt shows a Swedish message box and exits). Once elevated it copies the
+  running binary into `%ProgramFiles%\Prata\prata.exe` (with a source==dest
+  guard for idempotent repair) and registers a machine-wide Task Scheduler
+  logon task from generated XML (`schtasks /Create /XML`, UTF-16LE BOM): a
+  `LogonTrigger` with no `UserId` (all users), principal `GroupId`
+  `S-1-5-32-545` (BUILTIN\Users) / `InteractiveToken` / **RunLevel
+  LeastPrivilege** (the UIPI/medium-IL invariant — never `Highest`),
+  `MultipleInstancesPolicy Parallel`, `ExecutionTimeLimit PT0S`. The daemon is
+  started post-install via `schtasks /Run` (medium IL in the user session),
+  never exec'd from the elevated installer; a failed on-demand start is
+  non-fatal ("starts at next sign-in"). Scope: clean install only — migration
+  of a per-user install, `--uninstall`, and overwrite-while-running/update are
+  later phases. Hardware smoke test deferred to a Webroot-allowlisted machine
+  (see PRATA-DESIGN-LOG); unit tests cover the task XML, `installDir`,
+  `samePath`, and the UTF-16 encoding.
 - `internal/ui` — minimal Win32 `MessageBox` helper (user32 `MessageBoxW` via
   syscall, UTF-16 strings) for GUI feedback in windowsgui builds that have no
   console. Reusable by later maintenance subcommands; kept off the dictation

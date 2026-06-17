@@ -637,3 +637,67 @@ en release, så att de skeppas till alla användare. Kontraktet:
   (added/replaced/skipped). Exit ≠ 0 vid parsefel i någon fil.
 - **Invariant:** baslinjen förblir den enda embeddade källan; verktyget
   redigerar bara den filen, rör aldrig användarens override.
+
+### 2026-06-17: `--install` maskinbred, self-elevating — happy path (Fas 5a implementerad)
+
+**Status:** Implementerad (ren install, ingen tidigare Prata). Genomför Fas 5a.
+Deferrat: migrering av per-användare-install (5b), `--uninstall` (5c),
+överskriv-medan-igång/uppdatering (6), Webroot-allowlisting + `Installera-Prata.bat`
+(7).
+
+**Vad som gjordes**
+
+- Nytt paket `internal/installer` (rå `syscall`, ingen ny dependency — håller
+  stdlib-only-principen). `dispatchSubcommand` fick `case "--install"`.
+  No-args = daemon är oförändrat.
+- **Förhöjning:** `isElevated` (`OpenProcessToken` + `GetTokenInformation`
+  `TokenElevation`). Ej förhöjd → `ShellExecuteW` verb `runas` params
+  `--install`, exit; retur ≤ 32 (UAC nekad) → svensk MessageBox. Redan förhöjd
+  (återstartat barn / Gren B) → fortsätt. `isElevated`-kollen hindrar loop.
+- **Kopiering:** `os.Executable()` → `%ProgramFiles%\Prata\prata.exe`.
+  source==dest jämförs på normaliserad, case-insensitiv sökväg → hoppa kopian
+  men omregistrera tasken (idempotent reparation). Låst/oskrivbart mål → fel,
+  ingen tyst fortsättning.
+- **Maskinbred task** via genererad XML (UTF-16LE + BOM, `schtasks /Create /XML
+  … /F`): `LogonTrigger` utan `UserId`, `GroupId` = `S-1-5-32-545`,
+  `LogonType` `InteractiveToken`, `RunLevel` `LeastPrivilege`,
+  `MultipleInstancesPolicy` `Parallel`, `ExecutionTimeLimit` `PT0S`.
+- **Post-install-start:** `schtasks /Run /TN "Prata"` (best-effort, medium IL).
+  Misslyckas → icke-fatalt ("nästa inloggning").
+
+**Beslut värda att notera**
+
+- **GroupId via SID `S-1-5-32-545`, inte literalen "Users"/"BUILTIN\\Users".**
+  Gruppens *visningsnamn* är lokaliserat (svensk Windows: "Användare"); den
+  välkända SID:en är språkoberoende och alltid upplösbar. Korrekt teknik trots
+  att prompten skrev "BUILTIN\\Users".
+- **`MultipleInstancesPolicy` = `Parallel`** (inte `IgnoreNew`): en instans per
+  session i multisession; sessionsmutexen hindrar dubletter inom en session.
+  `IgnoreNew` hade kunnat blockera andra sessioners daemon.
+- **`AllowStartOnDemand` = true** krävs för att `schtasks /Run` ska fungera.
+
+**Känd risk (verifieras på hårdvara)**
+
+- `schtasks /Run` på en **grupp-principal + InteractiveToken**-task ska köra
+  daemonen i den inloggades session på medium IL oberoende av installerns
+  HIGH IL (Schedulertjänsten skapar processen enligt principalens RunLevel).
+  Detta är den punkt som kan bråka på vissa Windows-versioner. Om `/Run` inte
+  startar in-session: den icke-fatala "nästa inloggning"-vägen täcker det, och
+  ett dokumenterat **`explorer.exe <exe>`-trick** (Explorer kör på medium IL →
+  barnet ärver medium IL) finns som nödfallback — **kodas inte nu**.
+
+**Manuellt smoke-test-protokoll (kör på en REN, Webroot-allowlistad maskin)**
+
+Den byggda osignerade exe:n blockeras under Webroot och `go run` kan inte
+meningsfullt testa `--install`, så detta är deferrat tills en allowlistad
+maskin finns. Steg:
+
+1. Dubbelklicka install-vägen (`prata.exe --install`) → UAC-prompt visas.
+2. Godkänn UAC → binär hamnar i `%ProgramFiles%\Prata\prata.exe`.
+3. `schtasks /Query /TN Prata /XML` → bekräfta `RunLevel` `LeastPrivilege`,
+   `GroupId` `S-1-5-32-545`, LogonTrigger utan `UserId`.
+4. Daemonen startad i sessionen → verifiera **medium IL** (Process Explorer:
+   Integrity = Medium), inte High.
+5. F1 → diktera in i icke-förhöjt Webdoc → text injiceras (UIPI-invarianten
+   håller).
+6. Kör `--install` igen och avbryt UAC → snygg svensk MessageBox, ingen krasch.
