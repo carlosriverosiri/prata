@@ -115,7 +115,7 @@ _Ursprunglig plan från Fas 0. Faktiska faser och status — inklusive arbete ef
 | 4 | Default-backend Jobb | ✅ |
 | 5a | `--install` happy path (ren maskin) | ✅ |
 | 5b | Migrering gammal per-användare-install (döda instanser → retry-copy → legacy-binärstädning) | ✅ Hårdvaruverifierad 2026-06-20 |
-| 5c | `--uninstall` | ⏳ |
+| 5c | `--uninstall` (self-elevate → döda instanser → ta bort task + `%ProgramFiles%\Prata`; lämnar per-användardata) | ✅ Hårdvaruverifierad 2026-06-20 |
 | 6 | Uppdatering (överskriv medan igång) | ⏳ |
 | 7 | Release.yml → en binär + `Installera-Prata.bat` | ⏳ |
 

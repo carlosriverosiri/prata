@@ -601,7 +601,29 @@ relevant först vid skalning till IT-driven distribution.
   (medium IL) och användardata bevarades. Känd begränsning:
   binären man kör `--install` *från* kan inte raderas av städningen (i bruk) →
   loggas, ofarlig eftersom maskinvida binären i `%ProgramFiles%` är auktoritativ.
-- **Fas 5c** — `--uninstall`.
+- **Fas 5c** — `--uninstall` (speglar `--install`). `Uninstall()` självförhöjer
+  via `relaunchElevated("--uninstall")` (helpern parametriserades; `Run` skickar
+  `"--install"` — beteendebevarande). Förhöjt, i ordning: (1)
+  `terminateOtherInstances` stoppar daemonen + låser upp binären (self-PID
+  exkluderad); (2) `schtasks /Delete /TN "Prata" /F`, klassad **locale-säkert**
+  via post-state `schtasks /Query` (`taskAbsent`) — aldrig felsträngsparsning; (3)
+  `removeInstallDirWithRetry` tar bort `%ProgramFiles%\Prata` (10 × 200 ms mot det
+  övergående image-section-låset efter terminering). **Per-användardata i
+  `%LOCALAPPDATA%\Prata` lämnas orörd** (API-nyckel, ordlista, backend-val — dyra
+  att återskapa, och `--install` skapade dem aldrig; symmetri). `PrataWhisperServer`
+  (whisper-serverns SYSTEM-task) rörs aldrig — endast `"Prata"` adresseras. Best-
+  effort teardown: "redan borta" = lyckat, genuin kvarleva → mjuk varnings-
+  MessageBox (ingen krasch). **Körande-binär-begränsning (Option A):** körs
+  `--uninstall` från den *installerade* `%ProgramFiles%\Prata\prata.exe` kan mappen
+  inte tömmas helt (Windows låter inte radera en körande `.exe`); `runningFromInstallDir`
+  upptäcker detta och visar "kör --uninstall från USB-/originalkopian". Robustare
+  temp-kopia-återstart (Option B) byggs inte nu. Status: **✅ hårdvaruverifierad
+  2026-06-20** — smoke-test (`--uninstall` från extern `C:\Dev`-kopia, inte den
+  installerade binären): `terminateOtherInstances` dödade den körande daemonen
+  (PID 99272), `schtasks /Query` bekräftade tasken borta, `%ProgramFiles%\Prata`
+  togs bort, och `%LOCALAPPDATA%\Prata` lämnades intakt (6 filer kvar: apikey.dat,
+  backend.txt, ordlistan + `.default` + `.bak`, prata.exe.bak). Eftersom uninstall
+  kördes utanför installDir gällde lyckade-vägen, inte Option-A-varningen.
 - **Fas 6** — Uppdateringsflöde (manuell USB-omkörning: stoppa task+instanser,
   kopiera, omregistrera, starta om); uppdatera tray-/update-strängar.
 - **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering
