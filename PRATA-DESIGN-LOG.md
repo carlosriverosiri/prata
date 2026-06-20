@@ -731,9 +731,12 @@ maskin finns. Steg:
 förhöjda barnet). Läs den om något steg ovan fallerar — den fångar felet även
 när installern bara visar en modal MessageBox.
 
-**Delvis verifierat 2026-06-20** på utvecklings-/hem-PC:n (ej Webroot): steg
-1–3 programmatiskt bekräftade — binären kopierad till `%ProgramFiles%\Prata`,
-tasken registrerad, `RunLevel` = `Limited` (via `Get-ScheduledTask`), daemonen
-kör från `%ProgramFiles%\Prata\prata.exe` utan argument. Kvar att verifiera:
-medium-IL i Process Explorer (steg 4), F1-injektion i Webdoc (steg 5),
-UAC-avbryt-rutan (steg 6), samt en körning på en ren klinikmaskin.
+**Verifierat 2026-06-20** på utvecklings-/hem-PC:n (ej Webroot): steg 1–5
+bekräftade — binären kopierad till `%ProgramFiles%\Prata`, tasken registrerad,
+`RunLevel` = `Limited` (via `Get-ScheduledTask`), daemonen kör från
+`%ProgramFiles%\Prata\prata.exe` utan argument, och F1 injicerade i ett oförhöjt
+fönster — vilket i sig bevisar medium IL (high IL skulle UIPI-blockera
+injiceringen, så steg 4 behöver ingen separat Process Explorer-kontroll).
+F1-testet kördes i ett vanligt oförhöjt fönster, inte specifikt Webdoc;
+mekanismen är identisk men en explicit Webdoc-bekräftelse återstår. Kvar att
+verifiera: UAC-avbryt-rutan (steg 6) och en körning på en ren klinikmaskin.
