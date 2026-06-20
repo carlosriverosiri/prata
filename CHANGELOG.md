@@ -27,8 +27,11 @@ that point.
   never exec'd from the elevated installer; a failed on-demand start is
   non-fatal ("starts at next sign-in"). Scope: clean install only — migration
   of a per-user install, `--uninstall`, and overwrite-while-running/update are
-  later phases. Hardware smoke test deferred to a Webroot-allowlisted machine
-  (see PRATA-DESIGN-LOG); unit tests cover the task XML, `installDir`,
+  later phases. Install mechanics and the medium-IL daemon start were
+  hardware-verified 2026-06-20 (copy, task registration, RunLevel Limited,
+  daemon from %ProgramFiles%, F1 injection into a non-elevated window; a clean
+  clinic-machine run and the UAC-cancel message box are still pending — see
+  PRATA-DESIGN-LOG); unit tests cover the task XML, `installDir`,
   `samePath`, and the UTF-16 encoding. Each install step and any error is also
   appended to `%TEMP%\prata-install.log` (timestamped, best-effort) so the
   console-less, message-box-only install path leaves a durable diagnostic trail
