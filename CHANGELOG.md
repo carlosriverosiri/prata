@@ -48,6 +48,21 @@ that point.
   start path are unchanged. Hardware-verified 2026-06-20 (dirty-state: stale
   daemon terminated, copy retried through the lock, new daemon up at medium
   integrity, user data preserved).
+- `prata --uninstall` — machine-wide uninstall mirroring `--install`. Self-elevates
+  (`relaunchElevated` was parameterized to take the subcommand; the install path is
+  behaviour-identical), terminates running instances, deletes the machine-wide
+  `Prata` task, and removes `%ProgramFiles%\Prata` (with a retry for the transient
+  post-termination lock). Task deletion is classified locale-safely via
+  `schtasks /Query` post-state rather than parsing the (localized) delete output.
+  Best-effort teardown: "already absent" counts as success and a genuine leftover
+  yields a soft warning message box, not a crash. **Per-user data in
+  `%LOCALAPPDATA%\Prata` is left in place** (API key, dictionary, backend choice);
+  `PrataWhisperServer` is never touched. Known limit (Option A): running
+  `--uninstall` from the installed binary cannot delete its own running `.exe`, so
+  the message box tells the user to run it from the USB/original copy.
+  Hardware-verified 2026-06-20 (uninstall run from an external copy: running
+  daemon terminated, `Prata` task gone, `%ProgramFiles%\Prata` removed, and
+  `%LOCALAPPDATA%\Prata` left intact).
 - `internal/ui` — minimal Win32 `MessageBox` helper (user32 `MessageBoxW` via
   syscall, UTF-16 strings) for GUI feedback in windowsgui builds that have no
   console. Reusable by later maintenance subcommands; kept off the dictation
