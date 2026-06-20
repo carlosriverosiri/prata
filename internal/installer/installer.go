@@ -264,14 +264,22 @@ func runSchtasks(args ...string) error {
 	return nil
 }
 
-// taskXML builds the Task Scheduler definition for the machine-wide daemon:
+// taskXML builds the Task Scheduler definition for the machine-wide daemon.
+//
+// Element order matters: the Task Scheduler v1.2 schema declares principalType
+// and settingsType as ordered sequences, and schtasks /XML rejects an
+// out-of-order document with "the task XML contains an unexpected node". The
+// order below follows the schema exactly.
 //
 //   - LogonTrigger without a UserId — fires for every user at logon.
 //   - Principal GroupId S-1-5-32-545 (BUILTIN\Users; the well-known SID is
 //     locale-safe — the display name is localized, e.g. "Användare" on Swedish
-//     Windows), LogonType InteractiveToken, RunLevel LeastPrivilege. RunLevel
-//     must never be Highest: that would run the daemon elevated and break
-//     SendInput into non-elevated apps (UIPI invariant).
+//     Windows). No explicit LogonType: for a group principal interactive logon
+//     is implicit, and the schema requires LogonType before GroupId, so an
+//     explicit value would only invite ordering bugs. RunLevel LeastPrivilege
+//     is what enforces medium integrity and must never be Highest — that would
+//     run the daemon elevated and break SendInput into non-elevated apps (UIPI
+//     invariant). The integrity guarantee lives in RunLevel, not LogonType.
 //   - Exec is the installed binary with no arguments (= daemon).
 //   - MultipleInstancesPolicy Parallel so each session gets its own instance
 //     (the session-scoped mutex prevents duplicates within a session).
@@ -289,24 +297,23 @@ func taskXML(exePath string) string {
   <Principals>
     <Principal id="Author">
       <GroupId>S-1-5-32-545</GroupId>
-      <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
   <Settings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
     <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
     <StartWhenAvailable>true</StartWhenAvailable>
     <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <WakeToRun>false</WakeToRun>
     <Enabled>true</Enabled>
     <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Priority>7</Priority>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
   </Settings>
   <Actions Context="Author">
     <Exec>

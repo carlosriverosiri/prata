@@ -13,7 +13,6 @@ func TestTaskXMLEnforcesInvariants(t *testing.T) {
 		`<RunLevel>LeastPrivilege</RunLevel>`,           // never Highest (UIPI)
 		`<LogonTrigger>`,                                // logon-triggered
 		`<GroupId>S-1-5-32-545</GroupId>`,               // BUILTIN\Users (locale-safe SID)
-		`<LogonType>InteractiveToken</LogonType>`,       // in-session user token
 		`<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>`, // no time limit
 		`<Command>C:\Program Files\Prata\prata.exe</Command>`,
 	}
@@ -24,13 +23,86 @@ func TestTaskXMLEnforcesInvariants(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		`<UserId>`, // logon trigger must apply to all users
-		`Highest`,  // RunLevel Highest would break SendInput via UIPI
+		`<UserId>`,    // logon trigger must apply to all users
+		`Highest`,     // RunLevel Highest would break SendInput via UIPI
+		`<LogonType>`, // explicit LogonType with a GroupId breaks schtasks /XML
 	}
 	for _, s := range mustNotContain {
 		if strings.Contains(xml, s) {
 			t.Errorf("task XML must not contain %q\n---\n%s", s, xml)
 		}
+	}
+}
+
+// TestTaskXMLElementOrder guards against the schtasks "unexpected node" error,
+// which is caused by elements appearing out of the schema-defined sequence.
+// It checks the relative position of order-sensitive elements rather than the
+// exact layout.
+func TestTaskXMLElementOrder(t *testing.T) {
+	xml := taskXML(`C:\Program Files\Prata\prata.exe`)
+
+	// Within Principal: GroupId must precede RunLevel.
+	assertOrder(t, xml, "<GroupId>", "<RunLevel>")
+
+	// Within Settings, the schema sequence (subset we emit). Scope to the
+	// Settings block because some element names (e.g. <Enabled>) also appear
+	// in other blocks such as the trigger.
+	settings := between(t, xml, "<Settings>", "</Settings>")
+	settingsOrder := []string{
+		"<AllowStartOnDemand>",
+		"<MultipleInstancesPolicy>",
+		"<DisallowStartIfOnBatteries>",
+		"<StopIfGoingOnBatteries>",
+		"<AllowHardTerminate>",
+		"<StartWhenAvailable>",
+		"<RunOnlyIfNetworkAvailable>",
+		"<WakeToRun>",
+		"<Enabled>",
+		"<Hidden>",
+		"<ExecutionTimeLimit>",
+		"<Priority>",
+		"<RunOnlyIfIdle>",
+	}
+	for i := 0; i+1 < len(settingsOrder); i++ {
+		assertOrder(t, settings, settingsOrder[i], settingsOrder[i+1])
+	}
+
+	// Top-level: Triggers, Principals, Settings, Actions in that order.
+	assertOrder(t, xml, "<Triggers>", "<Principals>")
+	assertOrder(t, xml, "<Principals>", "<Settings>")
+	assertOrder(t, xml, "<Settings>", "<Actions")
+}
+
+// between returns the substring of s strictly between the first occurrences of
+// open and close. It fails the test if either marker is missing.
+func between(t *testing.T, s, open, close string) string {
+	t.Helper()
+	i := strings.Index(s, open)
+	if i < 0 {
+		t.Fatalf("marker %q missing", open)
+	}
+	rest := s[i+len(open):]
+	j := strings.Index(rest, close)
+	if j < 0 {
+		t.Fatalf("marker %q missing", close)
+	}
+	return rest[:j]
+}
+
+func assertOrder(t *testing.T, s, first, second string) {
+	t.Helper()
+	i := strings.Index(s, first)
+	j := strings.Index(s, second)
+	if i < 0 {
+		t.Errorf("element %q missing", first)
+		return
+	}
+	if j < 0 {
+		t.Errorf("element %q missing", second)
+		return
+	}
+	if i >= j {
+		t.Errorf("element order wrong: %q (at %d) must precede %q (at %d)", first, i, second, j)
 	}
 }
 
