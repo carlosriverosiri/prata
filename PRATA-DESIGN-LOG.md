@@ -624,8 +624,26 @@ relevant först vid skalning till IT-driven distribution.
   togs bort, och `%LOCALAPPDATA%\Prata` lämnades intakt (6 filer kvar: apikey.dat,
   backend.txt, ordlistan + `.default` + `.bak`, prata.exe.bak). Eftersom uninstall
   kördes utanför installDir gällde lyckade-vägen, inte Option-A-varningen.
-- **Fas 6** — Uppdateringsflöde (manuell USB-omkörning: stoppa task+instanser,
-  kopiera, omregistrera, starta om); uppdatera tray-/update-strängar.
+- **Fas 6** — Uppdateringsflöde. **Mekaniken finns redan i `--install`** och kräver
+  ingen ny kod: `installElevated` kör `terminateOtherInstances` → `copyFileWithRetry`
+  → `registerTask` (`schtasks /Create /F`, så XML:en regenereras och en ändrad
+  task-definition appliceras) → `runTask` (omstart i sessionen, medium IL). Bevisat av
+  5b-smoke-testet (överskriv-medan-igång: dödade PID 82948 → retry-copy → omregistrering
+  → omstart). En uppdatering = **kör om `--install` från den NYA binären på USB-minnet**;
+  `samePath(src,dst)`-vakten gör att om man kör den redan installerade
+  `%ProgramFiles%\Prata\prata.exe --install` hoppas kopian över (bara task-reparation +
+  omstart, ingen versionshöjning) — uppdatering måste därför ske från USB-kopian, inte
+  från den installerade binären (samma modell som uninstall Option-A). Fas 6 är därför
+  **bara text + docs**: tray-notisen (`res.Newer`) pekar nu på USB-omkörningen i stället
+  för det vaga "installationskommandot", och de stale `install.ps1`-kommentarerna i
+  `internal/update` + `main.go` korrigeras (installern är en separat process som dödar
+  daemonen *före* kopian → ingen self-overwrite, ingen rename-dans). Versions-checken
+  (`update.Check`) är oförändrad. **Multi-session-villkor:** `terminateOtherInstances`
+  dödar *alla* andra `prata.exe` per namn (self-exkluderad), så på en delad klinikdator
+  avbryter en `--install` även en annan inloggad användares daemon — uppdatera när ingen
+  dikterar (full USB-runbook-rad = Fas 7). Status: **✅ Verifierad 2026-06-20** (grindar + diff-granskning; ren
+  strängändring, ingen ny mekanik att hårdvarutesta — uppdateringsmekaniken är
+  redan 5b-verifierad).
 - **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering
   kvar som **förberedd hook, inte krav**; docs (README, PRATA-MASTER, CHANGELOG);
   omdefiniera eller ta bort `install.ps1`.
