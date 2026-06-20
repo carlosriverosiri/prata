@@ -1,10 +1,11 @@
 // Package update checks GitHub Releases for a newer Prata version. It only
 // reports whether a newer release exists and where to get it — it never
-// downloads or installs anything. The actual upgrade goes through
-// install.ps1, the single tested install/upgrade path. This keeps the
-// running binary from having to overwrite itself (impossible while running
-// without the rename dance) and avoids the download-and-execute behaviour
-// that behavioural AV/EDR products flag (see PRATA-DESIGN-LOG.md, the
+// downloads or installs anything. The actual upgrade goes through re-running
+// `prata.exe --install` from the new copy, the single tested install/upgrade
+// path: a separate installer process terminates the running daemon before
+// overwriting the binary, so the running image never overwrites itself (no
+// rename dance) and Prata avoids the download-and-execute behaviour that
+// behavioural AV/EDR products flag (see PRATA-DESIGN-LOG.md, the
 // unsigned-binary Webroot ADR).
 package update
 
@@ -18,7 +19,7 @@ import (
 )
 
 // latestReleaseURL is GitHub's "latest release" endpoint for the Prata repo
-// (the same owner/name install.ps1 downloads from). It returns the most
+// (the same repo the release artifacts are published to). It returns the most
 // recent non-draft, non-prerelease release.
 const latestReleaseURL = "https://api.github.com/repos/carlosriverosiri/prata/releases/latest"
 

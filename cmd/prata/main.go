@@ -42,9 +42,9 @@ import (
 )
 
 // version is the release this binary was built from. The release workflow
-// and install.ps1 -Local inject the git tag via
-// -ldflags "-X main.version=…"; a plain `go build`/`go run` leaves it as
-// "dev", which never reports an available update against a real release tag.
+// injects the git tag via -ldflags "-X main.version=…"; a plain
+// `go build`/`go run` leaves it as "dev", which never reports an available
+// update against a real release tag.
 var version = "dev"
 
 // event is what the listener enqueues for the processor goroutine.
@@ -617,9 +617,10 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 
 // checkForUpdate queries GitHub for the latest release and reports the
 // result as a tray balloon. It never downloads or installs — upgrades go
-// through install.ps1 (the single tested path), which also keeps Prata clear
-// of the download-and-execute behaviour that AV/EDR products flag. Runs on
-// its own goroutine so the network call never blocks the tray UI thread.
+// through re-running `prata.exe --install` from the new copy (the single
+// tested path), which also keeps Prata clear of the download-and-execute
+// behaviour that AV/EDR products flag. Runs on its own goroutine so the
+// network call never blocks the tray UI thread.
 func checkForUpdate(t *tray.Tray) {
 	res, err := update.Check(version)
 	if err != nil {
@@ -630,7 +631,7 @@ func checkForUpdate(t *tray.Tray) {
 	fmt.Fprintf(os.Stderr, "update check: current=%s latest=%s newer=%v\n", res.Current, res.Latest, res.Newer)
 	switch {
 	case res.Newer:
-		t.Notify("Prata", fmt.Sprintf("Ny version %s finns (du kör %s). Kör om installationskommandot för att uppdatera.", res.Latest, res.Current))
+		t.Notify("Prata", fmt.Sprintf("Ny version %s finns (du kör %s). Uppdatera genom att köra om Prata-installationen från USB-minnet.", res.Latest, res.Current))
 	case !res.Comparable:
 		t.Notify("Prata", fmt.Sprintf("Senaste version är %s. Den här kopian är en lokal build (%s).", res.Latest, res.Current))
 	default:
