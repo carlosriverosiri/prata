@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -30,6 +31,27 @@ import (
 
 // taskName is the Task Scheduler task name (and on-demand /Run target).
 const taskName = "Prata"
+
+// logf appends a timestamped diagnostic line to %TEMP%\prata-install.log. The
+// install path runs without a console (windowsgui) and reports outcomes
+// through modal message boxes, which are awkward to capture; the log gives a
+// durable record of each step and the exact error on failure. Best-effort:
+// logging failures are ignored, since there is no better channel and the
+// install must not abort because it could not write a log line. The elevated
+// child and the non-elevated parent share the same per-user %TEMP%, so the log
+// is readable afterwards without elevation.
+func logf(format string, args ...any) {
+	f, err := os.OpenFile(
+		filepath.Join(os.TempDir(), "prata-install.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0o600,
+	)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+}
 
 var (
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
@@ -59,17 +81,23 @@ const (
 func Run() {
 	elevated, err := isElevated()
 	if err != nil {
+		logf("isElevated failed: %v", err)
 		ui.MessageBox("Prata", fmt.Sprintf("Installationen misslyckades: kunde inte läsa behörighet: %v.", err), ui.IconError)
 		return
 	}
+	logf("--install invoked (elevated=%v)", elevated)
 	if !elevated {
 		launched, err := relaunchElevated()
 		if err != nil {
+			logf("relaunchElevated failed: %v", err)
 			ui.MessageBox("Prata", fmt.Sprintf("Installationen misslyckades: %v.", err), ui.IconError)
 			return
 		}
 		if !launched {
+			logf("elevation declined by user (UAC cancelled)")
 			ui.MessageBox("Prata", "Installationen avbröts (förhöjning nekades).", ui.IconError)
+		} else {
+			logf("relaunched elevated; parent exiting")
 		}
 		// When the elevated child was launched it performs the install and
 		// reports its own result; this non-elevated parent just exits.
@@ -82,39 +110,51 @@ func Run() {
 // process is already elevated.
 func installElevated() {
 	dir := installDir()
+	logf("install dir: %s", dir)
 	if err := os.MkdirAll(dir, installDirPermission); err != nil {
+		logf("MkdirAll(%s) failed: %v", dir, err)
 		ui.MessageBox("Prata", fmt.Sprintf("Kunde inte skapa installationsmappen %s: %v.", dir, err), ui.IconError)
 		return
 	}
 
 	src, err := os.Executable()
 	if err != nil {
+		logf("os.Executable failed: %v", err)
 		ui.MessageBox("Prata", fmt.Sprintf("Installationen misslyckades: kunde inte hitta programfilen: %v.", err), ui.IconError)
 		return
 	}
 	dst := filepath.Join(dir, "prata.exe")
+	logf("copy src=%s dst=%s", src, dst)
 
 	// source==dest: someone ran the already-installed binary with --install.
 	// Skip the copy but still re-register the task — an idempotent repair.
-	if !samePath(src, dst) {
+	if samePath(src, dst) {
+		logf("src==dst, skipping copy (idempotent repair)")
+	} else {
 		if err := copyFile(src, dst); err != nil {
+			logf("copyFile failed: %v", err)
 			ui.MessageBox("Prata", fmt.Sprintf("Kunde inte kopiera Prata till %s: %v.", dst, err), ui.IconError)
 			return
 		}
+		logf("copy ok")
 	}
 
 	if err := registerTask(dst); err != nil {
+		logf("registerTask failed: %v", err)
 		ui.MessageBox("Prata", fmt.Sprintf("Kunde inte registrera autostart: %v.", err), ui.IconError)
 		return
 	}
+	logf("task registered")
 
 	if err := runTask(); err != nil {
 		// Non-fatal: no interactive session (e.g. SYSTEM/IT-driven install) or
 		// on-demand start refused. The logon trigger still starts Prata at the
 		// next sign-in.
+		logf("runTask failed (non-fatal): %v", err)
 		ui.MessageBox("Prata", "Prata installerad. Startar vid nästa inloggning.", ui.IconInfo)
 		return
 	}
+	logf("install complete; daemon started via task")
 	ui.MessageBox("Prata", "Prata installerad och startad.", ui.IconInfo)
 }
 
