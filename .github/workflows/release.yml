@@ -12,6 +12,11 @@ jobs:
   release:
     name: Build and release
     runs-on: windows-latest
+    env:
+      # Mapped from the secret so the optional signing step can gate on it via
+      # env (secrets are not available in a step `if`). Empty until a
+      # code-signing cert exists, which keeps signing a deferred no-op.
+      CODE_SIGN_PFX: ${{ secrets.CODE_SIGN_PFX }}
 
     steps:
       - name: Checkout
@@ -51,16 +56,22 @@ jobs:
           CGO_ENABLED: 1
         run: go build -ldflags="-s -w -H windowsgui -X main.version=${{ github.ref_name }}" -o prata.exe ./cmd/prata/
 
-      - name: Build prata-setkey.exe
+      - name: Sign prata.exe (deferred no-op until a code-signing cert exists)
+        if: ${{ env.CODE_SIGN_PFX != '' }}
+        shell: pwsh
         env:
-          CGO_ENABLED: 1
-        run: go build -ldflags="-s -w" -o prata-setkey.exe ./cmd/prata-setkey/
+          CODE_SIGN_PASSWORD: ${{ secrets.CODE_SIGN_PASSWORD }}
+        run: |
+          $bytes = [Convert]::FromBase64String($env:CODE_SIGN_PFX)
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfx, $bytes)
+          & signtool sign /f $pfx /p $env:CODE_SIGN_PASSWORD /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 prata.exe
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             prata.exe
-            prata-setkey.exe
-            dictionary-corrections.txt
-            install.ps1
+            Installera-Prata.bat
+            Avinstallera-Prata.bat
