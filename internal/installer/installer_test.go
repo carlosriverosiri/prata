@@ -234,6 +234,7 @@ func TestLegacyBinaryPaths(t *testing.T) {
 }
 
 func TestCopyFileWithRetryHappyPath(t *testing.T) {
+	t.Setenv("PRATA_INSTALL_LOG", filepath.Join(t.TempDir(), "install.log"))
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
 	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
@@ -254,6 +255,7 @@ func TestCopyFileWithRetryHappyPath(t *testing.T) {
 }
 
 func TestCopyFileWithRetryGivesUp(t *testing.T) {
+	t.Setenv("PRATA_INSTALL_LOG", filepath.Join(t.TempDir(), "install.log"))
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
 	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
@@ -279,6 +281,7 @@ func TestCopyFileWithRetryGivesUp(t *testing.T) {
 // real lock failure needs a held OS handle (a side effect), which the uninstall
 // smoke test covers instead.
 func TestRemoveInstallDirWithRetry(t *testing.T) {
+	t.Setenv("PRATA_INSTALL_LOG", filepath.Join(t.TempDir(), "install.log"))
 	t.Run("removes existing directory", func(t *testing.T) {
 		dir := t.TempDir()
 		target := filepath.Join(dir, "Prata")

@@ -34,17 +34,19 @@ import (
 // taskName is the Task Scheduler task name (and on-demand /Run target).
 const taskName = "Prata"
 
-// logf appends a timestamped diagnostic line to %TEMP%\prata-install.log. The
-// install path runs without a console (windowsgui) and reports outcomes
-// through modal message boxes, which are awkward to capture; the log gives a
-// durable record of each step and the exact error on failure. Best-effort:
-// logging failures are ignored, since there is no better channel and the
-// install must not abort because it could not write a log line. The elevated
-// child and the non-elevated parent share the same per-user %TEMP%, so the log
-// is readable afterwards without elevation.
+// logf appends a timestamped diagnostic line to the install log. The default
+// path is %TEMP%\prata-install.log; PRATA_INSTALL_LOG overrides it (read on
+// every call, so a test's t.Setenv takes effect and tests do not pollute the
+// real log). The install path runs without a console (windowsgui) and reports
+// outcomes through modal message boxes, which are awkward to capture; the log
+// gives a durable record of each step and the exact error on failure.
+// Best-effort: logging failures are ignored, since there is no better channel
+// and the install must not abort because it could not write a log line. The
+// elevated child and the non-elevated parent share the same per-user %TEMP%,
+// so the default log is readable afterwards without elevation.
 func logf(format string, args ...any) {
 	f, err := os.OpenFile(
-		filepath.Join(os.TempDir(), "prata-install.log"),
+		installLogPath(),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0o600,
 	)
@@ -53,6 +55,16 @@ func logf(format string, args ...any) {
 	}
 	defer f.Close()
 	fmt.Fprintf(f, "%s  %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+}
+
+// installLogPath returns PRATA_INSTALL_LOG when set, otherwise the default
+// %TEMP%\prata-install.log. Read fresh on every logf call so test overrides
+// via t.Setenv apply.
+func installLogPath() string {
+	if p := os.Getenv("PRATA_INSTALL_LOG"); p != "" {
+		return p
+	}
+	return filepath.Join(os.TempDir(), "prata-install.log")
 }
 
 var (
