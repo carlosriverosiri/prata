@@ -58,11 +58,16 @@ var (
 	advapi32 = syscall.NewLazyDLL("advapi32.dll")
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 
-	procGetCurrentProcess   = kernel32.NewProc("GetCurrentProcess")
-	procCloseHandle         = kernel32.NewProc("CloseHandle")
-	procOpenProcessToken    = advapi32.NewProc("OpenProcessToken")
-	procGetTokenInformation = advapi32.NewProc("GetTokenInformation")
-	procShellExecuteW       = shell32.NewProc("ShellExecuteW")
+	procGetCurrentProcess        = kernel32.NewProc("GetCurrentProcess")
+	procCloseHandle              = kernel32.NewProc("CloseHandle")
+	procOpenProcessToken         = advapi32.NewProc("OpenProcessToken")
+	procGetTokenInformation      = advapi32.NewProc("GetTokenInformation")
+	procShellExecuteW            = shell32.NewProc("ShellExecuteW")
+	procCreateToolhelp32Snapshot = kernel32.NewProc("CreateToolhelp32Snapshot")
+	procProcess32FirstW          = kernel32.NewProc("Process32FirstW")
+	procProcess32NextW           = kernel32.NewProc("Process32NextW")
+	procOpenProcess              = kernel32.NewProc("OpenProcess")
+	procTerminateProcess         = kernel32.NewProc("TerminateProcess")
 )
 
 const (
@@ -72,7 +77,39 @@ const (
 	shellExecuteMinOK    = 32     // ShellExecuteW returns > 32 on success
 	createNoWindowFlag   = 0x08000000
 	installDirPermission = 0o755
+
+	th32csSnapProcess = 0x00000002  // TH32CS_SNAPPROCESS
+	processTerminate  = 0x0001      // PROCESS_TERMINATE
+	maxPathW          = 260         // MAX_PATH (PROCESSENTRY32W.szExeFile)
+	invalidHandle     = ^uintptr(0) // INVALID_HANDLE_VALUE ((HANDLE)-1)
+	daemonImageName   = "prata.exe" // image name matched when clearing stragglers
+	copyRetryAttempts = 10          // bounded retry for a transiently locked target
+	copyRetryDelay    = 200 * time.Millisecond
 )
+
+// legacyBinaries are the only files cleanupLegacyUserBinaries removes from each
+// per-user %LOCALAPPDATA%\Prata. User data (apikey.dat, backend.txt,
+// dictionary-corrections.txt override) is preserved by never touching anything
+// else in that folder.
+var legacyBinaries = []string{"prata.exe", "prata-setkey.exe"}
+
+// processEntry32 mirrors the Win32 PROCESSENTRY32W layout. DefaultHeapID is
+// ULONG_PTR (uintptr): on 64-bit it is 8 bytes and, with the 4-byte padding the
+// three leading DWORDs force, sits at offset 16 — exactly as the C ABI lays it
+// out. Declaring it as a 4-byte type would shift every following field
+// (including ExeFile) and the decoded process names would be garbage.
+type processEntry32 struct {
+	Size            uint32
+	Usage           uint32
+	ProcessID       uint32
+	DefaultHeapID   uintptr
+	ModuleID        uint32
+	Threads         uint32
+	ParentProcessID uint32
+	PriClassBase    int32
+	Flags           uint32
+	ExeFile         [maxPathW]uint16
+}
 
 // Run performs a clean machine-wide install. It self-elevates via UAC when
 // needed, copies the running binary into %ProgramFiles%\Prata, registers the
@@ -126,13 +163,19 @@ func installElevated() {
 	dst := filepath.Join(dir, "prata.exe")
 	logf("copy src=%s dst=%s", src, dst)
 
+	// Clear blockers from a previous install (legacy per-user or an earlier
+	// machine-wide one) before copying: a running daemon holds the
+	// session-scoped single-instance mutex (a freshly started daemon would exit
+	// as "already running") and may lock the target binary. Self-excluded.
+	terminateOtherInstances()
+
 	// source==dest: someone ran the already-installed binary with --install.
 	// Skip the copy but still re-register the task — an idempotent repair.
 	if samePath(src, dst) {
 		logf("src==dst, skipping copy (idempotent repair)")
 	} else {
-		if err := copyFile(src, dst); err != nil {
-			logf("copyFile failed: %v", err)
+		if err := copyFileWithRetry(src, dst); err != nil {
+			logf("copy failed after %d attempts: %v", copyRetryAttempts, err)
 			ui.MessageBox("Prata", fmt.Sprintf("Kunde inte kopiera Prata till %s: %v.", dst, err), ui.IconError)
 			return
 		}
@@ -146,16 +189,163 @@ func installElevated() {
 	}
 	logf("task registered")
 
-	if err := runTask(); err != nil {
+	runErr := runTask()
+
+	// Migration cleanup runs after the start attempt, in both outcomes: once the
+	// machine-wide binary is installed and registered, stale per-user binaries
+	// are redundant. Best-effort; it never changes the install result.
+	cleanupLegacyUserBinaries()
+
+	if runErr != nil {
 		// Non-fatal: no interactive session (e.g. SYSTEM/IT-driven install) or
 		// on-demand start refused. The logon trigger still starts Prata at the
 		// next sign-in.
-		logf("runTask failed (non-fatal): %v", err)
+		logf("runTask failed (non-fatal): %v", runErr)
 		ui.MessageBox("Prata", "Prata installerad. Startar vid nästa inloggning.", ui.IconInfo)
 		return
 	}
 	logf("install complete; daemon started via task")
 	ui.MessageBox("Prata", "Prata installerad och startad.", ui.IconInfo)
+}
+
+// terminateOtherInstances force-terminates every running prata.exe except the
+// current process. A previously running daemon holds the session-scoped
+// single-instance mutex and may lock the target binary in %ProgramFiles%; both
+// block a clean install, so they are cleared before copy/register/start. It is
+// reached only from the already-elevated install path, so it can terminate a
+// higher-integrity straggler. Best-effort and fully logged — a failure here
+// never aborts the install.
+func terminateOtherInstances() (killed int) {
+	snap, _, err := procCreateToolhelp32Snapshot.Call(uintptr(th32csSnapProcess), 0)
+	if snap == invalidHandle {
+		logf("process snapshot failed: %v", err)
+		return 0
+	}
+	defer procCloseHandle.Call(snap)
+
+	self := uint32(os.Getpid())
+	var entry processEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+
+	ret, _, _ := procProcess32FirstW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	for ret != 0 {
+		name := syscall.UTF16ToString(entry.ExeFile[:])
+		if shouldTerminate(name, entry.ProcessID, self) {
+			if err := terminatePID(entry.ProcessID); err != nil {
+				logf("terminate pid %d (%s) failed: %v", entry.ProcessID, name, err)
+			} else {
+				logf("terminated stale instance pid %d (%s)", entry.ProcessID, name)
+				killed++
+			}
+		}
+		ret, _, _ = procProcess32NextW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	}
+	logf("terminateOtherInstances: %d stale instance(s) terminated", killed)
+	return killed
+}
+
+// shouldTerminate reports whether a snapshot entry is a prata.exe instance
+// other than the current process. The image name is matched case-insensitively;
+// the current PID is always excluded so --install can never terminate itself.
+func shouldTerminate(name string, pid, self uint32) bool {
+	if pid == self {
+		return false
+	}
+	return strings.EqualFold(name, daemonImageName)
+}
+
+// terminatePID opens the process for termination and force-terminates it. A
+// process that exited between the snapshot and OpenProcess surfaces as an error
+// and is treated as already gone by the best-effort caller.
+func terminatePID(pid uint32) error {
+	h, _, err := procOpenProcess.Call(uintptr(processTerminate), 0, uintptr(pid))
+	if h == 0 {
+		return fmt.Errorf("OpenProcess: %w", err)
+	}
+	defer procCloseHandle.Call(h)
+	if ret, _, err := procTerminateProcess.Call(h, 1); ret == 0 {
+		return fmt.Errorf("TerminateProcess: %w", err)
+	}
+	return nil
+}
+
+// copyFileWithRetry wraps copyFile in a bounded retry loop. After stale
+// instances are terminated the OS can take a moment to release the image
+// section lock on the target, so a sharing violation immediately afterwards is
+// expected and transient. On persistent failure the final error is returned so
+// the caller aborts the install rather than continuing silently.
+func copyFileWithRetry(src, dst string) error {
+	var err error
+	for attempt := 1; attempt <= copyRetryAttempts; attempt++ {
+		if err = copyFile(src, dst); err == nil {
+			if attempt > 1 {
+				logf("copy succeeded on attempt %d/%d", attempt, copyRetryAttempts)
+			}
+			return nil
+		}
+		logf("copy attempt %d/%d failed: %v", attempt, copyRetryAttempts, err)
+		if attempt < copyRetryAttempts {
+			time.Sleep(copyRetryDelay)
+		}
+	}
+	return err
+}
+
+// cleanupLegacyUserBinaries removes stale per-user prata.exe / prata-setkey.exe
+// left by the legacy install.ps1 path across every user profile. It runs after
+// the machine-wide binary is in place, so a leftover per-user binary is already
+// redundant. Best-effort: a missing file or an inaccessible profile is logged
+// and skipped, never fatal. Only the two known binaries are removed, so user
+// data in the same folder is preserved.
+func cleanupLegacyUserBinaries() {
+	usersDir := filepath.Join(systemDrive(), "Users")
+	profiles, err := os.ReadDir(usersDir)
+	if err != nil {
+		logf("cleanup: cannot read %s: %v", usersDir, err)
+		return
+	}
+	removed := 0
+	for _, path := range legacyBinaryPaths(usersDir, profiles) {
+		switch err := os.Remove(path); {
+		case err == nil:
+			logf("cleanup: removed legacy binary %s", path)
+			removed++
+		case os.IsNotExist(err):
+			// expected for profiles without a legacy install
+		default:
+			logf("cleanup: could not remove %s: %v", path, err)
+		}
+	}
+	logf("cleanup: %d legacy binary file(s) removed", removed)
+}
+
+// legacyBinaryPaths returns the candidate per-user binary paths to remove for
+// the given Users directory and its profile entries. It is pure (no I/O) so it
+// can be unit-tested: for each subdirectory it joins
+// <profile>\AppData\Local\Prata\<binary> for each legacy binary; non-directory
+// entries are skipped.
+func legacyBinaryPaths(usersDir string, profiles []os.DirEntry) []string {
+	var paths []string
+	for _, p := range profiles {
+		if !p.IsDir() {
+			continue
+		}
+		base := filepath.Join(usersDir, p.Name(), "AppData", "Local", "Prata")
+		for _, bin := range legacyBinaries {
+			paths = append(paths, filepath.Join(base, bin))
+		}
+	}
+	return paths
+}
+
+// systemDrive returns the OS drive root (e.g. "C:\"), falling back to C:\.
+// SystemDrive is reported without a trailing separator ("C:"), which would
+// otherwise be treated as a drive-relative path by filepath.Join.
+func systemDrive() string {
+	if d := os.Getenv("SystemDrive"); d != "" {
+		return d + `\`
+	}
+	return `C:\`
 }
 
 // isElevated reports whether the current process runs with an elevated

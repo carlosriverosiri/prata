@@ -1,8 +1,11 @@
 package installer
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -164,5 +167,109 @@ func TestUTF16LEWithBOM(t *testing.T) {
 	}
 	if got := string(utf16.Decode(units)); got != "AB" {
 		t.Errorf("round-trip = %q, want %q", got, "AB")
+	}
+}
+
+func TestShouldTerminate(t *testing.T) {
+	const self = uint32(4242)
+	cases := []struct {
+		name string
+		pid  uint32
+		want bool
+	}{
+		{"prata.exe", 1000, true},
+		{"PRATA.EXE", 1001, true},         // case-insensitive image match
+		{"Prata.Exe", 1002, true},         // mixed case
+		{"prata.exe", self, false},        // self PID is always excluded
+		{"notepad.exe", 1003, false},      // unrelated process
+		{"prata", 1004, false},            // missing extension is not a match
+		{"prata-setkey.exe", 1005, false}, // only the daemon image is targeted
+		{"prata.exe.bak", 1006, false},    // must be an exact image name
+		{"", self, false},                 // empty self entry
+	}
+	for _, c := range cases {
+		if got := shouldTerminate(c.name, c.pid, self); got != c.want {
+			t.Errorf("shouldTerminate(%q, %d, %d) = %v, want %v", c.name, c.pid, self, got, c.want)
+		}
+	}
+}
+
+func TestLegacyBinaryPaths(t *testing.T) {
+	dir := t.TempDir()
+	for _, profile := range []string{"alice", "bob"} {
+		if err := os.MkdirAll(filepath.Join(dir, profile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A plain file in Users must be ignored (not a profile directory).
+	if err := os.WriteFile(filepath.Join(dir, "desktop.ini"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	profiles, err := os.ReadDir(dir) // sorted by name: alice, bob, desktop.ini
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := legacyBinaryPaths(dir, profiles)
+	want := []string{
+		filepath.Join(dir, "alice", "AppData", "Local", "Prata", "prata.exe"),
+		filepath.Join(dir, "alice", "AppData", "Local", "Prata", "prata-setkey.exe"),
+		filepath.Join(dir, "bob", "AppData", "Local", "Prata", "prata.exe"),
+		filepath.Join(dir, "bob", "AppData", "Local", "Prata", "prata-setkey.exe"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d paths, want %d:\n%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("path[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	for _, p := range got {
+		if strings.Contains(p, "desktop.ini") {
+			t.Errorf("non-directory entry leaked into paths: %q", p)
+		}
+	}
+}
+
+func TestCopyFileWithRetryHappyPath(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst.bin")
+
+	if err := copyFileWithRetry(src, dst); err != nil {
+		t.Fatalf("copyFileWithRetry: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "payload" {
+		t.Errorf("copied content = %q, want %q", got, "payload")
+	}
+}
+
+func TestCopyFileWithRetryGivesUp(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Destination parent directory does not exist (copyFile does not create it),
+	// so every attempt fails and the loop must exhaust its retries.
+	dst := filepath.Join(dir, "missing-subdir", "dst.bin")
+
+	start := time.Now()
+	err := copyFileWithRetry(src, dst)
+	if err == nil {
+		t.Fatal("expected an error after exhausting retries, got nil")
+	}
+	// It should have actually retried: at least (attempts-1) delays elapsed.
+	if elapsed := time.Since(start); elapsed < copyRetryDelay {
+		t.Errorf("returned in %v; retry loop does not appear to have run", elapsed)
 	}
 }
