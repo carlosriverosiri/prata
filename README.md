@@ -31,7 +31,9 @@ inserts the result.
   transcription, injection, or quick-fix step fails. Cues are synthesised
   in-process (no sound files).
 - **Correction dictionary** — word-boundary text replacements fix
-  recurring Whisper errors (e.g. `adoption` → `abduktion`).
+  recurring Whisper errors (e.g. `adoption` → `abduktion`). A baseline
+  ships embedded in the binary; per-user overrides (including F8
+  quick-fix rules) live in `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`.
 - **F8 quick-fix** — select a mis-transcribed word or phrase, tap **F8**,
   edit it in a small popup anchored over the selection, and press Enter.
   Prata saves the rule to the dictionary and pastes the corrected text back.
@@ -57,7 +59,10 @@ inserts the result.
   reports the result in a tray balloon. It is notify-only: it never
   downloads or replaces the binary itself; you upgrade by re-running the
   installer (see [Updating](#updating)).
-- **Autostart at login** via Task Scheduler, set up by the installer.
+- **Autostart at login** via Task Scheduler. A machine-wide install
+  (`prata.exe --install`) registers one logon task for all users; the
+  legacy `install.ps1` path registers a per-user task instead (see
+  [Installation](#installation)).
 
 ## How it works
 
@@ -71,9 +76,9 @@ F8 tap   ──► copy current selection ──► popup edit ──► save di
 ## Requirements
 
 - **Windows 10/11.**
-- A **Berget Ai API key** if you use the cloud backend (not needed for the
-  local GPU servers). The installer prompts for one; Prata starts without a
-  key and the local backends still work.
+- A **Berget Ai API key** only if you use the cloud backend (not needed for
+  the local GPU servers). Prata starts without a key; the default backend is
+  the clinic GPU server, which needs no key.
 - For building from source only:
   - **Go** (version pinned in `go.mod`).
   - A **C toolchain** — audio capture uses
@@ -82,11 +87,47 @@ F8 tap   ──► copy current selection ──► popup edit ──► save di
     works.
 
 End users installing a release do **not** need Go or a C compiler — the
-installer downloads prebuilt binaries.
+release ships a prebuilt `prata.exe`.
 
 ## Installation
 
-### End users (prebuilt release)
+Prata supports two install paths today. **Machine-wide install** (recommended
+for clinic PCs) is the target model; the PowerShell installer is the legacy
+path still used by GitHub Releases until packaging is simplified in a later
+phase.
+
+### Clinic / USB (machine-wide — recommended)
+
+Copy `prata.exe` from a USB stick (or build output) to the machine, then run
+once with elevation:
+
+```powershell
+.\prata.exe --install
+```
+
+Approve the UAC prompt. The installer:
+
+1. Copies the running binary to `%ProgramFiles%\Prata\prata.exe`.
+2. Registers a machine-wide Task Scheduler entry (`Prata`) so the daemon
+   starts at every user's logon at **medium integrity** (required for
+   SendInput into non-elevated apps such as Webdoc).
+3. Starts Prata in the current session when possible (`schtasks /Run`).
+
+Per-user data (`apikey.dat`, `backend.txt`, dictionary overrides) still
+lives under `%LOCALAPPDATA%\Prata` — the Program Files copy is read-only.
+
+> **Antivirus / EDR.** Unsigned binaries may be blocked until the install
+> folder is allowlisted (e.g. Webroot). See [Build from source](#build-from-source)
+> and PRATA-DESIGN-LOG.md (2026-06-15). A hardware smoke test on an
+> allowlisted machine is documented in PRATA-DESIGN-LOG.md (2026-06-17).
+
+Set the Berget Ai key when needed (cloud backend only):
+
+```powershell
+prata.exe --set-key "your-berget-api-key"
+```
+
+### Legacy: PowerShell installer (GitHub Releases)
 
 Run in PowerShell:
 
@@ -94,16 +135,15 @@ Run in PowerShell:
 iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
 ```
 
-The installer:
+The legacy installer:
 
 1. Downloads the latest release to `%LOCALAPPDATA%\Prata`.
 2. Prompts for your Berget Ai API key and encrypts it with DPAPI (needed
    only for the cloud backend).
-3. Registers a Task Scheduler entry so Prata starts at login.
+3. Registers a **per-user** Task Scheduler entry so Prata starts at login.
 
-On upgrades, an existing `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
-is preserved because F8 quick-fix rules are user data. The release copy is
-saved next to it as `dictionary-corrections.default.txt` for reference.
+This path will be superseded by a single-binary USB workflow (`Installera-Prata.bat`
+wrapping `prata.exe --install`) in a later release.
 
 Start it immediately without re-logging in:
 
@@ -115,32 +155,33 @@ Start-ScheduledTask -TaskName Prata
 
 Right-click the tray icon and choose **Sök efter uppdatering…** to check
 whether a newer release exists; Prata reports the result in a balloon but
-does not update itself. To actually upgrade, re-run the installer one-liner:
+does not update itself. To upgrade a **machine-wide** install, stop Prata,
+replace `%ProgramFiles%\Prata\prata.exe`, and re-run `prata.exe --install`
+(overwrite-while-running is handled in a later phase). For the **legacy**
+per-user install, re-run the PowerShell one-liner:
 
 ```powershell
 iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
 ```
 
-It downloads the latest release, keeps your `dictionary-corrections.txt`
-(F8 rules are user data), and re-registers autostart. No USB stick or
-manual file copying involved.
-
 The update check is deliberately notify-only rather than a self-updater: a
 binary that downloads and runs a new binary over itself is exactly the
 behaviour that behavioural AV/EDR products (e.g. Webroot) flag for an
-unsigned executable, and the upgrade is better done through the single,
-tested `install.ps1` path. See PRATA-DESIGN-LOG.md (2026-06-15).
+unsigned executable. See PRATA-DESIGN-LOG.md (2026-06-15).
 
 ### Developers (build from the working tree)
 
 From a clone of the repo, with Go and a C toolchain on `PATH`:
 
 ```powershell
-.\install.ps1 -Local
+go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/prata/
+.\prata.exe --install          # machine-wide (UAC)
+# — or —
+.\install.ps1 -Local           # legacy per-user install to %LOCALAPPDATA%\Prata
 ```
 
-This builds `prata.exe` and `prata-setkey.exe` from source and installs
-them the same way.
+`install.ps1 -Local` still builds `prata-setkey.exe` for compatibility; the
+main binary also supports `prata.exe --set-key`.
 
 ## Configuration
 
@@ -155,21 +196,23 @@ Right-click the tray icon and choose one of three backends:
 | Berget Ai | `Berget` | Berget Ai cloud API |
 
 The active choice is saved to `%LOCALAPPDATA%\Prata\backend.txt` as the
-stable ID and survives restarts. Default on first run is Berget Ai. Endpoint
-URLs are hardcoded constants in the binary — see
+stable ID and survives restarts. **Default on first run is Rum1 GPU-server**
+(`Jobb`) — the clinic LAN GPU server, which needs no API key. Endpoint URLs
+are hardcoded constants in the binary — see
 [`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) for server setup and how to
 change them.
 
 ### API key
 
-Two ways to provide the Berget Ai key, checked in this order:
+Only required for the **Berget Ai** backend. Two ways to provide it, checked
+in this order:
 
 1. **`BERGET_API_KEY`** environment variable (handy for development).
 2. **Encrypted file** at `%LOCALAPPDATA%\Prata\apikey.dat`, written by
-   `prata-setkey`:
+   `prata --set-key` (or the legacy `prata-setkey` helper):
 
    ```powershell
-   prata-setkey "your-berget-api-key"
+   prata.exe --set-key "your-berget-api-key"
    ```
 
    The key is encrypted with Windows DPAPI and bound to the current user
@@ -178,8 +221,15 @@ Two ways to provide the Berget Ai key, checked in this order:
 
 ### Correction dictionary
 
-Whisper mistakes are corrected before the text is typed. Rules live in a
-plain-text file, one per line:
+Whisper mistakes are corrected before the text is typed. The active dictionary
+has two layers:
+
+1. **Baseline** — embedded in the binary at build time (always present).
+2. **Per-user override** — `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
+   (created on first F8 save). Override rules add to, or replace by key,
+   baseline rules.
+
+Override file format, one rule per line:
 
 ```
 # comments and blank lines are ignored
@@ -188,17 +238,11 @@ adoption = abduktion
 ```
 
 Matching is case-sensitive with Unicode-aware word boundaries
-(`[\p{L}\p{N}_]`); rules apply in file order. Prata looks for the file at
-`PRATA_DICT_PATH`, falling back
-to `dictionary-corrections.txt` next to the executable. If it is missing
-or malformed, Prata logs a warning and runs without corrections.
-The installer seeds this file on first install and preserves it on upgrades;
-new release defaults are written to `dictionary-corrections.default.txt`.
+(`[\p{L}\p{N}_]`); rules apply in file order.
 
-When developing with `go run ./cmd/prata/`, set `PRATA_DICT_PATH` to the
-repo file if you want the same rules as the installed app; otherwise the
-temporary Go build-cache executable will look for a dictionary next to
-itself.
+For development, set **`PRATA_DICT_PATH`** to point at a specific file
+(highest priority). `go run ./cmd/prata/` works without it — the embedded
+baseline always loads.
 
 ## Usage
 
@@ -248,19 +292,22 @@ present).
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/prata/` | Main push-to-talk application. |
-| `cmd/prata-setkey/` | Encrypts the Berget Ai API key to disk (DPAPI). |
+| `cmd/prata/` | Main push-to-talk application (`--install`, `--set-key`, daemon). |
+| `cmd/prata-setkey/` | Legacy DPAPI key helper (superseded by `prata --set-key`; removed in a later phase). |
+| `internal/installer/` | Machine-wide `--install` (elevation, copy, Task Scheduler XML). |
+| `internal/ui/` | Win32 `MessageBox` for subcommands (no console in windowsgui builds). |
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
 | `internal/transcribe/` | Multi-backend transcription client + PCM→WAV encoder. |
 | `internal/hotkey/` | Global `RegisterHotKey` listener for F1 (PTT) and F8 (dictionary quick-fix). |
 | `internal/inject/` | Hybrid text injection — SendInput Unicode for allowlisted (Chromium/Electron) windows, clipboard paste with preservation otherwise. |
-| `internal/dict/` | Word-boundary correction dictionary. |
+| `internal/dict/` | Word-boundary correction dictionary (embedded baseline + per-user override). |
 | `internal/sanity/` | Degenerate-output guard: discards Whisper repetition loops via gzip compression ratio. |
 | `internal/auth/` | DPAPI key encryption (`crypt32.dll`). |
 | `internal/single/` | Single-instance named-mutex guard. |
 | `internal/cue/` | In-process audio cue tones (winmm `PlaySoundW`). |
 | `internal/tray/` | System-tray icon, backend selector, update check, and Avsluta menu (P/Invoke `shell32`/`user32`). |
 | `internal/icon/` | Embedded application icon (`//go:embed Prata.ico`). |
+| `internal/dict/dictionary-corrections.txt` | Baseline dictionary source (embedded at build time). |
 
 The `cmd/*-test/` directories (`hotkey-test`, `f8-test`, `record-test`,
 `inject-test`, `popup-test`, `transcribe-test`, `wav-roundtrip-test`,
@@ -275,7 +322,9 @@ degenerate-output threshold; `regkey-test` is the `RegisterHotKey` canary
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds
 `prata.exe` and `prata-setkey.exe` on `windows-latest` and publishes them
 along with `dictionary-corrections.txt` and `install.ps1` as a GitHub
-release.
+release. The baseline dictionary is embedded from
+`internal/dict/dictionary-corrections.txt`; the root copy is kept in sync
+for now and will be dropped from the release bundle in a later phase.
 
 ```powershell
 git tag v0.1.0

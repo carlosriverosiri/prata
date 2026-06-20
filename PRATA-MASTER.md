@@ -25,15 +25,15 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 2. Trycker `F8`
 3. Prata kopierar markeringen och visar en liten popup över markeringen
 4. Carlos skriver rätt form och trycker Enter (Esc/klick utanför avbryter)
-5. Regeln sparas i `dictionary-corrections.txt`, dictionaryn laddas om, källfönstret återställs och den korrigerade texten klistras tillbaka
+5. Regeln sparas i per-användarens override-fil (`%LOCALAPPDATA%\Prata\dictionary-corrections.txt`), dictionaryn laddas om, källfönstret återställs och den korrigerade texten klistras tillbaka
 
 ## Komponenter
 
 - **Hotkey** — global F1 (PTT) och F8 (dictionary quick-fix) via `RegisterHotKey`
 - **Audio capture** — 16 kHz mono PCM via WASAPI (`malgo` Go-binding för miniaudio)
 - **HTTP client** — POST multipart till vald backend; OpenAI-kompatibel form (`file`, `model`, `language`, `response_format`)
-- **Backend-väljare** — Rngv GPU-server / Rum1 GPU-server / Berget Ai som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong. Valet sparas som stabilt ID (`Hemma` / `Jobb` / `Berget`) i `%LOCALAPPDATA%\Prata\backend.txt` — visningsnamnen kan ändras utan att bryta sparade val. Villkorlig auth (bara Berget Ai skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
-- **Dictionary** — Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp) från `dictionary-corrections.txt`
+- **Backend-väljare** — Rngv GPU-server / Rum1 GPU-server / Berget Ai som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong. Valet sparas som stabilt ID (`Hemma` / `Jobb` / `Berget`) i `%LOCALAPPDATA%\Prata\backend.txt` — visningsnamnen kan ändras utan att bryta sparade val. **Standard vid första start (saknad eller ogiltig `backend.txt`): Rum1 GPU-server (`Jobb`)** — intern GPU utan API-nyckel. Villkorlig auth (bara Berget Ai skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
+- **Dictionary** — två lager: (1) **baslinje** inbäddad i binären vid build (`go:embed` av `internal/dict/dictionary-corrections.txt`); (2) **per-användare-override** i `%LOCALAPPDATA%\Prata\dictionary-corrections.txt` (F8 skriver hit). Override läggs ovanpå baslinjen (ersätter per nyckel). Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp).
 - **Text injection** — klassbaserad routing: Chromium/Electron (klass `Chrome_WidgetWin_1`, inkl. webbjournalen) → `SendInput` Unicode, hela strängen i ett anrop, urklippet rörs aldrig; övriga fönster → urklipps-paste (`CF_UNICODETEXT`, spara/återställ). Se Beslut 6.
 
 ## Berget AI — API-detaljer
@@ -59,20 +59,18 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 
 ## Distribution
 
-- GitHub Releases med Windows x86_64 single-binary
-- Installation: `install.ps1` som:
-  - hämtar senaste release
-  - ber om Berget API-nyckel
-  - krypterar nyckeln med DPAPI
-  - registrerar Task Scheduler-entry för autostart
-- **"See and forget"-mål**: ladda ner exe, kör install.ps1, klar
-- **Uppdatering**: notifierande (inte automatisk). Tray-menyn har "Sök efter
-  uppdatering…" som frågar GitHub om en nyare release finns och visar svaret
-  i en tray-ballong. Själva uppgraderingen sker genom att köra om
-  `install.ps1` (behåller `dictionary-corrections.txt`). Binären byter aldrig
-  ut sig själv — ett självuppdaterande, osignerat exe är exakt det beteende
-  som AV/EDR flaggar (se designloggen 2026-06-15). Versionen stämplas in via
-  `-ldflags "-X main.version=<tag>"` i release-bygget.
+Två installationsvägar finns parallellt under övergången till en-fil/USB:
+
+| Väg | Mål | Autostart | Status |
+|---|---|---|---|
+| **`prata.exe --install`** | `%ProgramFiles%\Prata\prata.exe` | Maskinbred Task Scheduler (`Prata`, alla användare, RunLevel Limited) | Implementerad (Fas 5a, ren install) |
+| **`install.ps1`** | `%LOCALAPPDATA%\Prata\` | Per-användare Task Scheduler | Legacy / GitHub Releases |
+
+- **Nyckel:** `prata --set-key <key>` (user-scope DPAPI → `%LOCALAPPDATA%\Prata\apikey.dat`). Legacy `prata-setkey.exe` finns kvar tills Fas 7.
+- **Skrivbar state** ligger alltid per användare i `%LOCALAPPDATA%\Prata\` (`apikey.dat`, `backend.txt`, dictionary-override). Ingen maskinbred skrivbar data i `%ProgramData%`.
+- **Uppdatering:** notifierande (inte automatisk). Tray-menyn har "Sök efter uppdatering…". Själva uppgraderingen sker manuellt (USB-omkörning av `--install` eller legacy `install.ps1`). Binären byter aldrig ut sig själv.
+- Versionen stämplas in via `-ldflags "-X main.version=<tag>"` i release-bygget.
+- **Hård invariant:** daemonen startas aldrig direkt från den förhöjda installern (HIGH IL → UIPI blockerar SendInput). Post-install-start sker via `schtasks /Run` (medium IL). Se designloggen 2026-06-17.
 
 ## Vad Prata ÄR
 
@@ -80,8 +78,9 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 - Helt lokal förutom HTTP-anropet till vald transkriberings-backend (lokal GPU-server på nätet, eller Berget Ai)
 - API-nyckel DPAPI-krypterad på maskinen (behövs bara för Berget Ai-backenden)
 - Audio feedback via korta toner: startton (880 Hz) vid inspelningsstart, stopptton (587 Hz) vid släpp, och en felton (dubbel 330 Hz-puls) på de tysta felvägarna i release-kedjan
-- Single binary, ingen runtime, ingen modellfil
+- Single binary (daemon + `--install` + `--set-key`), ingen runtime, ingen modellfil
 - Hårdkodade endpoint-konstanter; backend-*valet* sparas som tillstånd (inte config) i `backend.txt`
+- Underhållssubkommandon (`--install`, `--set-key`) rapporterar via `MessageBoxW` (windowsgui = ingen konsol)
 
 ## Vad Prata INTE är
 
@@ -103,7 +102,22 @@ _Ursprunglig plan från Fas 0. Faktiska faser och status — inklusive arbete ef
 - **Fas 4** — text injection (SendInput / KEYEVENTF_UNICODE)
 - **Fas 5** — dictionary corrections
 - **Fas 6** — DPAPI API-nyckel + Task Scheduler autostart
-- **Fas 7** — GitHub Actions + install.ps1
+- **Fas 7** — GitHub Actions + install.ps1 (ursprunglig plan)
+
+### Installer-ADR (2026-06-16 — pågående)
+
+| Fas | Innehåll | Status |
+|---|---|---|
+| 0 | Leveransgren (Gren A: USB, ~12 maskiner, lokal admin) | ✅ Besvarad |
+| 1 | Signtool-hook (deferrad) + AV-allowlisting i runbook | ⏳ Hook ej kodad; Defender-undantag i `--install` deferrat |
+| 2 | `--set-key` + `MessageBoxW` | ✅ |
+| 3 | Ordlista embed + per-användare-override | ✅ |
+| 4 | Default-backend Jobb | ✅ |
+| 5a | `--install` happy path (ren maskin) | ✅ |
+| 5b | Migrering gammal per-användare-install | ⏳ |
+| 5c | `--uninstall` | ⏳ |
+| 6 | Uppdatering (överskriv medan igång) | ⏳ |
+| 7 | Release.yml → en binär + `Installera-Prata.bat` | ⏳ |
 
 ## Relation till Diktell
 

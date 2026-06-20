@@ -376,8 +376,9 @@ Add a **notify-only** update check, not a self-updater. Three pieces:
 2. `internal/update.Check` queries GitHub's latest-release API and compares
    numeric `vX.Y.Z` versions.
 3. A tray item, **Sök efter uppdatering…**, runs the check off the UI thread
-   and reports the result in a tray balloon. The actual upgrade is still the
-   user re-running `install.ps1`.
+   and reports the result in a tray balloon. The actual upgrade is still manual
+   (re-running the installer — today `install.ps1`; transitioning to
+   `prata.exe --install` on USB, see installer-ADR 2026-06-16).
 
 **Alternatives considered:**
 
@@ -416,13 +417,16 @@ inte längre en grind (se beslut 1).
 
 **Bakgrund**
 
-Prata installeras idag per användare: `install.ps1` kopierar binärerna till
-`%LOCALAPPDATA%\Prata` och registrerar en Task Scheduler-uppgift `"Prata"` för
-en enskild användare. På en klinik med delade PC, där användare byter dator, är
-detta fel modell — varje användare måste installera om, och separata filer
-(`prata-setkey.exe`, `dictionary-corrections.txt`, `install.ps1`) gör paketet
-ömtåligt. Målet: **en fil** som installerar allt, och **en installation som
-gäller samtliga användare** på maskinen.
+Prata installerades ursprungligen per användare: `install.ps1` kopierar
+binärerna till `%LOCALAPPDATA%\Prata` och registrerar en Task Scheduler-uppgift
+`"Prata"` för en enskild användare. **Fas 5a (2026-06-17)** lade till
+maskinbred install via `prata.exe --install` → `%ProgramFiles%\Prata\` + en
+logon-task för alla användare. Båda vägarna finns parallellt tills Fas 7
+(städar bort `install.ps1` och legacy-filer). På en klinik med delade PC, där
+användare byter dator, är per-användare-modellen fel — varje användare måste
+installera om, och separata filer (`prata-setkey.exe`, `dictionary-corrections.txt`,
+`install.ps1`) gör paketet ömtåligt. Målet: **en fil** som installerar allt, och
+**en installation som gäller samtliga användare** på maskinen.
 
 En arkitektonisk följd av besluten nedan (per-användare-nyckel + per-användare-
 ordlista): det finns **ingen maskinbred skrivbar data**. Därför behövs **inget
@@ -476,8 +480,8 @@ relevant först vid skalning till IT-driven distribution.
    att vika in värdefulla override-tillägg i baslinjen vid release
    (klinikkorrigeringar är domänkunskap, inte personlig preferens);
    implementationen får faslägga, men gränssnittet designas.
-5. **Default-backend Jobb.** `loadBackendPref`-defaulten ändras Berget → Jobb
-   som build-konstant; `backend.txt` per-användare överrider. Annars träffar en
+5. **Default-backend Jobb.** `loadBackendPref`-defaulten ändrades Berget → Jobb
+   (implementerad Fas 4); `backend.txt` per-användare överrider. Annars träffar en
    ny användare Berget-utan-nyckel vid F1 → felton.
 6. **Autostart.** En maskinbred Task Scheduler-uppgift, trigger AtLogon för
    **alla** användare (Principal `BUILTIN\Users`, LogonType Interactive,
@@ -564,7 +568,7 @@ relevant först vid skalning till IT-driven distribution.
   hålls **strikt isär** från daemon-hot-pathen — runtime förblir minimal även
   när binären får ett install-läge.
 
-**Faslagd plan (sammanfattning; implementation Fas 1+ avvaktar godkännande)**
+**Faslagd plan (sammanfattning)**
 
 - **Fas 0** — BESVARAD (2026-06-16): Gren A, ~12 maskiner, USB, lokal admin
   finns. Avblockerad.
@@ -573,15 +577,14 @@ relevant först vid skalning till IT-driven distribution.
   `Add-MpPreference` i `--install`; tredjeparts-EDR i konsolen). **Inte längre en
   grind** för Fas 5+.
 - **Fas 2** — `--set-key` som subkommando (ren argform) + `MessageBoxW`-helper.
-  Osignerad refaktor.
-- **Fas 3** — Ordlista: `go:embed` baslinje + per-användare-override; ändra
-  `resolvePath` + `loadDict` tillsammans; designa byggtids-fold-in. Osignerad
-  refaktor.
-- **Fas 4** — Default-backend Berget → Jobb (build-konstant). Osignerad
-  refaktor, värdefull i sig.
-- **Fas 5** — `--install`/`--uninstall` self-elevating (`ShellExecute "runas"`),
-  **USB-orienterad, ingen download-wrapper**; ProgramFiles-kopiering; maskinbred
-  task; Defender-undantag; migration per beslut 7; interaktiv start (Gren A).
+  ✅ Implementerad.
+- **Fas 3** — Ordlista: `go:embed` baslinje + per-användare-override. ✅
+  Implementerad.
+- **Fas 4** — Default-backend Berget → Jobb. ✅ Implementerad.
+- **Fas 5a** — `--install` happy path (ren maskin, self-elevating). ✅
+  Implementerad (2026-06-17).
+- **Fas 5b** — Migrering gammal per-användare-install.
+- **Fas 5c** — `--uninstall`.
 - **Fas 6** — Uppdateringsflöde (manuell USB-omkörning: stoppa task+instanser,
   kopiera, omregistrera, starta om); uppdatera tray-/update-strängar.
 - **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering

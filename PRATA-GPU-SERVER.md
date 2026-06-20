@@ -556,8 +556,10 @@ Högerklicka tray-ikonen → välj **Rngv GPU-server / Rum1 GPU-server / Berget 
 - som en balong när du byter (`Aktiv transkribering: Rngv GPU-server`).
 
 Valet sparas som stabilt ID (`Hemma`, `Jobb` eller `Berget`) i
-`%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart. Standard vid första
-start är **Berget Ai** (fungerar överallt med nyckel).
+`%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart. **Standard vid första
+start** (saknad eller ogiltig `backend.txt`) är **Rum1 GPU-server** (`Jobb`) —
+den interna GPU-servern på klinik-LAN, som inte kräver API-nyckel. Välj
+**Rngv GPU-server** hemma (Tailscale) eller **Berget Ai** i menyn vid behov.
 
 **Ingen tyst failover:** är vald server nere får du felton vid diktering, inte
 ett tyst byte till en annan backend. Byte sker bara när *du* väljer i menyn.
@@ -653,8 +655,8 @@ Steg:
 6. PEKA PRATA MOT SERVERN. `WorkURL` är redan satt i
    `internal/transcribe/client.go` till `http://10.64.3.60:8080/v1/audio/transcriptions`
    (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
-   fått en annan adress. Bygg om Prata (`install.ps1 -Local`). Notera att den
-   ombyggda `prata.exe` måste distribueras till de arbetsstationer som ska
+   fått en annan adress. Bygg om Prata (`go build …` eller `install.ps1 -Local`
+   för legacy-install). Notera att den ombyggda `prata.exe` måste distribueras till de arbetsstationer som ska
    diktera mot servern. Verifiera att backend Rum1 GPU-server går att välja och dikterar.
 
 7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
@@ -715,26 +717,36 @@ KB-versionen. Verifiera istället på två sätt:
 2. **Beteende (klinisk bekräftelse).** Diktera samma svenska mening med medicinska
    termer mot **Rum1 GPU-server** respektive **Berget Ai** (bekräftad
    KB-Whisper-Large) och jämför. Identiskt felmönster ⇒ samma modell, och
-   `dictionary-corrections.txt` är rätt kalibrerad.
+   `dictionary-corrections.txt` (baslinjen är inbäddad i binären; override-filen
+   per användare ligger i `%LOCALAPPDATA%\Prata\`) är rätt kalibrerad.
 
 ### Prata-klientinstallation — kända problem
 
 - **AV/EDR-blockering:** osignerad `prata.exe` kan blockeras av Webroot/SmartScreen
-  på nya maskiner (loaderfel utan krasch). Allowlista `%LOCALAPPDATA%\Prata` eller
-  signera binären.
-- **Offline/USB:** `install.ps1 -Local` bygger från källkod och kräver Go +
-  C-verktygskedja. För maskiner utan det: kopiera förbyggda filer manuellt till
-  `%LOCALAPPDATA%\Prata` (`prata.exe`, `prata-setkey.exe`,
-  `dictionary-corrections.txt`).
+  på nya maskiner (loaderfel utan krasch). Allowlista `%ProgramFiles%\Prata`
+  (maskinbred install) eller `%LOCALAPPDATA%\Prata` (legacy per-användare-install),
+  eller signera binären.
+- **Maskinbred install (rekommenderat på klinik):** kopiera `prata.exe` från USB
+  och kör `prata.exe --install` (UAC). Binären hamnar i
+  `%ProgramFiles%\Prata\`, autostart registreras maskinbrett för alla användare.
+  Per-användardata (`apikey.dat`, `backend.txt`, dictionary-override) skapas
+  automatiskt under `%LOCALAPPDATA%\Prata\` vid behov. Hårdvaru-smoke-test
+  deferrat — se PRATA-DESIGN-LOG.md (2026-06-17).
+- **Legacy / offline:** `install.ps1 -Local` bygger från källkod och kräver Go +
+  C-verktygskedja. Installerar till `%LOCALAPPDATA%\Prata` med per-användare-
+  autostart. För maskiner utan verktygskedja: kopiera förbyggd `prata.exe` och
+  kör `--install`, eller kopiera manuellt till legacy-sökvägen.
 - **Autostart:** schemaläggningsuppgiften **`Prata`** startar klienten vid
   inloggning (skilj från serveruppgiften **`PrataWhisperServer`** på GPU-maskinen).
+  Maskinbred install: en uppgift för alla användare (RunLevel Limited). Legacy
+  `install.ps1`: en uppgift per användare.
 
 ### Öppna säkerhetspunkter
 
 - **Strama åt brandväggsregeln** på GPU-servern: byt från `-Profile Any` till
   `-RemoteAddress` med kända klient-IP:n (se Steg 4 → Jobbet).
 - **Rotera Berget-nyckeln** om den exponerats i klartext under felsökning; kör
-  `prata-setkey` igen på berörda maskiner.
+  `prata.exe --set-key` (eller legacy `prata-setkey`) igen på berörda maskiner.
 
 ## Status
 
@@ -748,4 +760,4 @@ KB-versionen. Verifiera istället på två sätt:
 | Steg 3 — Verifiera | ✅ Lokalt + LAN från rum4→rum-ett (2026-06-16); ⏳ Tailscale-test (hemma) kvar |
 | Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n (ringvagen) |
 | Steg 4 — Brandvägg (jobbet/LAN) | ✅ Verifierad på rum-ett (2026-06-16); rotorsak vid fel: saknad inbound-regel |
-| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); Rum1 GPU-server produktionsväg |
+| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); Rum1 GPU-server produktionsväg; maskinbred `--install` implementerad (smoke-test deferrat) |
