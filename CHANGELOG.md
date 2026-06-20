@@ -19,7 +19,8 @@ that point.
   guard for idempotent repair) and registers a machine-wide Task Scheduler
   logon task from generated XML (`schtasks /Create /XML`, UTF-16LE BOM): a
   `LogonTrigger` with no `UserId` (all users), principal `GroupId`
-  `S-1-5-32-545` (BUILTIN\Users) / `InteractiveToken` / **RunLevel
+  `S-1-5-32-545` (BUILTIN\Users) with implicit interactive logon (no explicit
+  `LogonType`, which the v1.2 schema would require before `GroupId`) / **RunLevel
   LeastPrivilege** (the UIPI/medium-IL invariant — never `Highest`),
   `MultipleInstancesPolicy Parallel`, `ExecutionTimeLimit PT0S`. The daemon is
   started post-install via `schtasks /Run` (medium IL in the user session),

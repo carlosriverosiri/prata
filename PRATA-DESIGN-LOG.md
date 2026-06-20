@@ -484,7 +484,7 @@ relevant först vid skalning till IT-driven distribution.
    (implementerad Fas 4); `backend.txt` per-användare överrider. Annars träffar en
    ny användare Berget-utan-nyckel vid F1 → felton.
 6. **Autostart.** En maskinbred Task Scheduler-uppgift, trigger AtLogon för
-   **alla** användare (Principal `BUILTIN\Users`, LogonType Interactive,
+   **alla** användare (Principal `BUILTIN\Users` med implicit interaktiv logon,
    RunLevel Limited), startar Prata i varje användares session. **Task Scheduler
    > HKLM\Run** motiveras av RunLevel-kontroll (medium IL, se invariant),
    startvillkor och robusthet; HKLM\Run nämns som enklare fallback.
@@ -663,8 +663,12 @@ Deferrat: migrering av per-användare-install (5b), `--uninstall` (5c),
   ingen tyst fortsättning.
 - **Maskinbred task** via genererad XML (UTF-16LE + BOM, `schtasks /Create /XML
   … /F`): `LogonTrigger` utan `UserId`, `GroupId` = `S-1-5-32-545`,
-  `LogonType` `InteractiveToken`, `RunLevel` `LeastPrivilege`,
-  `MultipleInstancesPolicy` `Parallel`, `ExecutionTimeLimit` `PT0S`.
+  `RunLevel` `LeastPrivilege`, `MultipleInstancesPolicy` `Parallel`,
+  `ExecutionTimeLimit` `PT0S`. **Ingen explicit `LogonType`:** för en
+  grupp-principal är interaktiv logon implicit, och v1.2-schemat kräver
+  `LogonType` *före* `GroupId` — ett explicit värde gav `schtasks`-felet
+  "unexpected node" (rättat 2026-06-20; elementordningen vaktas nu av ett
+  enhetstest). Medium-IL-garantin ligger i `RunLevel`, inte i `LogonType`.
 - **Post-install-start:** `schtasks /Run /TN "Prata"` (best-effort, medium IL).
   Misslyckas → icke-fatalt ("nästa inloggning").
 
@@ -681,7 +685,7 @@ Deferrat: migrering av per-användare-install (5b), `--uninstall` (5c),
 
 **Känd risk (verifieras på hårdvara)**
 
-- `schtasks /Run` på en **grupp-principal + InteractiveToken**-task ska köra
+- `schtasks /Run` på en **grupp-principal-task (implicit interaktiv logon)** ska köra
   daemonen i den inloggades session på medium IL oberoende av installerns
   HIGH IL (Schedulertjänsten skapar processen enligt principalens RunLevel).
   Detta är den punkt som kan bråka på vissa Windows-versioner. Om `/Run` inte
@@ -704,3 +708,15 @@ maskin finns. Steg:
 5. F1 → diktera in i icke-förhöjt Webdoc → text injiceras (UIPI-invarianten
    håller).
 6. Kör `--install` igen och avbryt UAC → snygg svensk MessageBox, ingen krasch.
+
+**Diagnostik:** varje installationssteg och fel skrivs tidsstämplat till
+`%TEMP%\prata-install.log` (delas av den icke-förhöjda föräldern och det
+förhöjda barnet). Läs den om något steg ovan fallerar — den fångar felet även
+när installern bara visar en modal MessageBox.
+
+**Delvis verifierat 2026-06-20** på utvecklings-/hem-PC:n (ej Webroot): steg
+1–3 programmatiskt bekräftade — binären kopierad till `%ProgramFiles%\Prata`,
+tasken registrerad, `RunLevel` = `Limited` (via `Get-ScheduledTask`), daemonen
+kör från `%ProgramFiles%\Prata\prata.exe` utan argument. Kvar att verifiera:
+medium-IL i Process Explorer (steg 4), F1-injektion i Webdoc (steg 5),
+UAC-avbryt-rutan (steg 6), samt en körning på en ren klinikmaskin.
