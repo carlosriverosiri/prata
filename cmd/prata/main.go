@@ -234,7 +234,7 @@ func main() {
 	}
 	if apiKey == "" {
 		fmt.Fprintln(os.Stderr, "no Berget API key found; the Berget backend will not work")
-		fmt.Fprintln(os.Stderr, "  (set BERGET_API_KEY or run prata-setkey); local GPU backends still work")
+		fmt.Fprintln(os.Stderr, "  (set BERGET_API_KEY or run prata --set-key); local GPU backends still work")
 	}
 
 	d, err := loadDict()
@@ -380,7 +380,7 @@ func main() {
 		// choice — but the user is told why a dictation may fail.
 		switch {
 		case b.RequiresKey && apiKey == "":
-			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Varning: ingen API-nyckel. Kör prata-setkey.", b.DisplayName))
+			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Varning: ingen API-nyckel. Kör prata --set-key.", b.DisplayName))
 		case b.URL == "":
 			t.Notify("Prata", fmt.Sprintf("Aktiv transkribering: %s. Servern är inte konfigurerad än.", b.DisplayName))
 		default:
