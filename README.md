@@ -60,8 +60,7 @@ inserts the result.
   downloads or replaces the binary itself; you upgrade by re-running the
   installer (see [Updating](#updating)).
 - **Autostart at login** via Task Scheduler. A machine-wide install
-  (`prata.exe --install`) registers one logon task for all users; the
-  legacy `install.ps1` path registers a per-user task instead (see
+  (`prata.exe --install`) registers one logon task for all users (see
   [Installation](#installation)).
 
 ## How it works
@@ -91,15 +90,14 @@ release ships a prebuilt `prata.exe`.
 
 ## Installation
 
-Prata supports two install paths today. **Machine-wide install** (recommended
-for clinic PCs) is the target model; the PowerShell installer is the legacy
-path still used by GitHub Releases until packaging is simplified in a later
-phase.
+Prata installs **machine-wide from a USB stick**: copy the release folder
+(`prata.exe` plus the `Installera-Prata.bat` / `Avinstallera-Prata.bat`
+wrappers) to the machine and run the installer once with elevation.
 
-### Clinic / USB (machine-wide — recommended)
+### Install (machine-wide)
 
-Copy `prata.exe` from a USB stick (or build output) to the machine, then run
-once with elevation:
+Double-click **`Installera-Prata.bat`** — it runs `prata.exe --install` and
+keeps its window open if the launch is blocked (e.g. by AV). Or run directly:
 
 ```powershell
 .\prata.exe --install
@@ -113,8 +111,8 @@ Approve the UAC prompt. The installer:
    SendInput into non-elevated apps such as Webdoc).
 3. Starts Prata in the current session when possible (`schtasks /Run`).
 
-Per-user data (`apikey.dat`, `backend.txt`, dictionary overrides) still
-lives under `%LOCALAPPDATA%\Prata` — the Program Files copy is read-only.
+Per-user data (`apikey.dat`, `backend.txt`, dictionary overrides) lives under
+`%LOCALAPPDATA%\Prata` — the Program Files copy is read-only.
 
 > **Antivirus / EDR.** Unsigned binaries may be blocked until the install
 > folder is allowlisted (e.g. Webroot). See [Build from source](#build-from-source)
@@ -127,47 +125,33 @@ Set the Berget Ai key when needed (cloud backend only):
 prata.exe --set-key "your-berget-api-key"
 ```
 
-### Legacy: PowerShell installer (GitHub Releases)
+### Uninstall
 
-Run in PowerShell:
-
-```powershell
-iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
-```
-
-The legacy installer:
-
-1. Downloads the latest release to `%LOCALAPPDATA%\Prata`.
-2. Prompts for your Berget Ai API key and encrypts it with DPAPI (needed
-   only for the cloud backend).
-3. Registers a **per-user** Task Scheduler entry so Prata starts at login.
-
-This path will be superseded by a single-binary USB workflow (`Installera-Prata.bat`
-wrapping `prata.exe --install`) in a later release.
-
-Start it immediately without re-logging in:
-
-```powershell
-Start-ScheduledTask -TaskName Prata
-```
+Double-click **`Avinstallera-Prata.bat`** (or run `prata.exe --uninstall`)
+from the USB/original copy. It stops Prata, removes the `Prata` task and
+`%ProgramFiles%\Prata`, and **leaves your per-user data** (API key, backend
+choice, dictionary) under `%LOCALAPPDATA%\Prata` so a reinstall keeps it. Run
+it from the USB copy rather than the installed binary — a running `.exe`
+cannot delete itself.
 
 ### Updating
 
+Updating is the same flow re-run from the new release on the USB stick:
+double-click `Installera-Prata.bat` (or run `prata.exe --install`) from the
+**new** copy. `--install` terminates the running daemon, overwrites
+`%ProgramFiles%\Prata\prata.exe`, re-registers the task, and restarts Prata,
+so an in-place update needs no separate step. Re-run it from the USB copy, not
+the installed binary: running the already-installed `prata.exe --install` only
+repairs the task and restarts (the `samePath` guard skips the copy), without
+picking up a new version. On a shared clinic PC this also stops any other
+signed-in user's daemon, so update when nobody is dictating.
+
 Right-click the tray icon and choose **Sök efter uppdatering…** to check
 whether a newer release exists; Prata reports the result in a balloon but
-does not update itself. To upgrade a **machine-wide** install, stop Prata,
-replace `%ProgramFiles%\Prata\prata.exe`, and re-run `prata.exe --install`
-(overwrite-while-running is handled in a later phase). For the **legacy**
-per-user install, re-run the PowerShell one-liner:
-
-```powershell
-iwr https://raw.githubusercontent.com/carlosriverosiri/prata/master/install.ps1 | iex
-```
-
-The update check is deliberately notify-only rather than a self-updater: a
-binary that downloads and runs a new binary over itself is exactly the
-behaviour that behavioural AV/EDR products (e.g. Webroot) flag for an
-unsigned executable. See PRATA-DESIGN-LOG.md (2026-06-15).
+never updates itself. The update check is deliberately notify-only rather than
+a self-updater: a binary that downloads and runs a new binary over itself is
+exactly the behaviour that behavioural AV/EDR products (e.g. Webroot) flag for
+an unsigned executable. See PRATA-DESIGN-LOG.md (2026-06-15).
 
 ### Developers (build from the working tree)
 
@@ -175,13 +159,8 @@ From a clone of the repo, with Go and a C toolchain on `PATH`:
 
 ```powershell
 go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/prata/
-.\prata.exe --install          # machine-wide (UAC)
-# — or —
-.\install.ps1 -Local           # legacy per-user install to %LOCALAPPDATA%\Prata
+.\prata.exe --install          # machine-wide (UAC); --uninstall to remove
 ```
-
-`install.ps1 -Local` still builds `prata-setkey.exe` for compatibility; the
-main binary also supports `prata.exe --set-key`.
 
 ## Configuration
 
@@ -209,7 +188,7 @@ in this order:
 
 1. **`BERGET_API_KEY`** environment variable (handy for development).
 2. **Encrypted file** at `%LOCALAPPDATA%\Prata\apikey.dat`, written by
-   `prata --set-key` (or the legacy `prata-setkey` helper):
+   `prata --set-key`:
 
    ```powershell
    prata.exe --set-key "your-berget-api-key"
@@ -270,9 +249,6 @@ When Prata runs at login (no console), right-click the tray icon and choose
 # main binary (no console window); -X stamps the version the in-app
 # update check compares against (use a tag, or "dev" for throwaway builds)
 go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/prata/
-
-# API-key tool
-go build -ldflags="-s -w" -o prata-setkey.exe ./cmd/prata-setkey/
 ```
 
 `CGO_ENABLED=1` is required (it is the default when a C compiler is
@@ -292,8 +268,7 @@ present).
 
 | Path | Purpose |
 | --- | --- |
-| `cmd/prata/` | Main push-to-talk application (`--install`, `--set-key`, daemon). |
-| `cmd/prata-setkey/` | Legacy DPAPI key helper (superseded by `prata --set-key`; removed in a later phase). |
+| `cmd/prata/` | Main push-to-talk application (`--install`, `--uninstall`, `--set-key`, daemon). |
 | `internal/installer/` | Machine-wide `--install` (elevation, copy, Task Scheduler XML). |
 | `internal/ui/` | Win32 `MessageBox` for subcommands (no console in windowsgui builds). |
 | `internal/audio/` | WASAPI microphone capture via `malgo` (16 kHz mono PCM). |
@@ -320,11 +295,12 @@ degenerate-output threshold; `regkey-test` is the `RegisterHotKey` canary
 ## Releasing
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds
-`prata.exe` and `prata-setkey.exe` on `windows-latest` and publishes them
-along with `dictionary-corrections.txt` and `install.ps1` as a GitHub
-release. The baseline dictionary is embedded from
-`internal/dict/dictionary-corrections.txt`; the root copy is kept in sync
-for now and will be dropped from the release bundle in a later phase.
+`prata.exe` on `windows-latest` and publishes it together with the
+`Installera-Prata.bat` and `Avinstallera-Prata.bat` USB wrappers as a GitHub
+release. The correction dictionary ships embedded in the binary (from
+`internal/dict/dictionary-corrections.txt`) — no separate dictionary file is
+published. A deferred Authenticode signing step (gated on a `CODE_SIGN_PFX`
+secret) is wired in but a no-op until a code-signing certificate exists.
 
 ```powershell
 git tag v0.1.0

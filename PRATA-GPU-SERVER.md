@@ -655,8 +655,8 @@ Steg:
 6. PEKA PRATA MOT SERVERN. `WorkURL` är redan satt i
    `internal/transcribe/client.go` till `http://10.64.3.60:8080/v1/audio/transcriptions`
    (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
-   fått en annan adress. Bygg om Prata (`go build …` eller `install.ps1 -Local`
-   för legacy-install). Notera att den ombyggda `prata.exe` måste distribueras till de arbetsstationer som ska
+   fått en annan adress. Bygg om Prata (`go build …`). Notera att den ombyggda
+   `prata.exe` måste distribueras till de arbetsstationer som ska
    diktera mot servern. Verifiera att backend Rum1 GPU-server går att välja och dikterar.
 
 7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
@@ -724,29 +724,27 @@ KB-versionen. Verifiera istället på två sätt:
 
 - **AV/EDR-blockering:** osignerad `prata.exe` kan blockeras av Webroot/SmartScreen
   på nya maskiner (loaderfel utan krasch). Allowlista `%ProgramFiles%\Prata`
-  (maskinbred install) eller `%LOCALAPPDATA%\Prata` (legacy per-användare-install),
-  eller signera binären.
+  (maskinbred install), eller signera binären.
 - **Maskinbred install (rekommenderat på klinik):** kopiera `prata.exe` från USB
   och kör `prata.exe --install` (UAC). Binären hamnar i
   `%ProgramFiles%\Prata\`, autostart registreras maskinbrett för alla användare.
   Per-användardata (`apikey.dat`, `backend.txt`, dictionary-override) skapas
   automatiskt under `%LOCALAPPDATA%\Prata\` vid behov. Hårdvaru-smoke-test
   deferrat — se PRATA-DESIGN-LOG.md (2026-06-17).
-- **Legacy / offline:** `install.ps1 -Local` bygger från källkod och kräver Go +
-  C-verktygskedja. Installerar till `%LOCALAPPDATA%\Prata` med per-användare-
-  autostart. För maskiner utan verktygskedja: kopiera förbyggd `prata.exe` och
-  kör `--install`, eller kopiera manuellt till legacy-sökvägen.
+- **Bygg själv / offline:** för maskiner utan förbyggd binär — bygg `prata.exe`
+  från källkod (`go build …`, kräver Go + C-verktygskedja) och kör sedan
+  `prata.exe --install`. Har du en förbyggd binär: kopiera `prata.exe`
+  (+ `.bat`-wrappers) från USB och kör `--install`.
 - **Autostart:** schemaläggningsuppgiften **`Prata`** startar klienten vid
   inloggning (skilj från serveruppgiften **`PrataWhisperServer`** på GPU-maskinen).
-  Maskinbred install: en uppgift för alla användare (RunLevel Limited). Legacy
-  `install.ps1`: en uppgift per användare.
+  Maskinbred install: en uppgift för alla användare (RunLevel Limited).
 
 ### Öppna säkerhetspunkter
 
 - **Strama åt brandväggsregeln** på GPU-servern: byt från `-Profile Any` till
   `-RemoteAddress` med kända klient-IP:n (se Steg 4 → Jobbet).
 - **Rotera Berget-nyckeln** om den exponerats i klartext under felsökning; kör
-  `prata.exe --set-key` (eller legacy `prata-setkey`) igen på berörda maskiner.
+  `prata.exe --set-key` igen på berörda maskiner.
 
 ## Status
 

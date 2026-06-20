@@ -59,16 +59,16 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 
 ## Distribution
 
-Två installationsvägar finns parallellt under övergången till en-fil/USB:
+Maskinbred install via USB — en binär, inga separata verktyg:
 
 | Väg | Mål | Autostart | Status |
 |---|---|---|---|
-| **`prata.exe --install`** | `%ProgramFiles%\Prata\prata.exe` | Maskinbred Task Scheduler (`Prata`, alla användare, RunLevel Limited) | Implementerad (Fas 5a, ren install) |
-| **`install.ps1`** | `%LOCALAPPDATA%\Prata\` | Per-användare Task Scheduler | Legacy / GitHub Releases |
+| **`prata.exe --install`** (dubbelklick `Installera-Prata.bat`) | `%ProgramFiles%\Prata\prata.exe` | Maskinbred Task Scheduler (`Prata`, alla användare, RunLevel Limited) | Implementerad (install/uninstall/update, Fas 5–7) |
 
-- **Nyckel:** `prata --set-key <key>` (user-scope DPAPI → `%LOCALAPPDATA%\Prata\apikey.dat`). Legacy `prata-setkey.exe` finns kvar tills Fas 7.
+- **Avinstallation:** `prata.exe --uninstall` (dubbelklick `Avinstallera-Prata.bat`) — tar bort tasken + `%ProgramFiles%\Prata`, lämnar per-användardata.
+- **Nyckel:** `prata --set-key <key>` (user-scope DPAPI → `%LOCALAPPDATA%\Prata\apikey.dat`). Den fristående `prata-setkey` är **borttagen (Fas 7)** — infälld i `prata --set-key`.
 - **Skrivbar state** ligger alltid per användare i `%LOCALAPPDATA%\Prata\` (`apikey.dat`, `backend.txt`, dictionary-override). Ingen maskinbred skrivbar data i `%ProgramData%`.
-- **Uppdatering:** notifierande (inte automatisk). Tray-menyn har "Sök efter uppdatering…". Själva uppgraderingen sker manuellt (USB-omkörning av `--install` eller legacy `install.ps1`). Binären byter aldrig ut sig själv.
+- **Uppdatering:** notifierande (inte automatisk). Tray-menyn har "Sök efter uppdatering…". Själva uppgraderingen sker manuellt — **USB-omkörning av `--install`** från den nya binären. Binären byter aldrig ut sig själv.
 - Versionen stämplas in via `-ldflags "-X main.version=<tag>"` i release-bygget.
 - **Hård invariant:** daemonen startas aldrig direkt från den förhöjda installern (HIGH IL → UIPI blockerar SendInput). Post-install-start sker via `schtasks /Run` (medium IL). Se designloggen 2026-06-17.
 
@@ -78,9 +78,9 @@ Två installationsvägar finns parallellt under övergången till en-fil/USB:
 - Helt lokal förutom HTTP-anropet till vald transkriberings-backend (lokal GPU-server på nätet, eller Berget Ai)
 - API-nyckel DPAPI-krypterad på maskinen (behövs bara för Berget Ai-backenden)
 - Audio feedback via korta toner: startton (880 Hz) vid inspelningsstart, stopptton (587 Hz) vid släpp, och en felton (dubbel 330 Hz-puls) på de tysta felvägarna i release-kedjan
-- Single binary (daemon + `--install` + `--set-key`), ingen runtime, ingen modellfil
+- Single binary (daemon + `--install` + `--uninstall` + `--set-key`), ingen runtime, ingen modellfil
 - Hårdkodade endpoint-konstanter; backend-*valet* sparas som tillstånd (inte config) i `backend.txt`
-- Underhållssubkommandon (`--install`, `--set-key`) rapporterar via `MessageBoxW` (windowsgui = ingen konsol)
+- Underhållssubkommandon (`--install`, `--uninstall`, `--set-key`) rapporterar via `MessageBoxW` (windowsgui = ingen konsol)
 
 ## Vad Prata INTE är
 
@@ -117,7 +117,7 @@ _Ursprunglig plan från Fas 0. Faktiska faser och status — inklusive arbete ef
 | 5b | Migrering gammal per-användare-install (döda instanser → retry-copy → legacy-binärstädning) | ✅ Hårdvaruverifierad 2026-06-20 |
 | 5c | `--uninstall` (self-elevate → döda instanser → ta bort task + `%ProgramFiles%\Prata`; lämnar per-användardata) | ✅ Hårdvaruverifierad 2026-06-20 |
 | 6 | Uppdatering = `--install`-omkörning från USB (mekanik finns redan; Fas 6 = notis-text + docs) | ✅ Verifierad 2026-06-20 |
-| 7 | Release.yml → en binär + `Installera-Prata.bat` | ⏳ |
+| 7 | Release.yml → en binär + `Installera-Prata.bat`/`Avinstallera-Prata.bat`; legacy `install.ps1`/`prata-setkey`/rot-ordlista borttagna; `PRATA_INSTALL_LOG`-override | ✅ 2026-06-20 — kod + docs klara; .bat hårdvaru-röksstestad (launch + å/ö + pause-nät); release.yml review-verifierad (full validering på första `v*`-taggen) |
 
 ## Relation till Diktell
 

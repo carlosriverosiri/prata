@@ -644,9 +644,19 @@ relevant först vid skalning till IT-driven distribution.
   dikterar (full USB-runbook-rad = Fas 7). Status: **✅ Verifierad 2026-06-20** (grindar + diff-granskning; ren
   strängändring, ingen ny mekanik att hårdvarutesta — uppdateringsmekaniken är
   redan 5b-verifierad).
-- **Fas 7** — `release.yml` skeppar EN binär (+ ev. tunn USB-runbook); signering
-  kvar som **förberedd hook, inte krav**; docs (README, PRATA-MASTER, CHANGELOG);
-  omdefiniera eller ta bort `install.ps1`.
+- **Fas 7** — Paketering + legacy-städning. `release.yml` skeppar nu **EN binär**
+  (`prata.exe`) + USB-wrappers `Installera-Prata.bat`/`Avinstallera-Prata.bat`;
+  `prata-setkey.exe`, rot-`dictionary-corrections.txt` och `install.ps1` släpps ur
+  release-bunten. Borttaget ur repot: `install.ps1`, `cmd/prata-setkey/` (infälld i
+  `prata --set-key` sedan Fas 2) och rot-dubbletten av ordlistan (embed-källan
+  `internal/dict/dictionary-corrections.txt` är enda sanningen). Signering är en
+  **förberedd, deferrad hook** i `release.yml` (gated på `CODE_SIGN_PFX`-secret,
+  no-op utan cert). `logf`-sökvägen är nu env-styrbar via `PRATA_INSTALL_LOG`
+  (testisolering + dev). Docs synkade (README, PRATA-MASTER, GPU-SERVER, CHANGELOG).
+  Legacy-städningskommentaren i `installer.go` (`cleanupLegacyUserBinaries`) lämnas —
+  den städar redan utplacerade `prata-setkey.exe` på klinikdiskar, inte nuvarande metod.
+  Status: **✅ 2026-06-20** — kod + docs klara; `.bat` hårdvaru-röksstestad (launch +
+  å/ö + pause-nät); `release.yml` review-verifierad (full validering på första `v*`-taggen).
 
 ### 2026-06-16: Ordlista — embeddad baslinje + per-användare-override (Fas 3 implementerad)
 
@@ -670,9 +680,10 @@ relevant först vid skalning till IT-driven distribution.
   `%LOCALAPPDATA%\Prata` vid behov), aldrig baslinjen, aldrig bredvid exet.
 - **Biverkan löst:** `go run`-quirken (`os.Executable` → byggcache → ordlistan
   inaktiverades) är borta eftersom baslinjen alltid är embeddad.
-- **Transient dubblett:** rot-`dictionary-corrections.txt` finns kvar tills Fas 7
-  (den skeppas fortfarande av `release.yml`/`install.ps1`; ofarlig — runtime
-  läser inte längre bredvid exet). Borttagning + paketeringsstädning = Fas 7.
+- **Transient dubblett:** rot-`dictionary-corrections.txt` **borttagen 2026-06-20
+  (Fas 7)** — den var byte-identisk med embed-källan och skeppades tidigare av
+  `release.yml`/`install.ps1`; ofarlig att ta bort eftersom runtime aldrig läste
+  bredvid exet. `internal/dict/dictionary-corrections.txt` är enda baslinjekällan.
 
 **Byggtids-fold-in — GRÄNSSNITT designat nu, implementation faslagd (Fas 5/6)**
 
