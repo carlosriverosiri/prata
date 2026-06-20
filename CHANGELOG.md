@@ -84,6 +84,21 @@ that point.
 
 ### Changed
 
+- **Phase 6 — update messaging.** The update-available tray balloon now points at
+  the supported upgrade path (re-running the Prata install from the USB stick)
+  instead of the vague "rerun the installation command"; the
+  error/local-build/up-to-date branches are unchanged. Stale `install.ps1`
+  references in the `internal/update` package doc and in the `version` /
+  `checkForUpdate` comments were corrected to the `--install` re-run flow — the
+  installer is a separate process that terminates the daemon before overwriting
+  the binary, so there is no self-overwrite and no rename dance. No update-flow
+  code changed: `--install` already performs the overwrite-while-running upgrade
+  (terminate → retry-copy → re-register → restart), proven by the phase-5b smoke
+  test. Verified 2026-06-20 (gates + diff review; string-only change, no new
+  mechanic to hardware-test).
+- The "no API key" tray warning now says `Kör prata --set-key` instead of the
+  stale `Kör prata-setkey` (the key tool was folded into the main binary in
+  phase 2).
 - Documentation synced (`README.md`, `PRATA-MASTER.md`, `PRATA-GPU-SERVER.md`,
   `PRATA-DESIGN-LOG.md`) for Fas 2–5a: `prata --set-key`, embedded dictionary
   baseline + per-user override, default backend Rum1 GPU-server (`Jobb`),
