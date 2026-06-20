@@ -1,7 +1,9 @@
-// Package installer implements Prata's machine-wide `--install` subcommand:
-// self-elevation via UAC, copying the binary into %ProgramFiles%\Prata, and
-// registering a machine-wide Task Scheduler logon task that launches the
-// daemon at Limited (medium) integrity.
+// Package installer implements Prata's machine-wide `--install` and
+// `--uninstall` subcommands: self-elevation via UAC, copying the binary into
+// %ProgramFiles%\Prata, registering a machine-wide Task Scheduler logon task
+// that launches the daemon at Limited (medium) integrity, and tearing all of
+// that down again. Per-user data under %LOCALAPPDATA%\Prata is never created or
+// removed by these commands; it belongs to the running daemon and the user.
 //
 // This is maintenance-path code, strictly separate from the dictation hot
 // path. It is only reached through dispatchSubcommand in cmd/prata.
@@ -124,7 +126,7 @@ func Run() {
 	}
 	logf("--install invoked (elevated=%v)", elevated)
 	if !elevated {
-		launched, err := relaunchElevated()
+		launched, err := relaunchElevated("--install")
 		if err != nil {
 			logf("relaunchElevated failed: %v", err)
 			ui.MessageBox("Prata", fmt.Sprintf("Installationen misslyckades: %v.", err), ui.IconError)
@@ -206,6 +208,136 @@ func installElevated() {
 	}
 	logf("install complete; daemon started via task")
 	ui.MessageBox("Prata", "Prata installerad och startad.", ui.IconInfo)
+}
+
+// Uninstall removes the machine-wide installation, mirroring Run: it
+// self-elevates via UAC when needed, then (elevated) stops running instances,
+// deletes the machine-wide task, and removes %ProgramFiles%\Prata. Per-user
+// data under %LOCALAPPDATA%\Prata is deliberately left in place so a reinstall
+// keeps the API key, backend choice, and F8 dictionary rules. All outcomes are
+// reported through a message box.
+func Uninstall() {
+	elevated, err := isElevated()
+	if err != nil {
+		logf("isElevated failed: %v", err)
+		ui.MessageBox("Prata", fmt.Sprintf("Avinstallationen misslyckades: kunde inte läsa behörighet: %v.", err), ui.IconError)
+		return
+	}
+	logf("--uninstall invoked (elevated=%v)", elevated)
+	if !elevated {
+		launched, err := relaunchElevated("--uninstall")
+		if err != nil {
+			logf("relaunchElevated failed: %v", err)
+			ui.MessageBox("Prata", fmt.Sprintf("Avinstallationen misslyckades: %v.", err), ui.IconError)
+			return
+		}
+		if !launched {
+			logf("elevation declined by user (UAC cancelled)")
+			ui.MessageBox("Prata", "Avinstallationen avbröts (förhöjning nekades).", ui.IconError)
+		} else {
+			logf("relaunched elevated; parent exiting")
+		}
+		// The elevated child performs the teardown and reports its own result;
+		// this non-elevated parent just exits.
+		return
+	}
+	uninstallElevated()
+}
+
+// uninstallElevated runs the actual teardown; the caller guarantees the process
+// is already elevated. It is best-effort: each step is attempted and logged,
+// "already absent" counts as success, and a step that genuinely cannot complete
+// produces a soft warning rather than a hard failure.
+func uninstallElevated() {
+	logf("--uninstall: starting elevated teardown")
+
+	// Stop the daemon so it releases the session mutex and unlocks the binary.
+	terminateOtherInstances()
+
+	// Delete the machine-wide task, then classify by post-state via /Query
+	// rather than parsing the localized output of /Delete (Swedish Windows).
+	if err := runSchtasks("/Delete", "/TN", taskName, "/F"); err != nil {
+		logf("schtasks /Delete returned error (task may already be absent): %v", err)
+	}
+	taskGone := taskAbsent()
+	logf("task %q absent after delete: %v", taskName, taskGone)
+
+	// Remove the install directory, retrying the transient image-section lock
+	// that lingers briefly after termination (same lesson as copyFileWithRetry).
+	dir := installDir()
+	removeErr := removeInstallDirWithRetry(dir)
+	dirGone := removeErr == nil
+	if removeErr != nil {
+		logf("install dir %s not removed: %v", dir, removeErr)
+	} else {
+		logf("install dir removed: %s", dir)
+	}
+
+	localData := localAppDataPrata()
+	logf("leaving per-user data in place: %s", localData)
+
+	switch {
+	case taskGone && dirGone:
+		ui.MessageBox("Prata", fmt.Sprintf(
+			"Prata avinstallerad.\n\nPersonliga inställningar (API-nyckel, ordlista, backend-val) ligger kvar i:\n%s",
+			localData), ui.IconInfo)
+	case !dirGone && runningFromInstallDir(dir):
+		// The classic "can't delete the binary you're running from": the
+		// uninstaller is the installed binary itself. Tell the user to run it
+		// from the USB/original copy instead. (Task is already removed.)
+		ui.MessageBox("Prata", fmt.Sprintf(
+			"Prata är delvis avinstallerad: autostart borttagen, men programmappen kunde inte tas bort eftersom avinstallationen kördes från den.\n\nKör --uninstall från USB-/originalkopian för att ta bort:\n%s\n\nDiagnostik: %%TEMP%%\\prata-install.log",
+			dir), ui.IconError)
+	default:
+		ui.MessageBox("Prata", fmt.Sprintf(
+			"Prata delvis avinstallerad (autostart kvar: %v, programmapp kvar: %v).\n\nSe diagnostik: %%TEMP%%\\prata-install.log",
+			!taskGone, !dirGone), ui.IconError)
+	}
+}
+
+// taskAbsent reports whether the machine-wide task is gone. It queries the task
+// instead of parsing the localized output of /Delete: schtasks /Query exits
+// non-zero when the task does not exist, so a query error means absent.
+func taskAbsent() bool {
+	return runSchtasks("/Query", "/TN", taskName) != nil
+}
+
+// removeInstallDirWithRetry removes dir, retrying the transient lock that can
+// linger right after a daemon is terminated (the image section is released
+// asynchronously). os.RemoveAll treats a missing directory as success, so an
+// already-absent install dir returns nil on the first attempt.
+func removeInstallDirWithRetry(dir string) error {
+	var err error
+	for attempt := 1; attempt <= copyRetryAttempts; attempt++ {
+		if err = os.RemoveAll(dir); err == nil {
+			if attempt > 1 {
+				logf("install dir removed on attempt %d/%d", attempt, copyRetryAttempts)
+			}
+			return nil
+		}
+		logf("remove install dir attempt %d/%d failed: %v", attempt, copyRetryAttempts, err)
+		if attempt < copyRetryAttempts {
+			time.Sleep(copyRetryDelay)
+		}
+	}
+	return err
+}
+
+// runningFromInstallDir reports whether the current executable is the installed
+// binary (installDir\prata.exe). In that case the directory cannot be fully
+// removed while the uninstaller is running from it.
+func runningFromInstallDir(dir string) bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return samePath(exe, filepath.Join(dir, "prata.exe"))
+}
+
+// localAppDataPrata returns the per-user data directory %LOCALAPPDATA%\Prata,
+// used only for the informational uninstall message.
+func localAppDataPrata() string {
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Prata")
 }
 
 // terminateOtherInstances force-terminates every running prata.exe except the
@@ -374,11 +506,12 @@ func isElevated() (bool, error) {
 	return elevation != 0, nil
 }
 
-// relaunchElevated re-runs this executable with "--install" behind a UAC
-// elevation prompt (ShellExecuteW verb "runas"). It returns launched=false
-// when the user declined the prompt (ShellExecuteW result <= 32). ShellExecuteW
-// does not wait for the child; the elevated child carries out the install.
-func relaunchElevated() (launched bool, err error) {
+// relaunchElevated re-runs this executable with the given subcommand argument
+// (e.g. "--install" or "--uninstall") behind a UAC elevation prompt
+// (ShellExecuteW verb "runas"). It returns launched=false when the user
+// declined the prompt (ShellExecuteW result <= 32). ShellExecuteW does not wait
+// for the child; the elevated child carries out the operation.
+func relaunchElevated(arg string) (launched bool, err error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return false, fmt.Errorf("kunde inte hitta programfilen: %w", err)
@@ -391,7 +524,7 @@ func relaunchElevated() (launched bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	params, err := syscall.UTF16PtrFromString("--install")
+	params, err := syscall.UTF16PtrFromString(arg)
 	if err != nil {
 		return false, err
 	}

@@ -174,6 +174,9 @@ func dispatchSubcommand(args []string) bool {
 	case "--install":
 		installer.Run()
 		return true
+	case "--uninstall":
+		installer.Uninstall()
+		return true
 	default:
 		return false
 	}

@@ -273,3 +273,34 @@ func TestCopyFileWithRetryGivesUp(t *testing.T) {
 		t.Errorf("returned in %v; retry loop does not appear to have run", elapsed)
 	}
 }
+
+// TestRemoveInstallDirWithRetry covers the two clean cases. The give-up path is
+// not unit-tested: os.RemoveAll treats a missing directory as success and a
+// real lock failure needs a held OS handle (a side effect), which the uninstall
+// smoke test covers instead.
+func TestRemoveInstallDirWithRetry(t *testing.T) {
+	t.Run("removes existing directory", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "Prata")
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, "prata.exe"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeInstallDirWithRetry(target); err != nil {
+			t.Fatalf("removeInstallDirWithRetry: %v", err)
+		}
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Errorf("directory still present after removal: stat err = %v", err)
+		}
+	})
+
+	t.Run("absent directory is success", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "does-not-exist")
+		if err := removeInstallDirWithRetry(target); err != nil {
+			t.Errorf("removing an absent directory should succeed, got %v", err)
+		}
+	})
+}
