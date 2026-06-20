@@ -28,7 +28,10 @@ that point.
   of a per-user install, `--uninstall`, and overwrite-while-running/update are
   later phases. Hardware smoke test deferred to a Webroot-allowlisted machine
   (see PRATA-DESIGN-LOG); unit tests cover the task XML, `installDir`,
-  `samePath`, and the UTF-16 encoding.
+  `samePath`, and the UTF-16 encoding. Each install step and any error is also
+  appended to `%TEMP%\prata-install.log` (timestamped, best-effort) so the
+  console-less, message-box-only install path leaves a durable diagnostic trail
+  shared by the non-elevated parent and the elevated child.
 - `internal/ui` — minimal Win32 `MessageBox` helper (user32 `MessageBoxW` via
   syscall, UTF-16 strings) for GUI feedback in windowsgui builds that have no
   console. Reusable by later maintenance subcommands; kept off the dictation
@@ -50,6 +53,11 @@ that point.
 
 ### Changed
 
+- Documentation synced (`README.md`, `PRATA-MASTER.md`, `PRATA-GPU-SERVER.md`,
+  `PRATA-DESIGN-LOG.md`) for Fas 2–5a: `prata --set-key`, embedded dictionary
+  baseline + per-user override, default backend Rum1 GPU-server (`Jobb`),
+  machine-wide `prata.exe --install`, and dual install paths (new vs legacy
+  `install.ps1`).
 - Default backend changed from Berget to **Work** (the local "Jobb" GPU
   server). When `backend.txt` is missing, unreadable, or names an unknown
   backend, `loadBackendPref` now returns `transcribe.Work` instead of
