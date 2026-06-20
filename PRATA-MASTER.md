@@ -114,7 +114,7 @@ _Ursprunglig plan från Fas 0. Faktiska faser och status — inklusive arbete ef
 | 3 | Ordlista embed + per-användare-override | ✅ |
 | 4 | Default-backend Jobb | ✅ |
 | 5a | `--install` happy path (ren maskin) | ✅ |
-| 5b | Migrering gammal per-användare-install | ⏳ |
+| 5b | Migrering gammal per-användare-install (döda instanser → retry-copy → legacy-binärstädning) | ✅ Hårdvaruverifierad 2026-06-20 |
 | 5c | `--uninstall` | ⏳ |
 | 6 | Uppdatering (överskriv medan igång) | ⏳ |
 | 7 | Release.yml → en binär + `Installera-Prata.bat` | ⏳ |

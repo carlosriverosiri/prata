@@ -583,7 +583,24 @@ relevant först vid skalning till IT-driven distribution.
 - **Fas 4** — Default-backend Berget → Jobb. ✅ Implementerad.
 - **Fas 5a** — `--install` happy path (ren maskin, self-elevating). ✅
   Implementerad (2026-06-17).
-- **Fas 5b** — Migrering gammal per-användare-install.
+- **Fas 5b** — Migrering gammal per-användare-install. I det förhöjda
+  `installElevated`, **före** copyFile: (1) `terminateOtherInstances` dödar varje
+  körande `prata.exe` utom den egna PID:en (`CreateToolhelp32Snapshot` →
+  `Process32FirstW/NextW`, `OpenProcess(PROCESS_TERMINATE)` + `TerminateProcess`)
+  — röjer både den sessionsbundna single-instance-mutexen och ev. fillås på
+  målbinären; (2) `copyFileWithRetry` (10 × 200 ms) tål ett övergående lås efter
+  termineringen och avbryter installen med felruta om låset kvarstår (aldrig tyst
+  fortsättning); (3) efter `schtasks /Run` städar `cleanupLegacyUserBinaries` bort
+  **endast** `prata.exe` + `prata-setkey.exe` i varje `C:\Users\*\AppData\Local\
+  Prata\` (best-effort; användardata bevaras). Task-XML, RunLevel och medium-IL-
+  starten är **orörda** → invarianten intakt. Self-PID-exkludering är obligatorisk.
+  Status: **✅ hårdvaruverifierad 2026-06-20** — dirty-state-smoke-test:
+  `terminateOtherInstances` dödade den gamla daemonen (PID 82948),
+  `copyFileWithRetry` absorberade fillåset (försök 1 → 2), ny daemon (PID 99272)
+  från `%ProgramFiles%` blev kvar, F1-injicering i ett oförhöjt fönster fungerade
+  (medium IL) och användardata bevarades. Känd begränsning:
+  binären man kör `--install` *från* kan inte raderas av städningen (i bruk) →
+  loggas, ofarlig eftersom maskinvida binären i `%ProgramFiles%` är auktoritativ.
 - **Fas 5c** — `--uninstall`.
 - **Fas 6** — Uppdateringsflöde (manuell USB-omkörning: stoppa task+instanser,
   kopiera, omregistrera, starta om); uppdatera tray-/update-strängar.
