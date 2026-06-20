@@ -133,6 +133,18 @@ that point.
   from client, LAN verification rum4→rum-ett, ~1.4 s latency, KB-Whisper
   verification, and expanded troubleshooting section.
 
+### Removed
+
+- **Phase 7 — legacy install path retired.** Deleted `install.ps1` (root
+  PowerShell installer), `cmd/prata-setkey` (folded into `prata --set-key` in
+  phase 2), and the duplicate root `dictionary-corrections.txt` (the embedded
+  baseline in `internal/dict/dictionary-corrections.txt` is the single source).
+  `release.yml` now ships exactly one binary (`prata.exe`) plus the
+  `Installera-Prata.bat` / `Avinstallera-Prata.bat` USB wrappers, and no longer
+  publishes `prata-setkey.exe`, the root dictionary, or `install.ps1`. A
+  deferred Authenticode signing step (gated on a `CODE_SIGN_PFX` secret) is
+  wired into `release.yml` as a no-op until a code-signing certificate exists.
+
 ### Fixed
 
 - F8 dictionary quick-fix failed silently on the first tap in Chromium/Webdoc
