@@ -33,6 +33,18 @@ that point.
   appended to `%TEMP%\prata-install.log` (timestamped, best-effort) so the
   console-less, message-box-only install path leaves a durable diagnostic trail
   shared by the non-elevated parent and the elevated child.
+- `prata --install` migration step — before copying, the elevated install
+  terminates any other running `prata.exe` (snapshot via
+  `CreateToolhelp32Snapshot`, self PID excluded) to free the session-scoped
+  single-instance mutex and unlock the target binary; the copy then retries a
+  transiently locked target (10 × 200 ms) and aborts with a message box rather
+  than continuing silently if the lock persists. After the daemon is
+  (re)started, stale per-user `prata.exe` / `prata-setkey.exe` left by the
+  legacy `install.ps1` path are removed from every user profile (only those two
+  binaries — user data is preserved). The task XML, RunLevel, and medium-IL
+  start path are unchanged. Hardware-verified 2026-06-20 (dirty-state: stale
+  daemon terminated, copy retried through the lock, new daemon up at medium
+  integrity, user data preserved).
 - `internal/ui` — minimal Win32 `MessageBox` helper (user32 `MessageBoxW` via
   syscall, UTF-16 strings) for GUI feedback in windowsgui builds that have no
   console. Reusable by later maintenance subcommands; kept off the dictation
