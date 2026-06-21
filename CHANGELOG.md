@@ -10,6 +10,12 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup now layers like the approved mockup:
+  a thin teal edge via `DwmSetWindowAttribute(DWMWA_BORDER_COLOR)` (Win11;
+  harmless no-op on Windows 10), a soft-teal tint panel as the window
+  background, and a white field floating in it with more padding (margin/gap/
+  height bumped). Three owned brushes (teal chip / tint panel / white field),
+  all freed on teardown.
 - `internal/popup/popup.go` — the F8 popup caption and chip now use their own
   10pt semibold font (`createFont` generalized to take point size and weight),
   distinct from the 11pt regular field font. The owned font is freed on teardown.
