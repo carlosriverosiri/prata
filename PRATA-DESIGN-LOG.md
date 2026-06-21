@@ -1,156 +1,155 @@
-# Prata — Designresan
+# Prata — Design Journey
 
-Destillerad sammanfattning av nyckelbeslut som ledde fram till Prata. Inte hela
-konversationshistoriken — bara besluten och deras motiveringar.
+A distilled summary of the key decisions that led to Prata. Not the entire
+conversation history — just the decisions and their rationales.
 
-## Bakgrund
+## Background
 
-Diktell är Carlos existerande dikteringsapp i Rust med lokal CUDA Whisper. Den fungerar
-excellent på huvudmaskinen (RTX 5070 Ti, 9800X3D) men kan inte köras på mini-PCs utan GPU.
+Diktell is Carlos's existing dictation app written in Rust with local CUDA Whisper. It works
+excellently on the main machine (RTX 5070 Ti, 9800X3D) but cannot run on mini-PCs without a GPU.
 
-Carlos byter ofta dator under arbetsdagen på sjukhuset och har blivit van vid att diktera.
-Mini-PCs gör Diktell oanvändbar — vilket är problemet Prata löser.
+Carlos frequently switches computers during the workday at the hospital and has grown used to
+dictating. Mini-PCs make Diktell unusable — which is the problem Prata solves.
 
-## Beslut 1 — Berget AI som transkriberings-backend
+## Decision 1 — Berget AI as the transcription backend
 
-Berget AI hostar exakt samma modell som Diktell använder lokalt (`KBLab/kb-whisper-large`),
-via OpenAI-kompatibel API. Servrarna står i Stockholm, data lämnar inte Sverige, zero retention.
+Berget AI hosts exactly the same model that Diktell uses locally (`KBLab/kb-whisper-large`),
+via an OpenAI-compatible API. The servers are in Stockholm, data does not leave Sweden, zero retention.
 
-För en läkare är detta inte ett "molnalternativ med GDPR-kompromiss" — det är förmodligen den
-enda molntjänsten som *legitimt* kan hantera dikterad medicinsk text.
+For a physician this is not a "cloud option with a GDPR compromise" — it is probably the
+only cloud service that can *legitimately* handle dictated medical text.
 
-Konkurrent: Whisper Flow (kommersiell). Berget vinner på svensk-kvalitet (KB-Whisper) + GDPR.
+Competitor: Whisper Flow (commercial). Berget wins on Swedish quality (KB-Whisper) + GDPR.
 
-## Beslut 2 — Windows-only (just nu)
+## Decision 2 — Windows-only (for now)
 
-Initialt övervägdes Mac + Linux som cross-platform-mål. Sedan reviderat: cross-platform-
-abstraktion betalas innan den används. Mac/Linux är "kanske om ett år"-scenarier. Kan portas
-senare när Carlos faktiskt sitter framför en sådan maskin.
+Mac + Linux were initially considered as cross-platform targets. Then revised: a cross-platform
+abstraction is paid for before it is used. Mac/Linux are "maybe in a year" scenarios. Can be ported
+later when Carlos is actually sitting in front of such a machine.
 
-## Beslut 3 — Go (inte Rust)
+## Decision 3 — Go (not Rust)
 
-Utgångspunkt: Carlos initiala impuls var Rust eftersom det är samma stack som Diktell.
+Starting point: Carlos's initial impulse was Rust because it is the same stack as Diktell.
 
-Reviderat efter att "see and forget" formulerades som primär designprincip:
+Revised after "see and forget" was formulated as the primary design principle:
 
-- **Go 1 compatibility promise** — kod skriven idag kompileras om fem år
-- **Standardbiblioteket täcker det mesta** — `net/http`, `encoding/json`, `mime/multipart` utan dependencies
-- **Toolchain är 150 MB** mot Rust + VS Build Tools på 4–6 GB
-- **Single self-contained binär** utan runtime
-- **AI är genuint flytande på Go**
+- **Go 1 compatibility promise** — code written today compiles in five years
+- **The standard library covers most of it** — `net/http`, `encoding/json`, `mime/multipart` without dependencies
+- **The toolchain is 150 MB** versus Rust + VS Build Tools at 4–6 GB
+- **A single self-contained binary** without a runtime
+- **AI is genuinely fluent in Go**
 
-Trade-off: Go's audio-stack på Windows är mindre moget (`malgo` mindre stridstestat än `cpal`).
-Hanterbart för en enkel push-to-talk-app.
+Trade-off: Go's audio stack on Windows is less mature (`malgo` is less battle-tested than `cpal`).
+Manageable for a simple push-to-talk app.
 
-## Beslut 4 — Inget cross-platform-lager, inga konfigurationsfiler
+## Decision 4 — No cross-platform layer, no configuration files
 
-Konsekvenser av att vara Windows-only och "see and forget":
+Consequences of being Windows-only and "see and forget":
 
-- Inga platform/-moduler — direkt Win32 P/Invoke
-- Ingen `config.toml` — hårdkodade konstanter
-- API-nyckel via DPAPI-krypterad fil, inte miljövariabel långsiktigt
-- Ingen tray-meny — eventuellt inget UI alls
+- No platform/ modules — direct Win32 P/Invoke
+- No `config.toml` — hardcoded constants
+- API key via a DPAPI-encrypted file, not an environment variable in the long run
+- No tray menu — possibly no UI at all
 
-## Beslut 5 — Diktell är "färdig"
+## Decision 5 — Diktell is "finished"
 
-Diktell ses som färdig. Endast säkerhets- och kraschfixar tillåts. Allt experimentellt och nytt
-sker i Prata.
+Diktell is considered finished. Only security and crash fixes are allowed. Everything experimental
+and new happens in Prata.
 
-Skäl: utan denna disciplin pendlar Carlos mellan att förbättra Diktell och att bygga Prata,
-och båda projekten lider.
+Reason: without this discipline Carlos oscillates between improving Diktell and building Prata,
+and both projects suffer.
 
-## Beslut 6 — Hybrid textinjektion: klassbaserad routing (2026-05-31)
+## Decision 6 — Hybrid text injection: class-based routing (2026-05-31)
 
-Status: Antaget och implementerat. internal/inject (TypeAuto, IsSendInputSafeClass,
-allowlistan sendInputSafeClasses); produktionens dikteringsväg i cmd/prata anropar TypeAuto.
+Status: Accepted and implemented. internal/inject (TypeAuto, IsSendInputSafeClass,
+the sendInputSafeClasses allowlist); the production dictation path in cmd/prata calls TypeAuto.
 
-Bakgrund: Fas 7 bytte injektionen från KEYEVENTF_UNICODE till urklipps-paste
-(CF_UNICODETEXT + Ctrl+V), eftersom Unicode-vägen tappade key-up-event i Chromium/Electron
-och moderna Notepad → OS:et autorepeterade tecken. Urklipps-paste är robust men rör urklippet
-vid varje diktering: en kopierad skärmbild skrivs över, och dikterad text hamnar i
-Win+V-historiken och synkar till molnurklippet (patientdata lämnar maskinen).
+Background: Phase 7 switched injection from KEYEVENTF_UNICODE to clipboard paste
+(CF_UNICODETEXT + Ctrl+V), because the Unicode path lost key-up events in Chromium/Electron
+and modern Notepad → the OS auto-repeated characters. Clipboard paste is robust but touches the
+clipboard on every dictation: a copied screenshot is overwritten, and dictated text lands in
+the Win+V history and syncs to the cloud clipboard (patient data leaves the machine).
 
-Drivande mål: (1) i AI-chattar (Claude Desktop, Cursor, Chrome) ska man kunna kopiera en
-skärmbild, diktera, och sedan Ctrl+V:a in bilden — dikteringen får inte röra urklippet;
-(2) patientsekretess: journaltext ska inte ligga kvar i Win+V eller synka till molnurklippet.
+Driving goals: (1) in AI chats (Claude Desktop, Cursor, Chrome) you should be able to copy a
+screenshot, dictate, and then Ctrl+V the image in — dictation must not touch the clipboard;
+(2) patient confidentiality: medical-record text must not linger in Win+V or sync to the cloud clipboard.
 
-Beslut: routa injektionen på förgrundsfönstrets klass (GetClassNameW(GetForegroundWindow())):
-- Chrome_WidgetWin_1 (hela Chromium/Electron-familjen plus det webbaserade journalsystemet,
-  bekräftat samma klass) → SendInput Unicode. Urklippet rörs aldrig.
-- Alla andra fönster → urklipps-paste (bevisad väg; sparar och återställer ev. CF_UNICODETEXT).
+Decision: route injection on the foreground window's class (GetClassNameW(GetForegroundWindow())):
+- Chrome_WidgetWin_1 (the entire Chromium/Electron family plus the web-based medical-records system,
+  confirmed to be the same class) → SendInput Unicode. The clipboard is never touched.
+- All other windows → clipboard paste (proven path; saves and restores any CF_UNICODETEXT).
 
-Det som gjorde SendInput användbart igen: hela transkriptionen skickas i ETT SendInput-anrop
-(Fas 4 buntade per rune → autorepeat i Electron). Avslutande radbrytning blir Shift+Enter på
-SendInput-vägen och \r\n på urklippsvägen.
+What made SendInput usable again: the entire transcription is sent in ONE SendInput call
+(Phase 4 batched per rune → autorepeat in Electron). A trailing line break becomes Shift+Enter on
+the SendInput path and \r\n on the clipboard path.
 
-Verifiering (per 2026-05-31): SendInput verifierat rent i Chrome, Cursor och Claude Desktop
-med flerradig text, samt i journalsystemet via cmd/inject-test (klass bekräftad
-Chrome_WidgetWin_1). Den skarpa produktionsvägs-verifieringen i journalen — riktig PTT genom
-cmd/prata med realistisk flerradig text — återstår och är grinden innan kliniskt bruk.
+Verification (as of 2026-05-31): SendInput verified clean in Chrome, Cursor, and Claude Desktop
+with multi-line text, and in the medical-records system via cmd/inject-test (class confirmed
+Chrome_WidgetWin_1). The live production-path verification in the medical record — real PTT through
+cmd/prata with realistic multi-line text — remains and is the gate before clinical use.
 
-Invarianter (patientsäkerhet — får inte ändras):
-- Säker default: all osäkerhet (inget förgrundsfönster, misslyckad klassläsning, okänd klass)
-  → urklipps-paste.
-- Ingen exekverings-fallback: vägen väljs en gång och anropas. Vid SendInput-fel faller den
-  aldrig tillbaka på urklipps-paste — SendInput kan redan ha skickat tecken, och en
-  efterföljande paste skulle dubbelinjicera (i en journal en säkerhetsrisk). Tappad text →
-  användaren omdikterar (säkert).
-- Allowlista, inte denylista: otestade appar defaultar till den bevisade vägen. Inget får
-  SendInput förrän klassen verifierats med realistisk, flerradig text.
-- Exakt klassmatchning, inte prefix.
+Invariants (patient safety — must not change):
+- Safe default: all uncertainty (no foreground window, failed class read, unknown class)
+  → clipboard paste.
+- No execution fallback: the path is chosen once and called. On a SendInput error it never falls
+  back to clipboard paste — SendInput may already have sent characters, and a subsequent paste
+  would double-inject (in a medical record a safety risk). Lost text → the user re-dictates (safe).
+- Allowlist, not denylist: untested apps default to the proven path. Nothing gets SendInput until
+  its class has been verified with realistic, multi-line text.
+- Exact class matching, not prefix.
 
-Medvetet motornivå-vad: att allowlista Chrome_WidgetWin_1 litar på hela Chromium/Electron-
-motorn (även Slack, VS Code, Discord m.fl.), inte bara de testade apparna — motiverat av att
-autorepeat-felet är motornivå och SendInput verifierats över flera distinkta Chromium-värdar.
+A deliberate engine-level scope: allowlisting Chrome_WidgetWin_1 trusts the entire Chromium/Electron
+engine (including Slack, VS Code, Discord, and others), not just the tested apps — justified because
+the autorepeat bug is engine-level and SendInput has been verified across several distinct Chromium hosts.
 
-Moderna Notepad utelämnad: klass "Notepad" allowlistas medvetet inte — SendInput fallerar där
-innehålls-/längdberoende (kort "test" gick igenom, "rad ett\nrad två" inte). Dess egen klass
-routar den automatiskt till urklipps-paste.
+Modern Notepad left out: the "Notepad" class is deliberately not allowlisted — SendInput fails there
+in a content-/length-dependent way (a short "test" went through, "rad ett\nrad två" did not). Its own
+class automatically routes it to clipboard paste.
 
-Förkastade alternativ:
-- Ovillkorligt SendInput överallt — bröt Notepad, riskerade journalen.
-- Full urklipps-snapshot/restore av alla format — TOCTOU-race; förkastat även i Diktell
+Rejected alternatives:
+- Unconditional SendInput everywhere — broke Notepad, risked the medical record.
+- Full clipboard snapshot/restore of all formats — TOCTOU race; rejected in Diktell too
   (ADR 2026-05-24).
-- Denylista — defaultar otestade appar till den riskabla vägen.
+- Denylist — defaults untested apps to the risky path.
 
-Privacy-vinst: i Chromium (inkl. journalen) rör dikteringen aldrig urklippet → patienttext
-varken i Win+V eller molnurklipp. Samma utfall som Diktells ADR 2026-04-21, annan mekanism.
+Privacy win: in Chromium (including the medical record) dictation never touches the clipboard →
+patient text in neither Win+V nor the cloud clipboard. Same outcome as Diktell's ADR 2026-04-21, different mechanism.
 
-Uppföljning:
-- Utöka allowlistan: verifiera den nya klassen med realistisk, flerradig text innan tillägg.
-- Produktionsvägen loggar inte vald route; route-loggning finns i cmd/inject-test -mode auto.
+Follow-up:
+- Extend the allowlist: verify the new class with realistic, multi-line text before adding it.
+- The production path does not log the chosen route; route logging is available in cmd/inject-test -mode auto.
 
-## Återanvändning från Diktell
+## Reuse from Diktell
 
-Direkt återanvändbart:
+Directly reusable:
 
-- **`dictionary-corrections.txt`** — samma modell ger samma felmönster
-- **Hotkey-design** — Ctrl+Win för PTT, eventuell F9 för dictionary
-- **Text injection-principen** — VK_PACKET / Unicode (gäller även Go-impl; senare reviderat — se Beslut 6)
-- **Audio feedback-design** — eventuellt nedtonad i Prata
+- **`dictionary-corrections.txt`** — the same model produces the same error patterns
+- **Hotkey design** — Ctrl+Win for PTT, possibly F9 for the dictionary
+- **The text-injection principle** — VK_PACKET / Unicode (applies to the Go implementation too; later revised — see Decision 6)
+- **Audio-feedback design** — possibly toned down in Prata
 
-Kastat från Diktell:
+Discarded from Diktell:
 
-- Rust-koden själv (50 rader Cargo + transcribe.rs som validerade Berget API)
-- Hela whisper-rs / whisper.cpp-lagret (ersätts av HTTP-anrop)
-- Mode-systemet (var redan borta efter Diktell Phase 4)
-- Tokio (Go har sina egna primitiver)
+- The Rust code itself (50 lines of Cargo + transcribe.rs that validated the Berget API)
+- The entire whisper-rs / whisper.cpp layer (replaced by HTTP calls)
+- The mode system (already gone after Diktell Phase 4)
+- Tokio (Go has its own primitives)
 
-## Validering — Fas 0 utförd 2026-05-27
+## Validation — Phase 0 done 2026-05-27
 
-1. **API-nyckel sanity check** via Llama 3.3 70B chat completion → ✓
-2. **Audio transcription** via curl med m4a-fil → ✓ med identiskt felmönster som lokal Diktell
-3. **Latensmätning 5 anrop**: medel 2.61 sek, min 2.56, max 2.77 sek på huvudmaskin
-4. **Mini-PC-test**: utfört senare när Carlos sitter vid en sådan, bedömt icke-blockerande
+1. **API-key sanity check** via Llama 3.3 70B chat completion → ✓
+2. **Audio transcription** via curl with an m4a file → ✓ with an error pattern identical to local Diktell
+3. **Latency measurement, 5 calls**: mean 2.61 s, min 2.56, max 2.77 s on the main machine
+4. **Mini-PC test**: done later when Carlos is at one, judged non-blocking
 
-## Faser framåt
+## Phases ahead
 
-_Ursprunglig plan från Fas 0. Faktiska faser efter Fas 7 (tray-ikon, F9, hybridinjektion m.m.)
-dokumenteras i CHANGELOG._
+_Original plan from Phase 0. The actual phases after Phase 7 (tray icon, F9, hybrid injection, etc.)
+are documented in the CHANGELOG._
 
-| Fas | Innehåll | Beräknat antal Cursor-sessioner |
+| Phase | Content | Estimated number of Cursor sessions |
 |-----|----------|----------------------------------|
-| 1 | HTTP-klient + WAV-encoding | 1 |
+| 1 | HTTP client + WAV encoding | 1 |
 | 2 | Audio capture (malgo) | 1 |
 | 3 | Hotkey (WH_KEYBOARD_LL) | 1 |
 | 4 | Text injection (SendInput) | 1 |
@@ -158,11 +157,11 @@ dokumenteras i CHANGELOG._
 | 6 | DPAPI + Task Scheduler | 1–2 |
 | 7 | GitHub Actions + install.ps1 | 1 |
 
-## Möjliga framtida vägar (inte beslut, bara öppna dörrar)
+## Possible future paths (not decisions, just open doors)
 
-- Macport för fruns predikningar (kb-whisper-medium-q5_0 på M2)
-- Linux-port om Carlos slutligen flyttar till Unix
-- Eliminera audio feedback om Carlos finner den onödig efter användning
+- Mac port for the wife's sermons (kb-whisper-medium-q5_0 on M2)
+- Linux port if Carlos eventually moves to Unix
+- Eliminate audio feedback if Carlos finds it unnecessary after use
 
 
 ### 2026-06-09: PTT moves from Ctrl+Win (WH_KEYBOARD_LL hook) to F1-hold (RegisterHotKey + reconciliation loop)
@@ -406,598 +405,598 @@ Add a **notify-only** update check, not a self-updater. Three pieces:
   fine for a manual, occasional click. Failures degrade to a "could not
   check" balloon, never a crash.
 
-### 2026-06-16: En-fil maskinbred installation (Gren A: USB + lokal admin), signering förberedd men deferrad
+### 2026-06-16: Single-file machine-wide installation (Branch A: USB + local admin), signing prepared but deferred
 
-**Status:** Antaget. **Fas 0 besvarad (2026-06-16): Gren A i småskalig form** —
-~10–12 klinikdatorer, inloggade kliniker har lokal admin (UAC fungerar),
-distribution via USB-minne manuellt per maskin (inte Intune nu). Designen förblir
-förberedd för IT-driven distribution (Intune/SCCM) senare. Fas 2–4 är rena,
-osignerade refaktorer som kan köras direkt; Fas 5+ är avblockerade — signering är
-inte längre en grind (se beslut 1).
+**Status:** Accepted. **Phase 0 answered (2026-06-16): Branch A in small-scale form** —
+~10–12 clinic computers, logged-in clinicians have local admin (UAC works),
+distribution via USB stick manually per machine (not Intune now). The design remains
+prepared for IT-driven distribution (Intune/SCCM) later. Phases 2–4 are clean,
+unsigned refactors that can run right away; Phase 5+ are unblocked — signing is
+no longer a gate (see decision 1).
 
-**Bakgrund**
+**Background**
 
-Prata installerades ursprungligen per användare: `install.ps1` kopierar
-binärerna till `%LOCALAPPDATA%\Prata` och registrerar en Task Scheduler-uppgift
-`"Prata"` för en enskild användare. **Fas 5a (2026-06-17)** lade till
-maskinbred install via `prata.exe --install` → `%ProgramFiles%\Prata\` + en
-logon-task för alla användare. Båda vägarna finns parallellt tills Fas 7
-(städar bort `install.ps1` och legacy-filer). På en klinik med delade PC, där
-användare byter dator, är per-användare-modellen fel — varje användare måste
-installera om, och separata filer (`prata-setkey.exe`, `dictionary-corrections.txt`,
-`install.ps1`) gör paketet ömtåligt. Målet: **en fil** som installerar allt, och
-**en installation som gäller samtliga användare** på maskinen.
+Prata was originally installed per user: `install.ps1` copies the
+binaries to `%LOCALAPPDATA%\Prata` and registers a Task Scheduler task
+`"Prata"` for a single user. **Phase 5a (2026-06-17)** added
+machine-wide install via `prata.exe --install` → `%ProgramFiles%\Prata\` + a
+logon task for all users. Both paths exist in parallel until Phase 7
+(which removes `install.ps1` and legacy files). At a clinic with shared PCs, where
+users switch computers, the per-user model is wrong — every user has to
+reinstall, and separate files (`prata-setkey.exe`, `dictionary-corrections.txt`,
+`install.ps1`) make the package fragile. The goal: **one file** that installs everything, and
+**one installation that applies to all users** on the machine.
 
-En arkitektonisk följd av besluten nedan (per-användare-nyckel + per-användare-
-ordlista): det finns **ingen maskinbred skrivbar data**. Därför behövs **inget
-`%ProgramData%`** — binären ligger skrivskyddad i `%ProgramFiles%\Prata`, all
-skrivbar state per-användare i `%LOCALAPPDATA%\Prata`. Det eliminerar hela
-ACL-/multisession-write-problematiken.
+An architectural consequence of the decisions below (per-user key + per-user
+dictionary): there is **no machine-wide writable data**. Therefore **no
+`%ProgramData%`** is needed — the binary sits read-only in `%ProgramFiles%\Prata`, all
+writable state is per-user in `%LOCALAPPDATA%\Prata`. This eliminates the entire
+ACL/multisession-write problem.
 
-**Fas 0 — leveransgren (besvarad 2026-06-16: Gren A, småskalig)**
+**Phase 0 — delivery branch (answered 2026-06-16: Branch A, small-scale)**
 
-Vem som kör den förhöjda installationen avgör de yttre villkoren, inte
-`--install`-logiken (som är **identisk** i båda grenarna):
+Who runs the elevated installation determines the outer conditions, not the
+`--install` logic (which is **identical** in both branches):
 
-- **Gren A — klinikern har lokal admin. ← VALD NU.** Self-elevating binär:
-  dubbelklick → `ShellExecute "runas"` → UAC → maskinbred install. Skala: ~10–12
-  klinikdatorer, distribution via **USB-minne**, manuellt per maskin. Inget
-  publikt cert krävs vid denna skala (se nedan + beslut 1).
-- **Gren B — ingen clinician-admin (framtida skalning, inte nu).** IT kör samma
-  `--install` en gång per maskin, förhöjt, via sitt verktyg (SCCM/Intune/GPO),
-  med **IT-allowlisting** (hash/sökväg, eller IT:s eget interna cert i
-  EDR/AppLocker) i stället för publik signering. Designen förblir förberedd för
-  detta, men det är inte målet nu.
+- **Branch A — the clinician has local admin. ← CHOSEN NOW.** Self-elevating binary:
+  double-click → `ShellExecute "runas"` → UAC → machine-wide install. Scale: ~10–12
+  clinic computers, distribution via **USB stick**, manually per machine. No
+  public cert is required at this scale (see below + decision 1).
+- **Branch B — no clinician admin (future scaling, not now).** IT runs the same
+  `--install` once per machine, elevated, via their tooling (SCCM/Intune/GPO),
+  with **IT allowlisting** (hash/path, or IT's own internal cert in
+  EDR/AppLocker) instead of public signing. The design remains prepared for
+  this, but it is not the goal now.
 
-**Varför signering kan deferras nu.** USB-kopierade exe:er saknar normalt
-Mark-of-the-Web → SmartScreen triggar inte. Vid denna skala (~12 maskiner) +
-lokal admin + USB ersätter **per-maskin-allowlisting** (beslut 9) publik
-signering helt. Publikt EV-cert (kräver oftast registrerad organisation) blir
-relevant först vid skalning till IT-driven distribution.
+**Why signing can be deferred now.** USB-copied exe files normally lack the
+Mark-of-the-Web → SmartScreen does not trigger. At this scale (~12 machines) +
+local admin + USB, **per-machine allowlisting** (decision 9) replaces public
+signing entirely. A public EV cert (which usually requires a registered organization)
+only becomes relevant when scaling to IT-driven distribution.
 
-**Beslut**
+**Decisions**
 
-1. **Signering = förberett, deferrat steg (Fas 1) — inte en grind.** Vid den
-   valda skalan (Gren A, USB, lokal admin) behövs **inget publikt EV-cert för att
-   skeppa**: USB-binärer saknar Mark-of-the-Web (ingen SmartScreen) och
-   per-maskin-allowlisting (beslut 9) täcker AV/EDR. Signering implementeras
-   därför som en **förberedd hook i `release.yml` som är no-op tills ett cert
-   finns**. Detta omvärderar (men river inte) update-ADR:n (2026-06-15):
-   self-update förblir avstängt tills en betrodd publisher-identitet finns; den
-   körbara distributionen nu är USB + per-maskin-allowlisting. Publikt cert blir
-   krav först vid IT-driven skalning (Gren B).
-2. **Installationsplats.** Binär i `%ProgramFiles%\Prata` (skrivskyddad för
-   icke-admin — daemonen kan inte modifiera sin egen image). All skrivbar state
-   per-användare i `%LOCALAPPDATA%\Prata`. **Inget `%ProgramData%`.**
-3. **Berget-nyckel.** Behåll per-användare user-scope DPAPI (status quo) via
-   `prata --set-key`. **Ingen** `CRYPTPROTECT_LOCAL_MACHINE` — det skulle
-   exponera nyckeln för alla på en delad PC. Krävs ej för Jobb/Hemma.
-4. **Ordlista.** `go:embed` av delad baslinje + per-användare-override i
-   `%LOCALAPPDATA%\Prata`. Sidesteppar både skrivrättighet i ProgramFiles och
-   multisession-write-racen mot en delad fil. F8 skriver till overriden.
-   `resolvePath` (dict.go) **och** `loadDict` (main.go) räknar idag ut sökväg
-   oberoende och **måste ändras tillsammans**. En **byggtidsrutin** designas för
-   att vika in värdefulla override-tillägg i baslinjen vid release
-   (klinikkorrigeringar är domänkunskap, inte personlig preferens);
-   implementationen får faslägga, men gränssnittet designas.
-5. **Default-backend Jobb.** `loadBackendPref`-defaulten ändrades Berget → Jobb
-   (implementerad Fas 4); `backend.txt` per-användare överrider. Annars träffar en
-   ny användare Berget-utan-nyckel vid F1 → felton.
-6. **Autostart.** En maskinbred Task Scheduler-uppgift, trigger AtLogon för
-   **alla** användare (Principal `BUILTIN\Users` med implicit interaktiv logon,
-   RunLevel Limited), startar Prata i varje användares session. **Task Scheduler
-   > HKLM\Run** motiveras av RunLevel-kontroll (medium IL, se invariant),
-   startvillkor och robusthet; HKLM\Run nämns som enklare fallback.
-7. **Migration (spänner alla profiler; data bara för installerande användare).**
-   `--install` upptäcker och städar bort tidigare per-användare-install. Cleanup
-   av gamla autostarter **måste spänna samtliga användarprofiler** — admin kan
-   enumerera och ta bort gamla `"Prata"`-tasks och `%LOCALAPPDATA%`-exe-kopior
-   tvärs alla användare. Men **per-användare-DATA kan inte migreras tvärs
-   användare:** `apikey.dat` är user-scope DPAPI och är oläsbar för
-   installeraren. Endast den **installerande användarens** data migreras (Gren
-   A: bevara `apikey.dat`/`backend.txt`, migrera ev. gammal ordlista →
-   override). Övriga användare får **färska defaults vid första körning** —
-   acceptabelt, eftersom Jobb inte kräver nyckel och ordlistebaslinjen är
-   embeddad. `--uninstall` tar bort ProgramFiles-mappen + den maskinbreda
-   tasken. (Rör **inte** `PrataWhisperServer` — det är GPU-serverns task, en
-   annan sak.)
-8. **En (1) binär.** Leveransen är **en enda binär** med Jobb-default inbyggd +
-   per-användare `backend.txt`-override — **inte** separata namngivna builds per
-   plats eller per gren. Samma `prata.exe` kör daemon, `--install`,
-   `--uninstall` och `--set-key`.
-9. **AV/EDR-allowlisting (del av install-rutinen).** Designloggen dokumenterar
-   att Webroot blockerar osignerade binärer vid start (ADR 2026-06-15). Två
-   vägar designas, så installationen funkar oavsett vilket skydd maskinen kör
-   (vilken AV bekräftas med IT):
-   - **Windows Defender:** den förhöjda `--install` lägger undantaget själv —
-     `Add-MpPreference -ExclusionPath "%ProgramFiles%\Prata"` — under den
-     befintliga UAC-förhöjningen, ingen extra prompt.
-   - **Tredjeparts-EDR (Webroot e.d.):** undantaget kan inte sättas
-     programmatiskt; det görs i EDR-konsolen och dokumenteras som ett steg i
-     **USB-runbooken**.
+1. **Signing = a prepared, deferred step (Phase 1) — not a gate.** At the
+   chosen scale (Branch A, USB, local admin) **no public EV cert is needed to
+   ship**: USB binaries lack the Mark-of-the-Web (no SmartScreen) and
+   per-machine allowlisting (decision 9) covers AV/EDR. Signing is therefore
+   implemented as a **prepared hook in `release.yml` that is a no-op until a cert
+   exists**. This reassesses (but does not tear down) the update ADR (2026-06-15):
+   self-update stays off until a trusted publisher identity exists; the
+   runnable distribution now is USB + per-machine allowlisting. A public cert
+   only becomes a requirement at IT-driven scaling (Branch B).
+2. **Installation location.** Binary in `%ProgramFiles%\Prata` (read-only for
+   non-admins — the daemon cannot modify its own image). All writable state
+   per-user in `%LOCALAPPDATA%\Prata`. **No `%ProgramData%`.**
+3. **Berget key.** Keep per-user, user-scope DPAPI (status quo) via
+   `prata --set-key`. **No** `CRYPTPROTECT_LOCAL_MACHINE` — that would
+   expose the key to everyone on a shared PC. Not required for Jobb/Hemma.
+4. **Dictionary.** `go:embed` of a shared baseline + per-user override in
+   `%LOCALAPPDATA%\Prata`. Sidesteps both write permission in ProgramFiles and
+   the multisession-write race against a shared file. F8 writes to the override.
+   `resolvePath` (dict.go) **and** `loadDict` (main.go) currently compute the path
+   independently and **must be changed together**. A **build-time routine** is designed
+   to fold valuable override additions into the baseline at release time
+   (clinic corrections are domain knowledge, not personal preference);
+   the implementation may be phased, but the interface is designed.
+5. **Default backend Jobb.** The `loadBackendPref` default was changed Berget → Jobb
+   (implemented in Phase 4); a per-user `backend.txt` overrides it. Otherwise a
+   new user hits Berget-without-key on F1 → error tone.
+6. **Autostart.** One machine-wide Task Scheduler task, trigger AtLogon for
+   **all** users (Principal `BUILTIN\Users` with implicit interactive logon,
+   RunLevel Limited), starts Prata in each user's session. **Task Scheduler
+   > HKLM\Run** is justified by RunLevel control (medium IL, see invariant),
+   start conditions, and robustness; HKLM\Run is mentioned as a simpler fallback.
+7. **Migration (spans all profiles; data only for the installing user).**
+   `--install` detects and cleans up an earlier per-user install. Cleanup
+   of old autostarts **must span all user profiles** — admin can
+   enumerate and remove old `"Prata"` tasks and `%LOCALAPPDATA%` exe copies
+   across all users. But **per-user DATA cannot be migrated across
+   users:** `apikey.dat` is user-scope DPAPI and is unreadable to the
+   installer. Only the **installing user's** data is migrated (Branch
+   A: preserve `apikey.dat`/`backend.txt`, migrate any old dictionary →
+   override). Other users get **fresh defaults on first run** —
+   acceptable, since Jobb requires no key and the dictionary baseline is
+   embedded. `--uninstall` removes the ProgramFiles folder + the machine-wide
+   task. (Does **not** touch `PrataWhisperServer` — that is the GPU server's task, a
+   different thing.)
+8. **One (1) binary.** The deliverable is **a single binary** with the Jobb default built in +
+   per-user `backend.txt` override — **not** separate named builds per
+   site or per branch. The same `prata.exe` runs the daemon, `--install`,
+   `--uninstall`, and `--set-key`.
+9. **AV/EDR allowlisting (part of the install routine).** The design log documents
+   that Webroot blocks unsigned binaries at launch (ADR 2026-06-15). Two
+   paths are designed, so the installation works regardless of which protection the machine runs
+   (which AV is confirmed with IT):
+   - **Windows Defender:** the elevated `--install` adds the exclusion itself —
+     `Add-MpPreference -ExclusionPath "%ProgramFiles%\Prata"` — under the
+     existing UAC elevation, no extra prompt.
+   - **Third-party EDR (Webroot and the like):** the exclusion cannot be set
+     programmatically; it is done in the EDR console and documented as a step in
+     the **USB runbook**.
 
-**Invarianter (patientsäkerhet — får inte ändras)**
+**Invariants (patient safety — must not change)**
 
-- **UIPI / medium IL.** Daemonen kör på medium IL (Task Scheduler RunLevel
-  Limited). **Bara** install-åtgärden förhöjer. En förhöjd daemon bryter
-  SendInput-injicering i ett icke-förhöjt Webdoc **tyst** — hård invariant.
-- **windowsgui = ingen konsol.** All installer-/update-feedback via `MessageBoxW`
-  (inkl. "UAC avbruten", fel, klart). `--set-key` som **ren argform**
-  (`--set-key <key>`), ingen interaktiv prompt.
-- **Single-instance-mutexen är redan sessionsbunden** (oprefixat namn i
-  `single.Acquire` = `Local\`). Verifieras och dokumenteras — ändras inte. Det
-  är detta som gör att Prata får en instans *per session* på en delad PC.
+- **UIPI / medium IL.** The daemon runs at medium IL (Task Scheduler RunLevel
+  Limited). **Only** the install action elevates. An elevated daemon breaks
+  SendInput injection into a non-elevated Webdoc **silently** — a hard invariant.
+- **windowsgui = no console.** All installer/update feedback via `MessageBoxW`
+  (incl. "UAC avbruten", errors, done). `--set-key` as a **pure argument form**
+  (`--set-key <key>`), no interactive prompt.
+- **The single-instance mutex is already session-bound** (an unprefixed name in
+  `single.Acquire` = `Local\`). Verified and documented — not changed. This
+  is what gives Prata one instance *per session* on a shared PC.
 
-**Alternativ som förkastades**
+**Rejected alternatives**
 
-- **HKLM\Run** i stället för Task Scheduler — ingen RunLevel-/villkorskontroll,
-  kan stängas av per användare i Aktivitetshanteraren. Behålls bara som
-  nödfallback.
-- **Machine-scope DPAPI** för Berget-nyckeln — exponerar hemligheten för alla på
-  maskinen; onödigt då Berget är nedprioriterad.
-- **Delad skrivbar ordlista i `%ProgramData%`** — kräver ACL-vidgning + atomisk
-  write + tvärprocess-lås mot multisession-race; mycket maskineri mot
-  minimalism. Per-användare-override ger samma nytta utan racen.
-- **MSI/Inno/NSIS/WiX** — externa paketeringsverktyg bryter
-  en-fil-/stdlib-only-principen.
-- **Separata namngivna builds per plats/gren** — bryter en-binär-principen;
-  ersätts av Jobb-default + per-användare-override (beslut 5 och 8).
+- **HKLM\Run** instead of Task Scheduler — no RunLevel/condition control,
+  can be disabled per user in Task Manager. Kept only as an
+  emergency fallback.
+- **Machine-scope DPAPI** for the Berget key — exposes the secret to everyone on
+  the machine; unnecessary since Berget is deprioritized.
+- **A shared writable dictionary in `%ProgramData%`** — requires widening ACLs + atomic
+  write + cross-process locking against the multisession race; a lot of machinery against
+  minimalism. The per-user override gives the same benefit without the race.
+- **MSI/Inno/NSIS/WiX** — external packaging tools break the
+  single-file/stdlib-only principle.
+- **Separate named builds per site/branch** — break the single-binary principle;
+  replaced by the Jobb default + per-user override (decisions 5 and 8).
 
-**Konsekvenser**
+**Consequences**
 
-- **Signering är inte kritisk väg nu.** Med Gren A/USB/allowlisting byggs Fas
-  2–4 osignerat och Fas 5+ är avblockerade. Cert blir kritisk väg först vid
-  IT-driven skalning (Gren B). EV-cert-ledtiden stallar inget kodbart arbete.
-- `%ProgramFiles%`-placeringen gör att en körande exe inte kan skriva över sig
-  själv → uppdatering (manuell USB-omkörning) måste stoppa task + alla instanser,
-  kopiera, omregistrera, starta om (Fas 6). Ingen nedladdning — inte network
+- **Signing is not on the critical path now.** With Branch A/USB/allowlisting, Phases
+  2–4 are built unsigned and Phase 5+ are unblocked. A cert becomes critical-path only at
+  IT-driven scaling (Branch B). The EV-cert lead time stalls no codeable work.
+- The `%ProgramFiles%` placement means a running exe cannot overwrite
+  itself → an update (manual USB re-run) must stop the task + all instances,
+  copy, re-register, restart (Phase 6). No download — not a network
   self-update.
-- **Post-install-start är interaktivt-only.** "Starta i aktuell session efter
-  install" gäller den valda **Gren A** (interaktiv UAC-förhöjning) — fungerar nu.
-  Skulle `--install` framöver köras som SYSTEM via SCCM (**Gren B**) finns ingen
-  interaktiv session, och Prata startar då först vid nästa inloggning via tasken.
-  Startsteget greenas så det inte felar under SYSTEM-kontext (förväntat,
-  icke-fatalt).
-- **Multisession:** den maskinbreda tasken startar Prata i varje session vid
-  inloggning. Redan inloggade sessioner uppdateras/startar först vid nästa
-  inloggning.
-- **Blast radius:** `release.yml` (skeppar idag `prata.exe`, `prata-setkey.exe`,
-  `dictionary-corrections.txt`, `install.ps1`), update-ADR:n och tray-strängen
-  ("Kör om installationskommandot") måste uppdateras i takt (Fas 1/6/7).
-- "See and forget" och minimalism bevaras genom att install-/update-kodvägen
-  hålls **strikt isär** från daemon-hot-pathen — runtime förblir minimal även
-  när binären får ett install-läge.
+- **Post-install start is interactive-only.** "Start in the current session after
+  install" applies to the chosen **Branch A** (interactive UAC elevation) — works now.
+  Should `--install` later run as SYSTEM via SCCM (**Branch B**), there is no
+  interactive session, and Prata then starts only at the next logon via the task.
+  The start step is guarded so it does not error under the SYSTEM context (expected,
+  non-fatal).
+- **Multisession:** the machine-wide task starts Prata in each session at
+  logon. Already logged-in sessions update/start only at the next
+  logon.
+- **Blast radius:** `release.yml` (today ships `prata.exe`, `prata-setkey.exe`,
+  `dictionary-corrections.txt`, `install.ps1`), the update ADR, and the tray string
+  ("Kör om installationskommandot") must be updated in step (Phases 1/6/7).
+- "See and forget" and minimalism are preserved by keeping the install/update code path
+  **strictly separate** from the daemon hot path — the runtime stays minimal even
+  when the binary gains an install mode.
 
-**Faslagd plan (sammanfattning)**
+**Phased plan (summary)**
 
-- **Fas 0** — BESVARAD (2026-06-16): Gren A, ~12 maskiner, USB, lokal admin
-  finns. Avblockerad.
-- **Fas 1** — Signtool-hook i `release.yml` (**deferrad, no-op tills cert finns**)
-  + USB-install-rutin/runbook med AV-allowlisting (Defender via
-  `Add-MpPreference` i `--install`; tredjeparts-EDR i konsolen). **Inte längre en
-  grind** för Fas 5+.
-- **Fas 2** — `--set-key` som subkommando (ren argform) + `MessageBoxW`-helper.
-  ✅ Implementerad.
-- **Fas 3** — Ordlista: `go:embed` baslinje + per-användare-override. ✅
-  Implementerad.
-- **Fas 4** — Default-backend Berget → Jobb. ✅ Implementerad.
-- **Fas 5a** — `--install` happy path (ren maskin, self-elevating). ✅
-  Implementerad (2026-06-17).
-- **Fas 5b** — Migrering gammal per-användare-install. I det förhöjda
-  `installElevated`, **före** copyFile: (1) `terminateOtherInstances` dödar varje
-  körande `prata.exe` utom den egna PID:en (`CreateToolhelp32Snapshot` →
+- **Phase 0** — ANSWERED (2026-06-16): Branch A, ~12 machines, USB, local admin
+  in place. Unblocked.
+- **Phase 1** — Signtool hook in `release.yml` (**deferred, no-op until a cert exists**)
+  + USB install routine/runbook with AV allowlisting (Defender via
+  `Add-MpPreference` in `--install`; third-party EDR in the console). **No longer a
+  gate** for Phase 5+.
+- **Phase 2** — `--set-key` as a subcommand (pure argument form) + `MessageBoxW` helper.
+  ✅ Implemented.
+- **Phase 3** — Dictionary: `go:embed` baseline + per-user override. ✅
+  Implemented.
+- **Phase 4** — Default backend Berget → Jobb. ✅ Implemented.
+- **Phase 5a** — `--install` happy path (clean machine, self-elevating). ✅
+  Implemented (2026-06-17).
+- **Phase 5b** — Migrating an old per-user install. In the elevated
+  `installElevated`, **before** copyFile: (1) `terminateOtherInstances` kills every
+  running `prata.exe` except its own PID (`CreateToolhelp32Snapshot` →
   `Process32FirstW/NextW`, `OpenProcess(PROCESS_TERMINATE)` + `TerminateProcess`)
-  — röjer både den sessionsbundna single-instance-mutexen och ev. fillås på
-  målbinären; (2) `copyFileWithRetry` (10 × 200 ms) tål ett övergående lås efter
-  termineringen och avbryter installen med felruta om låset kvarstår (aldrig tyst
-  fortsättning); (3) efter `schtasks /Run` städar `cleanupLegacyUserBinaries` bort
-  **endast** `prata.exe` + `prata-setkey.exe` i varje `C:\Users\*\AppData\Local\
-  Prata\` (best-effort; användardata bevaras). Task-XML, RunLevel och medium-IL-
-  starten är **orörda** → invarianten intakt. Self-PID-exkludering är obligatorisk.
-  Status: **✅ hårdvaruverifierad 2026-06-20** — dirty-state-smoke-test:
-  `terminateOtherInstances` dödade den gamla daemonen (PID 82948),
-  `copyFileWithRetry` absorberade fillåset (försök 1 → 2), ny daemon (PID 99272)
-  från `%ProgramFiles%` blev kvar, F1-injicering i ett oförhöjt fönster fungerade
-  (medium IL) och användardata bevarades. Känd begränsning:
-  binären man kör `--install` *från* kan inte raderas av städningen (i bruk) →
-  loggas, ofarlig eftersom maskinvida binären i `%ProgramFiles%` är auktoritativ.
-- **Fas 5c** — `--uninstall` (speglar `--install`). `Uninstall()` självförhöjer
-  via `relaunchElevated("--uninstall")` (helpern parametriserades; `Run` skickar
-  `"--install"` — beteendebevarande). Förhöjt, i ordning: (1)
-  `terminateOtherInstances` stoppar daemonen + låser upp binären (self-PID
-  exkluderad); (2) `schtasks /Delete /TN "Prata" /F`, klassad **locale-säkert**
-  via post-state `schtasks /Query` (`taskAbsent`) — aldrig felsträngsparsning; (3)
-  `removeInstallDirWithRetry` tar bort `%ProgramFiles%\Prata` (10 × 200 ms mot det
-  övergående image-section-låset efter terminering). **Per-användardata i
-  `%LOCALAPPDATA%\Prata` lämnas orörd** (API-nyckel, ordlista, backend-val — dyra
-  att återskapa, och `--install` skapade dem aldrig; symmetri). `PrataWhisperServer`
-  (whisper-serverns SYSTEM-task) rörs aldrig — endast `"Prata"` adresseras. Best-
-  effort teardown: "redan borta" = lyckat, genuin kvarleva → mjuk varnings-
-  MessageBox (ingen krasch). **Körande-binär-begränsning (Option A):** körs
-  `--uninstall` från den *installerade* `%ProgramFiles%\Prata\prata.exe` kan mappen
-  inte tömmas helt (Windows låter inte radera en körande `.exe`); `runningFromInstallDir`
-  upptäcker detta och visar "kör --uninstall från USB-/originalkopian". Robustare
-  temp-kopia-återstart (Option B) byggs inte nu. Status: **✅ hårdvaruverifierad
-  2026-06-20** — smoke-test (`--uninstall` från extern `C:\Dev`-kopia, inte den
-  installerade binären): `terminateOtherInstances` dödade den körande daemonen
-  (PID 99272), `schtasks /Query` bekräftade tasken borta, `%ProgramFiles%\Prata`
-  togs bort, och `%LOCALAPPDATA%\Prata` lämnades intakt (6 filer kvar: apikey.dat,
-  backend.txt, ordlistan + `.default` + `.bak`, prata.exe.bak). Eftersom uninstall
-  kördes utanför installDir gällde lyckade-vägen, inte Option-A-varningen.
-- **Fas 6** — Uppdateringsflöde. **Mekaniken finns redan i `--install`** och kräver
-  ingen ny kod: `installElevated` kör `terminateOtherInstances` → `copyFileWithRetry`
-  → `registerTask` (`schtasks /Create /F`, så XML:en regenereras och en ändrad
-  task-definition appliceras) → `runTask` (omstart i sessionen, medium IL). Bevisat av
-  5b-smoke-testet (överskriv-medan-igång: dödade PID 82948 → retry-copy → omregistrering
-  → omstart). En uppdatering = **kör om `--install` från den NYA binären på USB-minnet**;
-  `samePath(src,dst)`-vakten gör att om man kör den redan installerade
-  `%ProgramFiles%\Prata\prata.exe --install` hoppas kopian över (bara task-reparation +
-  omstart, ingen versionshöjning) — uppdatering måste därför ske från USB-kopian, inte
-  från den installerade binären (samma modell som uninstall Option-A). Fas 6 är därför
-  **bara text + docs**: tray-notisen (`res.Newer`) pekar nu på USB-omkörningen i stället
-  för det vaga "installationskommandot", och de stale `install.ps1`-kommentarerna i
-  `internal/update` + `main.go` korrigeras (installern är en separat process som dödar
-  daemonen *före* kopian → ingen self-overwrite, ingen rename-dans). Versions-checken
-  (`update.Check`) är oförändrad. **Multi-session-villkor:** `terminateOtherInstances`
-  dödar *alla* andra `prata.exe` per namn (self-exkluderad), så på en delad klinikdator
-  avbryter en `--install` även en annan inloggad användares daemon — uppdatera när ingen
-  dikterar (full USB-runbook-rad = Fas 7). Status: **✅ Verifierad 2026-06-20** (grindar + diff-granskning; ren
-  strängändring, ingen ny mekanik att hårdvarutesta — uppdateringsmekaniken är
-  redan 5b-verifierad).
-- **Fas 7** — Paketering + legacy-städning. `release.yml` skeppar nu **EN binär**
-  (`prata.exe`) + USB-wrappers `Installera-Prata.bat`/`Avinstallera-Prata.bat`;
-  `prata-setkey.exe`, rot-`dictionary-corrections.txt` och `install.ps1` släpps ur
-  release-bunten. Borttaget ur repot: `install.ps1`, `cmd/prata-setkey/` (infälld i
-  `prata --set-key` sedan Fas 2) och rot-dubbletten av ordlistan (embed-källan
-  `internal/dict/dictionary-corrections.txt` är enda sanningen). Signering är en
-  **förberedd, deferrad hook** i `release.yml` (gated på `CODE_SIGN_PFX`-secret,
-  no-op utan cert). `logf`-sökvägen är nu env-styrbar via `PRATA_INSTALL_LOG`
-  (testisolering + dev). Docs synkade (README, PRATA-MASTER, GPU-SERVER, CHANGELOG).
-  Legacy-städningskommentaren i `installer.go` (`cleanupLegacyUserBinaries`) lämnas —
-  den städar redan utplacerade `prata-setkey.exe` på klinikdiskar, inte nuvarande metod.
-  Status: **✅ 2026-06-20** — kod + docs klara; `.bat` hårdvaru-röksstestad (launch +
-  å/ö + pause-nät); `release.yml` review-verifierad (full validering på första `v*`-taggen).
+  — clearing both the session-bound single-instance mutex and any file lock on the
+  target binary; (2) `copyFileWithRetry` (10 × 200 ms) tolerates a transient lock after
+  the termination and aborts the install with an error box if the lock persists (never a silent
+  continuation); (3) after `schtasks /Run`, `cleanupLegacyUserBinaries` removes
+  **only** `prata.exe` + `prata-setkey.exe` in each `C:\Users\*\AppData\Local\
+  Prata\` (best-effort; user data preserved). The task XML, RunLevel, and the medium-IL
+  start are **untouched** → the invariant intact. Self-PID exclusion is mandatory.
+  Status: **✅ hardware-verified 2026-06-20** — dirty-state smoke test:
+  `terminateOtherInstances` killed the old daemon (PID 82948),
+  `copyFileWithRetry` absorbed the file lock (attempt 1 → 2), the new daemon (PID 99272)
+  from `%ProgramFiles%` remained, F1 injection into a non-elevated window worked
+  (medium IL), and user data was preserved. Known limitation:
+  the binary you run `--install` *from* cannot be deleted by the cleanup (in use) →
+  logged, harmless since the machine-wide binary in `%ProgramFiles%` is authoritative.
+- **Phase 5c** — `--uninstall` (mirrors `--install`). `Uninstall()` self-elevates
+  via `relaunchElevated("--uninstall")` (the helper was parameterized; `Run` passes
+  `"--install"` — behavior-preserving). Elevated, in order: (1)
+  `terminateOtherInstances` stops the daemon + unlocks the binary (self-PID
+  excluded); (2) `schtasks /Delete /TN "Prata" /F`, classified **locale-safely**
+  via the post-state `schtasks /Query` (`taskAbsent`) — never error-string parsing; (3)
+  `removeInstallDirWithRetry` removes `%ProgramFiles%\Prata` (10 × 200 ms against the
+  transient image-section lock after termination). **Per-user data in
+  `%LOCALAPPDATA%\Prata` is left untouched** (API key, dictionary, backend choice — expensive
+  to recreate, and `--install` never created them; symmetry). `PrataWhisperServer`
+  (the whisper server's SYSTEM task) is never touched — only `"Prata"` is addressed. Best-
+  effort teardown: "already gone" = success, a genuine remnant → a soft warning
+  MessageBox (no crash). **Running-binary limitation (Option A):** if
+  `--uninstall` is run from the *installed* `%ProgramFiles%\Prata\prata.exe`, the folder
+  cannot be fully emptied (Windows does not allow deleting a running `.exe`); `runningFromInstallDir`
+  detects this and shows "kör --uninstall från USB-/originalkopian". A more robust
+  temp-copy relaunch (Option B) is not built now. Status: **✅ hardware-verified
+  2026-06-20** — smoke test (`--uninstall` from an external `C:\Dev` copy, not the
+  installed binary): `terminateOtherInstances` killed the running daemon
+  (PID 99272), `schtasks /Query` confirmed the task gone, `%ProgramFiles%\Prata`
+  was removed, and `%LOCALAPPDATA%\Prata` was left intact (6 files remaining: apikey.dat,
+  backend.txt, the dictionary + `.default` + `.bak`, prata.exe.bak). Since uninstall
+  ran outside installDir, the success path applied, not the Option-A warning.
+- **Phase 6** — Update flow. **The mechanics already exist in `--install`** and require
+  no new code: `installElevated` runs `terminateOtherInstances` → `copyFileWithRetry`
+  → `registerTask` (`schtasks /Create /F`, so the XML is regenerated and a changed
+  task definition is applied) → `runTask` (restart in the session, medium IL). Proven by
+  the 5b smoke test (overwrite-while-running: killed PID 82948 → retry-copy → re-registration
+  → restart). An update = **re-run `--install` from the NEW binary on the USB stick**;
+  the `samePath(src,dst)` guard means that if you run the already-installed
+  `%ProgramFiles%\Prata\prata.exe --install` the copy is skipped (only task repair +
+  restart, no version bump) — an update must therefore happen from the USB copy, not
+  from the installed binary (same model as uninstall Option A). Phase 6 is therefore
+  **just text + docs**: the tray notice (`res.Newer`) now points to the USB re-run instead
+  of the vague "installationskommandot", and the stale `install.ps1` comments in
+  `internal/update` + `main.go` are corrected (the installer is a separate process that kills the
+  daemon *before* the copy → no self-overwrite, no rename dance). The version check
+  (`update.Check`) is unchanged. **Multi-session caveat:** `terminateOtherInstances`
+  kills *all* other `prata.exe` by name (self-excluded), so on a shared clinic computer
+  an `--install` also terminates another logged-in user's daemon — update when no one
+  is dictating (full USB-runbook line = Phase 7). Status: **✅ Verified 2026-06-20** (gates + diff review; a pure
+  string change, no new mechanics to hardware-test — the update mechanism is
+  already 5b-verified).
+- **Phase 7** — Packaging + legacy cleanup. `release.yml` now ships **ONE binary**
+  (`prata.exe`) + the USB wrappers `Installera-Prata.bat`/`Avinstallera-Prata.bat`;
+  `prata-setkey.exe`, the root `dictionary-corrections.txt`, and `install.ps1` are dropped from
+  the release bundle. Removed from the repo: `install.ps1`, `cmd/prata-setkey/` (folded into
+  `prata --set-key` since Phase 2), and the root duplicate of the dictionary (the embed source
+  `internal/dict/dictionary-corrections.txt` is the single truth). Signing is a
+  **prepared, deferred hook** in `release.yml` (gated on the `CODE_SIGN_PFX` secret,
+  no-op without a cert). The `logf` path is now env-controllable via `PRATA_INSTALL_LOG`
+  (test isolation + dev). Docs synced (README, PRATA-MASTER, GPU-SERVER, CHANGELOG).
+  The legacy-cleanup comment in `installer.go` (`cleanupLegacyUserBinaries`) is kept —
+  it cleans up already-deployed `prata-setkey.exe` on clinic disks, not the current method.
+  Status: **✅ 2026-06-20** — code + docs done; `.bat` hardware smoke-tested (launch +
+  å/ö + pause safety net); `release.yml` review-verified (full validation on the first `v*` tag).
 
-### 2026-06-16: Ordlista — embeddad baslinje + per-användare-override (Fas 3 implementerad)
+### 2026-06-16: Dictionary — embedded baseline + per-user override (Phase 3 implemented)
 
-**Status:** Implementerad. Genomför Fas 3 i installer-planen ovan.
+**Status:** Implemented. Carries out Phase 3 of the installer plan above.
 
-**Vad som gjordes**
+**What was done**
 
-- Baslinjen (`dictionary-corrections.txt`) `go:embed`:as nu i binären som en
-  **immutabel** lager (`internal/dict/dictionary-corrections.txt`, byte-identisk
-  kopia av rot-filen). Den laddas alltid — ordlistan kan inte längre "tyst
-  inaktiveras" för att en fil saknas bredvid exet.
-- **Override** läggs ovanpå baslinjen (`dict.LoadDefault` → `loadLayered` →
-  `mergeRules`): en override-post **lägger till** eller **ersätter per nyckel**
-  en baslinjepost. Ersättning sker på första (och enda eldande) förekomsten, så
-  override vinner under first-match-wins.
-- **Sökvägsupplösning enad.** `resolvePath` (dict) returnerar OVERRIDE-sökvägen:
-  `PRATA_DICT_PATH` (dev) → annars `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`.
-  `cmd/prata`s `loadDict` delegerar till `dict.LoadDefault` — de räknar inte
-  längre ut sökväg oberoende, så daemon/`Save`/`Reload` är alltid överens.
-- **F9/`dict.Save` skriver ENDAST till override-filen** (skapar
-  `%LOCALAPPDATA%\Prata` vid behov), aldrig baslinjen, aldrig bredvid exet.
-- **Biverkan löst:** `go run`-quirken (`os.Executable` → byggcache → ordlistan
-  inaktiverades) är borta eftersom baslinjen alltid är embeddad.
-- **Transient dubblett:** rot-`dictionary-corrections.txt` **borttagen 2026-06-20
-  (Fas 7)** — den var byte-identisk med embed-källan och skeppades tidigare av
-  `release.yml`/`install.ps1`; ofarlig att ta bort eftersom runtime aldrig läste
-  bredvid exet. `internal/dict/dictionary-corrections.txt` är enda baslinjekällan.
+- The baseline (`dictionary-corrections.txt`) is now `go:embed`-ed into the binary as an
+  **immutable** layer (`internal/dict/dictionary-corrections.txt`, a byte-identical
+  copy of the root file). It always loads — the dictionary can no longer "silently
+  disable" because a file is missing next to the exe.
+- **The override** is layered on top of the baseline (`dict.LoadDefault` → `loadLayered` →
+  `mergeRules`): an override entry **adds** or **replaces per key**
+  a baseline entry. Replacement happens on the first (and only firing) occurrence, so
+  the override wins under first-match-wins.
+- **Path resolution unified.** `resolvePath` (dict) returns the OVERRIDE path:
+  `PRATA_DICT_PATH` (dev) → otherwise `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`.
+  `cmd/prata`'s `loadDict` delegates to `dict.LoadDefault` — they no longer
+  compute the path independently, so the daemon/`Save`/`Reload` always agree.
+- **F9/`dict.Save` writes ONLY to the override file** (creating
+  `%LOCALAPPDATA%\Prata` if needed), never the baseline, never next to the exe.
+- **Side effect resolved:** the `go run` quirk (`os.Executable` → build cache → the dictionary
+  was disabled) is gone because the baseline is always embedded.
+- **Transient duplicate:** the root `dictionary-corrections.txt` was **removed 2026-06-20
+  (Phase 7)** — it was byte-identical to the embed source and was previously shipped by
+  `release.yml`/`install.ps1`; harmless to remove since the runtime never read
+  next to the exe. `internal/dict/dictionary-corrections.txt` is the only baseline source.
 
-**Byggtids-fold-in — GRÄNSSNITT designat nu, implementation faslagd (Fas 5/6)**
+**Build-time fold-in — INTERFACE designed now, implementation phased (Phase 5/6)**
 
-Värdefulla override-poster ska kunna "vikas in" i den embeddade baslinjen inför
-en release, så att de skeppas till alla användare. Kontraktet:
+Valuable override entries should be able to be "folded into" the embedded baseline ahead of
+a release, so they ship to all users. The contract:
 
-- **Form:** ett litet Go-CLI, `cmd/dict-foldin` (stdlib-only, ingen
-  daemon-koppling), körs **manuellt av utvecklaren** före en release-build —
-  inte i daemon-hot-pathen, inte automatiskt i CI.
-- **Anrop:**
+- **Form:** a small Go CLI, `cmd/dict-foldin` (stdlib-only, no
+  daemon coupling), run **manually by the developer** before a release build —
+  not in the daemon hot path, not automatically in CI.
+- **Invocation:**
   `dict-foldin --override <path> [--baseline internal/dict/dictionary-corrections.txt] [--dry-run]`
-  - `--override` (obligatorisk): källan att vika in (typiskt en användares
+  - `--override` (required): the source to fold in (typically a user's
     `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`).
-  - `--baseline` (default `internal/dict/dictionary-corrections.txt`): målet som
-    embeddas vid nästa build — den **enda** baslinjekällan.
-  - `--dry-run`: skriv ut diffen (skulle-läggas-till / skulle-ersättas), skriv
-    inget.
-- **Semantik:** identisk med runtime-`mergeRules` — per nyckel lägg till eller
-  ersätt på plats; bevara kommentarer, tomrader och ordning i baslinjen; hoppa
-  över tomma/identitetsregler (som `Save`). **Tar aldrig bort** baslinjeregler.
-- **Utdata:** uppdaterad baslinjefil (idempotent) + en kort rapport
-  (added/replaced/skipped). Exit ≠ 0 vid parsefel i någon fil.
-- **Invariant:** baslinjen förblir den enda embeddade källan; verktyget
-  redigerar bara den filen, rör aldrig användarens override.
+  - `--baseline` (default `internal/dict/dictionary-corrections.txt`): the target
+    embedded at the next build — the **only** baseline source.
+  - `--dry-run`: print the diff (would-be-added / would-be-replaced), write
+    nothing.
+- **Semantics:** identical to the runtime `mergeRules` — per key, add or
+  replace in place; preserve comments, blank lines, and order in the baseline; skip
+  empty/identity rules (like `Save`). **Never removes** baseline rules.
+- **Output:** an updated baseline file (idempotent) + a short report
+  (added/replaced/skipped). Exit ≠ 0 on a parse error in any file.
+- **Invariant:** the baseline remains the only embedded source; the tool
+  edits only that file, never touches the user's override.
 
-### 2026-06-17: `--install` maskinbred, self-elevating — happy path (Fas 5a implementerad)
+### 2026-06-17: `--install` machine-wide, self-elevating — happy path (Phase 5a implemented)
 
-**Status:** Implementerad (ren install, ingen tidigare Prata). Genomför Fas 5a.
-Deferrat: migrering av per-användare-install (5b), `--uninstall` (5c),
-överskriv-medan-igång/uppdatering (6), Webroot-allowlisting + `Installera-Prata.bat`
+**Status:** Implemented (clean install, no prior Prata). Carries out Phase 5a.
+Deferred: migration of a per-user install (5b), `--uninstall` (5c),
+overwrite-while-running/update (6), Webroot allowlisting + `Installera-Prata.bat`
 (7).
 
-**Vad som gjordes**
+**What was done**
 
-- Nytt paket `internal/installer` (rå `syscall`, ingen ny dependency — håller
-  stdlib-only-principen). `dispatchSubcommand` fick `case "--install"`.
-  No-args = daemon är oförändrat.
-- **Förhöjning:** `isElevated` (`OpenProcessToken` + `GetTokenInformation`
-  `TokenElevation`). Ej förhöjd → `ShellExecuteW` verb `runas` params
-  `--install`, exit; retur ≤ 32 (UAC nekad) → svensk MessageBox. Redan förhöjd
-  (återstartat barn / Gren B) → fortsätt. `isElevated`-kollen hindrar loop.
-- **Kopiering:** `os.Executable()` → `%ProgramFiles%\Prata\prata.exe`.
-  source==dest jämförs på normaliserad, case-insensitiv sökväg → hoppa kopian
-  men omregistrera tasken (idempotent reparation). Låst/oskrivbart mål → fel,
-  ingen tyst fortsättning.
-- **Maskinbred task** via genererad XML (UTF-16LE + BOM, `schtasks /Create /XML
-  … /F`): `LogonTrigger` utan `UserId`, `GroupId` = `S-1-5-32-545`,
+- A new package `internal/installer` (raw `syscall`, no new dependency — keeps the
+  stdlib-only principle). `dispatchSubcommand` got a `case "--install"`.
+  No-args = daemon is unchanged.
+- **Elevation:** `isElevated` (`OpenProcessToken` + `GetTokenInformation`
+  `TokenElevation`). Not elevated → `ShellExecuteW` verb `runas` params
+  `--install`, exit; return ≤ 32 (UAC denied) → Swedish MessageBox. Already elevated
+  (relaunched child / Branch B) → continue. The `isElevated` check prevents a loop.
+- **Copying:** `os.Executable()` → `%ProgramFiles%\Prata\prata.exe`.
+  source==dest is compared on a normalized, case-insensitive path → skip the copy
+  but re-register the task (idempotent repair). Locked/unwritable target → error,
+  no silent continuation.
+- **Machine-wide task** via generated XML (UTF-16LE + BOM, `schtasks /Create /XML
+  … /F`): `LogonTrigger` without `UserId`, `GroupId` = `S-1-5-32-545`,
   `RunLevel` `LeastPrivilege`, `MultipleInstancesPolicy` `Parallel`,
-  `ExecutionTimeLimit` `PT0S`. **Ingen explicit `LogonType`:** för en
-  grupp-principal är interaktiv logon implicit, och v1.2-schemat kräver
-  `LogonType` *före* `GroupId` — ett explicit värde gav `schtasks`-felet
-  "unexpected node" (rättat 2026-06-20; elementordningen vaktas nu av ett
-  enhetstest). Medium-IL-garantin ligger i `RunLevel`, inte i `LogonType`.
-- **Post-install-start:** `schtasks /Run /TN "Prata"` (best-effort, medium IL).
-  Misslyckas → icke-fatalt ("nästa inloggning").
+  `ExecutionTimeLimit` `PT0S`. **No explicit `LogonType`:** for a
+  group principal an interactive logon is implicit, and the v1.2 schema requires
+  `LogonType` *before* `GroupId` — an explicit value produced the `schtasks` error
+  "unexpected node" (fixed 2026-06-20; the element order is now guarded by a
+  unit test). The medium-IL guarantee lies in `RunLevel`, not in `LogonType`.
+- **Post-install start:** `schtasks /Run /TN "Prata"` (best-effort, medium IL).
+  Fails → non-fatal ("next logon").
 
-**Beslut värda att notera**
+**Decisions worth noting**
 
-- **GroupId via SID `S-1-5-32-545`, inte literalen "Users"/"BUILTIN\\Users".**
-  Gruppens *visningsnamn* är lokaliserat (svensk Windows: "Användare"); den
-  välkända SID:en är språkoberoende och alltid upplösbar. Korrekt teknik trots
-  att prompten skrev "BUILTIN\\Users".
-- **`MultipleInstancesPolicy` = `Parallel`** (inte `IgnoreNew`): en instans per
-  session i multisession; sessionsmutexen hindrar dubletter inom en session.
-  `IgnoreNew` hade kunnat blockera andra sessioners daemon.
-- **`AllowStartOnDemand` = true** krävs för att `schtasks /Run` ska fungera.
+- **GroupId via the SID `S-1-5-32-545`, not the literal "Users"/"BUILTIN\\Users".**
+  The group's *display name* is localized (Swedish Windows: "Användare"); the
+  well-known SID is language-independent and always resolvable. The correct technique despite
+  the prompt writing "BUILTIN\\Users".
+- **`MultipleInstancesPolicy` = `Parallel`** (not `IgnoreNew`): one instance per
+  session in multisession; the session mutex prevents duplicates within a session.
+  `IgnoreNew` could have blocked other sessions' daemons.
+- **`AllowStartOnDemand` = true** is required for `schtasks /Run` to work.
 
-**Känd risk (verifieras på hårdvara)**
+**Known risk (verified on hardware)**
 
-- `schtasks /Run` på en **grupp-principal-task (implicit interaktiv logon)** ska köra
-  daemonen i den inloggades session på medium IL oberoende av installerns
-  HIGH IL (Schedulertjänsten skapar processen enligt principalens RunLevel).
-  Detta är den punkt som kan bråka på vissa Windows-versioner. Om `/Run` inte
-  startar in-session: den icke-fatala "nästa inloggning"-vägen täcker det, och
-  ett dokumenterat **`explorer.exe <exe>`-trick** (Explorer kör på medium IL →
-  barnet ärver medium IL) finns som nödfallback — **kodas inte nu**.
+- `schtasks /Run` on a **group-principal task (implicit interactive logon)** should run the
+  daemon in the logged-in user's session at medium IL regardless of the installer's
+  HIGH IL (the Scheduler service creates the process per the principal's RunLevel).
+  This is the point that can act up on some Windows versions. If `/Run` does not
+  start in-session: the non-fatal "next logon" path covers it, and
+  a documented **`explorer.exe <exe>` trick** (Explorer runs at medium IL →
+  the child inherits medium IL) exists as an emergency fallback — **not coded now**.
 
-**Manuellt smoke-test-protokoll (kör på en REN, Webroot-allowlistad maskin)**
+**Manual smoke-test protocol (run on a CLEAN, Webroot-allowlisted machine)**
 
-Den byggda osignerade exe:n blockeras under Webroot och `go run` kan inte
-meningsfullt testa `--install`, så detta är deferrat tills en allowlistad
-maskin finns. Steg:
+The built unsigned exe is blocked under Webroot and `go run` cannot
+meaningfully test `--install`, so this is deferred until an allowlisted
+machine is available. Steps:
 
-1. Dubbelklicka install-vägen (`prata.exe --install`) → UAC-prompt visas.
-2. Godkänn UAC → binär hamnar i `%ProgramFiles%\Prata\prata.exe`.
-3. `schtasks /Query /TN Prata /XML` → bekräfta `RunLevel` `LeastPrivilege`,
-   `GroupId` `S-1-5-32-545`, LogonTrigger utan `UserId`.
-4. Daemonen startad i sessionen → verifiera **medium IL** (Process Explorer:
-   Integrity = Medium), inte High.
-5. F1 → diktera in i icke-förhöjt Webdoc → text injiceras (UIPI-invarianten
-   håller).
-6. Kör `--install` igen och avbryt UAC → snygg svensk MessageBox, ingen krasch.
+1. Double-click the install path (`prata.exe --install`) → the UAC prompt appears.
+2. Approve UAC → the binary lands in `%ProgramFiles%\Prata\prata.exe`.
+3. `schtasks /Query /TN Prata /XML` → confirm `RunLevel` `LeastPrivilege`,
+   `GroupId` `S-1-5-32-545`, LogonTrigger without `UserId`.
+4. The daemon started in the session → verify **medium IL** (Process Explorer:
+   Integrity = Medium), not High.
+5. F1 → dictate into a non-elevated Webdoc → text is injected (the UIPI invariant
+   holds).
+6. Run `--install` again and cancel UAC → a clean Swedish MessageBox, no crash.
 
-**Diagnostik:** varje installationssteg och fel skrivs tidsstämplat till
-`%TEMP%\prata-install.log` (delas av den icke-förhöjda föräldern och det
-förhöjda barnet). Läs den om något steg ovan fallerar — den fångar felet även
-när installern bara visar en modal MessageBox.
+**Diagnostics:** every installation step and error is written, timestamped, to
+`%TEMP%\prata-install.log` (shared by the non-elevated parent and the
+elevated child). Read it if any step above fails — it captures the error even
+when the installer only shows a modal MessageBox.
 
-**Verifierat 2026-06-20** på utvecklings-/hem-PC:n (ej Webroot): steg 1–5
-bekräftade — binären kopierad till `%ProgramFiles%\Prata`, tasken registrerad,
-`RunLevel` = `Limited` (via `Get-ScheduledTask`), daemonen kör från
-`%ProgramFiles%\Prata\prata.exe` utan argument, och F1 injicerade i ett oförhöjt
-fönster — vilket i sig bevisar medium IL (high IL skulle UIPI-blockera
-injiceringen, så steg 4 behöver ingen separat Process Explorer-kontroll).
-F1-testet kördes i ett vanligt oförhöjt fönster, inte specifikt Webdoc;
-mekanismen är identisk men en explicit Webdoc-bekräftelse återstår. Kvar att
-verifiera: UAC-avbryt-rutan (steg 6) och en körning på en ren klinikmaskin.
+**Verified 2026-06-20** on the development/home PC (not Webroot): steps 1–5
+confirmed — the binary copied to `%ProgramFiles%\Prata`, the task registered,
+`RunLevel` = `Limited` (via `Get-ScheduledTask`), the daemon runs from
+`%ProgramFiles%\Prata\prata.exe` without arguments, and F1 injected into a non-elevated
+window — which in itself proves medium IL (high IL would UIPI-block
+the injection, so step 4 needs no separate Process Explorer check).
+The F1 test was run in an ordinary non-elevated window, not specifically Webdoc;
+the mechanism is identical but an explicit Webdoc confirmation remains. Left to
+verify: the UAC-cancel box (step 6) and a run on a clean clinic machine.
 
-### 2026-06-21: Särskrivningar i diktering — orsaken är klientens segmentihopslagning, inte whisper-versionen
+### 2026-06-21: Incorrect word splits (särskrivningar) in dictation — the cause is the client's segment joining, not the whisper version
 
-**Status:** Åtgärdat och live-verifierat. Fixen sitter i
-`internal/transcribe/client.go` (`normalizeTranscript`): whisper-segmenten slås
-nu ihop **utan** separator, så som Diktell gör, istället för att vartenda radbyte
-görs om till ett mellanslag. Användaren har live-verifierat (svensk diktering via
-Prata mot **Rngv GPU-server**) att särskrivningarna är borta. `gofmt`, `go vet`
-och `go test` är gröna, inklusive ett nytt enhetstest på den verkliga
-serveroutputen.
+**Status:** Fixed and live-verified. The fix is in
+`internal/transcribe/client.go` (`normalizeTranscript`): the whisper segments are
+now joined **without** a separator, the way Diktell does, instead of turning every line break
+into a space. The user has live-verified (Swedish dictation via
+Prata against the **Rngv GPU-server**) that the word splits are gone. `gofmt`, `go vet`,
+and `go test` are green, including a new unit test on the real
+server output.
 
-**Bakgrund / symptom**
+**Background / symptom**
 
-Diktering via Prata gav mellanslag mitt i svenska ord (särskrivningar) — t.ex.
+Dictation via Prata produced spaces in the middle of Swedish words (word splits) — e.g.
 "tydlighet" → "tyd lighet", "kärnenergifrågan" → "kärnenergifrå gan", "enligt" →
-"en ligt". Korta ord var oftast oskadda; det drabbade långa sammansatta ord. Felet
-sitter i hur Prata bygger ihop transkriptet — inte i modellen och inte i
-whisper-versionen.
+"en ligt". Short words were usually unharmed; it affected long compound words. The fault
+is in how Prata assembles the transcript — not in the model and not in
+the whisper version.
 
-**Utredning — förkastad hypotes (whisper-version)**
+**Investigation — rejected hypothesis (whisper version)**
 
-Första hypotesen var en detokeniserings-regression i whisper.cpp efter taggen
-`v1.8.6` (källan på ringvägen stod på `v1.8.6-80-g0ec08451`, 80 commits efter
-releasen). Servern byggdes om pinnad till `v1.8.6` och kördes skarpt —
-**särskrivningarna kvarstod**. En deterministisk A/B avgjorde saken: samma ljud
-(en inspelad WAV) skickades mot både `v1.8.6` och HEAD+80 med
-`curl … response_format=verbose_json` och gav **byte-identisk** output, inklusive
-exakt samma brytning mitt i ordet. Buggen är alltså versions-oberoende; pinningen
-var ett villospår och behövs inte. Runbookens HEAD-klon (PRATA-GPU-SERVER.md) är
-därför oförändrad.
+The first hypothesis was a detokenization regression in whisper.cpp after the tag
+`v1.8.6` (the source on the Rngv server was at `v1.8.6-80-g0ec08451`, 80 commits after
+the release). The server was rebuilt pinned to `v1.8.6` and run live —
+**the word splits persisted**. A deterministic A/B settled it: the same audio
+(a recorded WAV) was sent against both `v1.8.6` and HEAD+80 with
+`curl … response_format=verbose_json` and produced **byte-identical** output, including
+exactly the same break in the middle of the word. The bug is therefore version-independent; the pinning
+was a red herring and is not needed. The runbook's HEAD clone (PRATA-GPU-SERVER.md) is
+therefore unchanged.
 
-**Diagnos — verklig orsak**
+**Diagnosis — actual cause**
 
-`verbose_json` på riktig svensk röst visade mekanismen. whisper lägger ibland en
-**segmentgräns mitt i ett långt ord**:
+`verbose_json` on real Swedish speech revealed the mechanism. whisper sometimes places a
+**segment boundary in the middle of a long word**:
 
 ```
 "text": " … kärnenergifrågan. Tyd\nlighet, små, enligt, akromeoplastik.\n"
-segment 0 slutar: "… kärnenergifrågan. Tyd"   (inget avslutande mellanslag)
-segment 1 börjar: "lighet, små, enligt, …"     (inget inledande mellanslag)
+segment 0 ends:   "… kärnenergifrågan. Tyd"   (no trailing space)
+segment 1 starts: "lighet, små, enligt, …"     (no leading space)
 ```
 
-Servern serialiserar varje segment på egen rad i `text`-fältet (`"Tyd\nlighet"`).
-Pratas `normalizeTranscript` körde `strings.Join(strings.Fields(s), " ")`, vilket
-behandlar radbytet som vilket blanktecken som helst och gör om det till ett
-mellanslag → "Tyd lighet". Vid en **riktig** ordgräns bär nästa segment sitt eget
-inledande mellanslag (jfk: `"… country can\n do for you …"`), men vid en gräns
-**inuti** ett ord saknas det. Diktell drabbas inte eftersom det konkatenerar
-segmenten utan separator — exakt det `normalizeTranscript` påstod sig göra men
-inte gjorde.
+The server serializes each segment on its own line in the `text` field (`"Tyd\nlighet"`).
+Prata's `normalizeTranscript` ran `strings.Join(strings.Fields(s), " ")`, which
+treats the line break like any whitespace and turns it into a
+space → "Tyd lighet". At a **real** word boundary the next segment carries its own
+leading space (cf.: `"… country can\n do for you …"`), but at a boundary
+**inside** a word it is missing. Diktell is not affected because it concatenates
+the segments without a separator — exactly what `normalizeTranscript` claimed to do but
+did not.
 
-**Beslut**
+**Decision**
 
-Ta bort segmentens radbyten utan att ersätta dem med mellanslag (konkatenera, som
-Diktell), och kollapsa sedan kvarvarande blanktecken. En riktig ordgräns har redan
-sitt inledande mellanslag på nästa segment; en gräns mitt i ordet har det inte — så
-att droppa radbytet ger rätt resultat i båda fallen. Ett enhetstest kör den exakt
-inspelade serveroutputen och kräver "Tydlighet", inte "Tyd lighet".
+Remove the segments' line breaks without replacing them with spaces (concatenate, like
+Diktell), then collapse remaining whitespace. A real word boundary already has
+its leading space on the next segment; a boundary in the middle of a word does not — so
+dropping the line break gives the right result in both cases. A unit test runs the exact
+recorded server output and requires "Tydlighet", not "Tyd lighet".
 
-**Alternativ övervägda**
+**Alternatives considered**
 
-- **Pinna/bygg om whisper.cpp till `v1.8.6`** (ursprungshypotesen). Förkastad:
-  A/B visar att buggen är versions-oberoende, så pinningen ändrar ingenting.
-- **Patcha whisper.cpp-servern** (sluta bryta mitt i ord / sluta infoga radbyte).
-  Förkastad: fork-underhåll, och ihopslagningen hör hemma på klienten — Diktell
-  bevisar att klient-konkatenering är rätt.
-- **Korrigera i Pratas ordlista.** Förkastad: maskerar felet och generaliserar
-  inte (godtyckliga ord drabbas).
+- **Pin/rebuild whisper.cpp to `v1.8.6`** (the original hypothesis). Rejected:
+  the A/B shows the bug is version-independent, so pinning changes nothing.
+- **Patch the whisper.cpp server** (stop breaking in the middle of words / stop inserting line breaks).
+  Rejected: fork maintenance, and the joining belongs on the client — Diktell
+  proves that client-side concatenation is correct.
+- **Correct in Prata's dictionary.** Rejected: masks the fault and does not generalize
+  (arbitrary words are affected).
 
-**Konsekvenser**
+**Consequences**
 
-- Fixen är en liten ändring i `normalizeTranscript` + tester; verifierad lokalt och
-  i skarp diktering.
-- whisper.cpp-serverns version är irrelevant för denna bugg; ingen pinning behövs
-  och inget i PRATA-GPU-SERVER.md ändras. Den v1.8.6-ombyggnad som gjordes under
-  utredningen är ofarlig men onödig.
-- Gäller alla backends som serialiserar segment per rad (whisper.cpp-servern och
-  Berget lika). **Korrigerad senare samma dag — se nedan: Berget trimmar sina
-  segmentrader, så ihopslagningen måste vara backend-specifik.**
-- Stavningsvariationen io→eo ("akromeoplastik") är ett ASR-igenkänningsfel från
-  modellen och påverkas inte av denna fix.
+- The fix is a small change in `normalizeTranscript` + tests; verified locally and
+  in live dictation.
+- The whisper.cpp server's version is irrelevant to this bug; no pinning is needed
+  and nothing in PRATA-GPU-SERVER.md changes. The v1.8.6 rebuild done during
+  the investigation is harmless but unnecessary.
+- Applies to all backends that serialize segments per line (the whisper.cpp server and
+  Berget alike). **Corrected later the same day — see below: Berget trims its
+  segment lines, so the joining must be backend-specific.**
+- The spelling variation io→eo ("akromeoplastik") is an ASR recognition error from
+  the model and is not affected by this fix.
 
-### 2026-06-21: Särskrivnings-fixen regredierade Berget — segmentihopslagning är backend-specifik
+### 2026-06-21: The word-split fix regressed Berget — segment joining is backend-specific
 
-**Status:** Åtgärdat. `internal/transcribe/client.go`: `normalizeTranscript`
-tar nu en `trimmedSegments`-flagga, och `Backend` har fältet `TrimmedSegments`
-(true endast för Berget). `gofmt`, `go vet`, `go build` och `go test` gröna,
-inklusive ett nytt regressionstest (`TestTranscribeBergetKeepsSentenceSpaces`).
+**Status:** Fixed. `internal/transcribe/client.go`: `normalizeTranscript`
+now takes a `trimmedSegments` flag, and `Backend` has the field `TrimmedSegments`
+(true only for Berget). `gofmt`, `go vet`, `go build`, and `go test` green,
+including a new regression test (`TestTranscribeBergetKeepsSentenceSpaces`).
 
 **Symptom**
 
-Samma ljud mot Berget och Rngv GPU. Rngv gav korrekt mellanrum; Berget tog bort
-mellanslag efter punkt vid meningsgränser: "förluster.Ungdomarna", "haft.Vi",
-"sörjer.Både", och även "fåskriva" mitt i en fras.
+The same audio against Berget and Rngv GPU. Rngv gave correct spacing; Berget removed
+the space after the period at sentence boundaries: "förluster.Ungdomarna", "haft.Vi",
+"sörjer.Både", and also "fåskriva" in the middle of a phrase.
 
-**Diagnos — orsaken är dagens egen särskrivnings-fix**
+**Diagnosis — the cause is today's own word-split fix**
 
-Den tidigare fixen (ovan) bytte `normalizeTranscript` från
-`strings.Join(strings.Fields(s), " ")` (radbyte → mellanslag) till att **droppa**
-radbyten utan separator. Det antagandet — att whisper.cpp-servern och Berget
-serialiserar segment likadant — var fel:
+The earlier fix (above) switched `normalizeTranscript` from
+`strings.Join(strings.Fields(s), " ")` (line break → space) to **dropping**
+line breaks without a separator. That assumption — that the whisper.cpp server and Berget
+serialize segments the same way — was wrong:
 
-- **Lokal whisper.cpp** lämnar segmenttexten **otrimmad**: en äkta ordgräns bär
-  sitt eget inledande mellanslag på nästa segment, och bara en gräns *inuti* ett
-  ord saknar det. Att droppa radbytet är därför rätt (bevarar "Tydlighet").
-- **Berget** **trimmar** varje segmentrad. Då är radbytet det *enda* som skiljer
-  en mening från nästa ("förluster." + "Ungdomarna"). Att droppa det limmar ihop
-  meningarna. Före dagens fix gav `Fields/Join` ett mellanslag här och Berget såg
-  rätt ut — fixen som löste den lokala servern bröt alltså Berget.
+- **Local whisper.cpp** leaves the segment text **untrimmed**: a genuine word boundary carries
+  its own leading space on the next segment, and only a boundary *inside* a
+  word lacks it. Dropping the line break is therefore correct (preserves "Tydlighet").
+- **Berget** **trims** each segment line. Then the line break is the *only* thing separating
+  one sentence from the next ("förluster." + "Ungdomarna"). Dropping it glues
+  the sentences together. Before today's fix, `Fields/Join` gave a space here and Berget
+  looked right — so the fix that solved the local server broke Berget.
 
-De två fallen "Tyd"+"lighet" (ska limmas) och "förluster."+"Ungdomarna" (ska
-separeras) går inte att skilja åt enbart från radbytet, så ingen enda regel
-fungerar för båda servrarna.
+The two cases "Tyd"+"lighet" (should be glued) and "förluster."+"Ungdomarna" (should be
+separated) cannot be told apart from the line break alone, so no single rule
+works for both servers.
 
-**Beslut**
+**Decision**
 
-Gör ihopslagningen backend-specifik via `Backend.TrimmedSegments`:
-- `false` (lokala whisper.cpp-servrar): droppa radbyten utan separator —
-  oförändrat beteende, bevarar mid-ord-sammansättningar.
-- `true` (Berget): låt radbytena bli mellanslag (`Fields/Join` räcker, eftersom
-  det redan behandlar radbyte som blanksteg).
+Make the joining backend-specific via `Backend.TrimmedSegments`:
+- `false` (local whisper.cpp servers): drop line breaks without a separator —
+  unchanged behavior, preserves mid-word compounds.
+- `true` (Berget): let the line breaks become spaces (`Fields/Join` suffices, since
+  it already treats a line break as whitespace).
 
-**Alternativ övervägda**
+**Alternatives considered**
 
-- **Punktbaserad heuristik** (mellanslag bara efter skiljetecken). Förkastad:
-  "få"+"skriva" (ska separeras) och "Tyd"+"lighet" (ska limmas) är båda
-  bokstav+bokstav utan mellanslag — omöjliga att skilja åt utan tokendata.
-- **`verbose_json` med ordtidsstämplar.** Förkastad som overkill; Berget trimmar
-  ändå, och den backend-specifika flaggan löser problemet deterministiskt.
+- **Period-based heuristic** (a space only after punctuation). Rejected:
+  "få"+"skriva" (should be separated) and "Tyd"+"lighet" (should be glued) are both
+  letter+letter without a space — impossible to tell apart without token data.
+- **`verbose_json` with word timestamps.** Rejected as overkill; Berget trims
+  anyway, and the backend-specific flag solves the problem deterministically.
 
-**Konsekvenser**
+**Consequences**
 
-- "fåskriva" försvinner som bieffekt: vid Berget blir varje segmentgräns ett
-  mellanslag, så "få" + "skriva" blir "få skriva" (korrekt — det är två ord).
-- Om en framtida backend läggs till måste dess segmentserialisering verifieras
-  och `TrimmedSegments` sättas därefter.
+- "fåskriva" disappears as a side effect: with Berget every segment boundary becomes a
+  space, so "få" + "skriva" becomes "få skriva" (correct — they are two words).
+- If a future backend is added, its segment serialization must be verified
+  and `TrimmedSegments` set accordingly.
 
-### 2026-06-21: F8-popup restyle — Win32-beslut och fällor
+### 2026-06-21: F8 popup restyle — Win32 decisions and traps
 
-**Status:** Klar och live-verifierad. Koden sitter i
-`internal/popup/popup.go`. Alla steg committade med individuella
-konventionella commit-meddelanden; hela CHANGELOG.md är à jour.
+**Status:** Done and live-verified. The code is in
+`internal/popup/popup.go`. All steps committed with individual
+conventional commit messages; the entire CHANGELOG.md is up to date.
 
-**Bakgrund**
+**Background**
 
-F8-popupens ursprungliga utseende var ett tomt `WS_BORDER`-fönster med vit
-bakgrund och ett vanligt editfält — funktionellt men visuellt oinspirerat. Tre
-omstyleiterationer (Variant 1, Variant B, och skuggtillägg) gav det nuvarande
-utseendet: tonal mintpanelbakgrund, vitt centrerat editfält med rundade hörn,
-teal-kant via DWM, F8-chip i caption-raden, rymlig padding och en DWM-skugga
-som följer de rundade hörnen.
+The F8 popup's original look was a blank `WS_BORDER` window with a white
+background and an ordinary edit field — functional but visually uninspired. Three
+restyle iterations (Variant 1, Variant B, and the shadow addition) produced the current
+look: a tonal mint panel background, a white centered edit field with rounded corners,
+a teal border via DWM, an F8 chip in the caption row, generous padding, and a DWM shadow
+that follows the rounded corners.
 
-**Beslut 1 — DWM-skugga via custom frame (inte CS_DROPSHADOW)**
+**Decision 1 — DWM shadow via a custom frame (not CS_DROPSHADOW)**
 
-`CS_DROPSHADOW` gav en rektangulär legacy-skugga vars fyrkantiga hörn stack ut
-förbi fönstrets DWM-rundade hörn (artefakt synlig i nedre högra hörnet). En
-skugga som verkligen följer de rundade hörnen kräver DWM-kompositorns egna
-skuggrendering, som bara är aktiv när DWM behandlar fönstret som "ramat".
+`CS_DROPSHADOW` produced a rectangular legacy shadow whose square corners stuck out
+past the window's DWM-rounded corners (an artifact visible in the lower right corner). A
+shadow that truly follows the rounded corners requires the DWM compositor's own
+shadow rendering, which is only active when DWM treats the window as "framed".
 
-Vägen dit: skapa fönstret med `WS_CAPTION` (inte bara `WS_POPUP`) så att DWM
-anser att fönstret är ramat och ritar skuggan; ta sedan bort den synliga
-titelraden och kanten genom att returnera 0 från `WM_NCCALCSIZE` (med
-`wParam == TRUE`). `DwmExtendFrameIntoClientArea({cyBottomHeight: 1})` håller
-DWM-ramen vid liv medan klientytan täcker hela fönstret, och
-`SetWindowPos(SWP_FRAMECHANGED)` tvingar omräkning direkt. `WS_VISIBLE` tas
-bort från skapandet och fönstret visas via `ShowWindow` efter formen — annars
-blinkar titelraden en ram innan den hinner försvinna.
+The way there: create the window with `WS_CAPTION` (not just `WS_POPUP`) so DWM
+considers the window framed and draws the shadow; then remove the visible
+title bar and border by returning 0 from `WM_NCCALCSIZE` (with
+`wParam == TRUE`). `DwmExtendFrameIntoClientArea({cyBottomHeight: 1})` keeps the
+DWM frame alive while the client area covers the whole window, and
+`SetWindowPos(SWP_FRAMECHANGED)` forces an immediate recalculation. `WS_VISIBLE` is
+removed from creation and the window is shown via `ShowWindow` after the shaping — otherwise
+the title bar flashes for one frame before it disappears.
 
-`CS_DROPSHADOW` togs bort permanent som en mellanfix (den enda rena lösningen
-av rektangelkrocken); den ersattes sedan av DWM-varianten ovan.
+`CS_DROPSHADOW` was removed permanently as an interim fix (the only clean solution
+to the rectangle clash); it was then replaced by the DWM variant above.
 
-**Beslut 2 — ES_MULTILINE för vertikal textcentrering**
+**Decision 2 — ES_MULTILINE for vertical text centering**
 
-En äkta enradig `EDIT` (`!ES_MULTILINE`) ignorerar `EM_SETRECT` / `EM_SETRECTNP`
-top/bottom — Win32 toppäljer alltid texten och bryr sig inte om
-formateringsrektangelns vertikala position. Det gör att centreringskalkylen
-(läs `tmHeight`, beräkna centrat y, sätt formatrect) inte har någon effekt.
+A true single-line `EDIT` (`!ES_MULTILINE`) ignores `EM_SETRECT` / `EM_SETRECTNP`
+top/bottom — Win32 always top-aligns the text and ignores the
+vertical position of the formatting rectangle. This means the centering calculation
+(read `tmHeight`, compute the centered y, set the format rect) has no effect.
 
-Lösningen: ge fältet `ES_MULTILINE`. En multiline-edit respekterar
-formateringsrektangeln vertikalt. Fältet används fortfarande som en enda rad:
-`ES_AUTOHSCROLL` förhindrar radbrytning, och Enter fångas i modal-loopen innan
-det når kontrollen, så ingen ny rad kan skapas. Beteendet är identiskt med ett
-vanligt enradigt fält, men centreringskoden fungerar.
+The solution: give the field `ES_MULTILINE`. A multiline edit respects the
+formatting rectangle vertically. The field is still used as a single line:
+`ES_AUTOHSCROLL` prevents line wrapping, and Enter is caught in the modal loop before
+it reaches the control, so no new line can be created. The behavior is identical to an
+ordinary single-line field, but the centering code works.
 
-**Beslut 3 — Region måste sättas EFTER WM_SETFONT**
+**Decision 3 — The region must be set AFTER WM_SETFONT**
 
-Både `EDIT` (med `ES_MULTILINE`) och `STATIC` resetar sin fönsterregion
-(satt av `SetWindowRgn`) när de tar emot `WM_SETFONT`, eftersom kontrollen
-räknar om sin inre layout och skriver om regionen som en del av det arbetet.
-Följden är att rundade hörn satta i `createEdit` / `createChip` tappas tyst
-när typsnittet tilldelas senare i `run()`.
+Both `EDIT` (with `ES_MULTILINE`) and `STATIC` reset their window region
+(set by `SetWindowRgn`) when they receive `WM_SETFONT`, because the control
+recomputes its internal layout and rewrites the region as part of that work.
+The consequence is that rounded corners set in `createEdit` / `createChip` are silently lost
+when the font is assigned later in `run()`.
 
-Lösningen: flytta ut regiontillämpningen till egna hjälpfunktioner
-(`roundEdit`, `roundChip`) som anropas *efter* att `WM_SETFONT` skickats. Detta
-är inte ett edge-case — det gäller alla vanliga Win32-kontroller som kan rita
-om sig vid typsnittsbyte.
+The solution: move the region application out into dedicated helper functions
+(`roundEdit`, `roundChip`) that are called *after* `WM_SETFONT` has been sent. This
+is not an edge case — it applies to all common Win32 controls that may redraw
+themselves on a font change.
 
-**Konsekvenser**
+**Consequences**
 
-- Popupen kräver Windows Vista+ för DWM-skuggan (`.Find()`-guard → harmless
-  no-op på äldre system om sådana ens kan köra resten av Prata).
-- `WM_NCCALCSIZE` med `wParam == TRUE` returnerar 0 → klientytan fyller hela
-  fönstret. `wParam == FALSE` faller igenom till `DefWindowProc` normalt.
-- Tre GDI-borstar (panel, chip/teal, fält/vitt) skapas i `run()` och frigörs
-  via `defer` med LIFO-ordning (efter `DestroyWindow`) — aldrig per meddelande.
-- Typsnitt: 11pt normal för fältet, 10pt semibold för caption och chip. Båda
-  DPI-skalade via `CreateFontW` med negativ `lfHeight` (punktstorlek, inte px).
-- Layoutkonstanter (Variant B): `baseMargin` 16, `baseGap` 14, `baseHeight`
-  104, `baseTextMargin` 12, `baseChipGap` 12 — allt @ 96 DPI, skalat uppåt.
-- Släppt i **v0.3.0** (omdistribution via `prata.exe --install` / `Installera-Prata.bat`).
+- The popup requires Windows Vista+ for the DWM shadow (a `.Find()` guard → harmless
+  no-op on older systems if such systems can even run the rest of Prata).
+- `WM_NCCALCSIZE` with `wParam == TRUE` returns 0 → the client area fills the whole
+  window. `wParam == FALSE` falls through to `DefWindowProc` normally.
+- Three GDI brushes (panel, chip/teal, field/white) are created in `run()` and freed
+  via `defer` in LIFO order (after `DestroyWindow`) — never per message.
+- Fonts: 11pt normal for the field, 10pt semibold for the caption and chip. Both
+  DPI-scaled via `CreateFontW` with a negative `lfHeight` (point size, not px).
+- Layout constants (Variant B): `baseMargin` 16, `baseGap` 14, `baseHeight`
+  104, `baseTextMargin` 12, `baseChipGap` 12 — all @ 96 DPI, scaled up.
+- Released in **v0.3.0** (redistribution via `prata.exe --install` / `Installera-Prata.bat`).

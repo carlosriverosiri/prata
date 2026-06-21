@@ -1,138 +1,138 @@
-# Prata — GPU-server för LAN-transkribering
+# Prata — GPU server for LAN transcription
 
-> **Status:** utkast under uppbyggnad. Fylls på steg för steg allt eftersom
-> varje steg verifieras på riktig hårdvara.
-> **Senast uppdaterad:** 2026-06-16
+> **Status:** draft under construction. Filled in step by step as
+> each step is verified on real hardware.
+> **Last updated:** 2026-06-16
 
-## Syfte
+## Purpose
 
-Den här guiden beskriver hur man reser en lokal KB-Whisper-server på en maskin
-med ett RTX 50-kort (Blackwell), så att Prata kan diktera mot den över
-nätverket i stället för mot Berget AI. Skriven för att kunna reproduceras på en
-ny maskin i framtiden.
+This guide describes how to set up a local KB-Whisper server on a machine
+with an RTX 50 card (Blackwell), so that Prata can dictate against it over
+the network instead of against Berget AI. Written so it can be reproduced on a
+new machine in the future.
 
-Servern kör samma modell som Diktell (KB-Whisper-large GGML) men exponerar den
-som en OpenAI-kompatibel HTTP-endpoint, vilket är exakt formen Prata redan
-pratar.
+The server runs the same model as Diktell (KB-Whisper-large GGML) but exposes it
+as an OpenAI-compatible HTTP endpoint, which is exactly the form Prata already
+speaks.
 
-## Arkitektur och principer
+## Architecture and principles
 
-Kort om varför uppsättningen ser ut som den gör — det styr alla val nedan.
+A brief note on why the setup looks the way it does — it governs all the choices below.
 
-**En GPU-server per plats, lokal i sitt eget nät.** Varje plats (hemma, jobbet)
-har sin egen server på sitt eget nät. De två världarna — hem och jobb — bryggas
-aldrig ihop. På jobbet sitter klient och server alltid i samma fysiska nät.
+**One GPU server per location, local to its own network.** Each location (home, clinic)
+has its own server on its own network. The two worlds — home and clinic — are
+never bridged together. At the clinic, client and server always sit on the same physical network.
 
-**Hemma tillåts fjärråtkomst inom det egna tailnet:t.** Hemmaservern får nås
-från en annan av dina *egna* maskiner (t.ex. Landet-PC:n) över Tailscale. Det
-är inte en bryggning mellan hem och jobb — det är din privata mesh mellan dina
-egna enheter, och hemmabruket gäller privat diktering, inte klinisk
-patientljud. Jobbservern exponeras *aldrig* över Tailscale (se Steg 4).
+**At home, remote access is allowed within your own tailnet.** The home server may be reached
+from another of your *own* machines (e.g. the country-house PC) over Tailscale. This
+is not a bridge between home and clinic — it is your private mesh between your
+own devices, and home use is for private dictation, not clinical
+patient audio. The clinic server is *never* exposed over Tailscale (see Step 4).
 
-**Patientljud lämnar aldrig nätet.** På jobbet stannar all ljuddata inom
-klinikens/regionens nät — klient → server är intern trafik. Att skicka klinisk
-ljuddata ut till en privat maskin är uteslutet (GDPR/informationssäkerhet),
-samma logik som gjorde att Berget valdes framför ElevenLabs/Azure.
+**Patient audio never leaves the network.** At the clinic, all audio data stays within
+the clinic's/region's network — client → server is internal traffic. Sending clinical
+audio data out to a private machine is out of the question (GDPR/information security),
+the same logic that led to Berget being chosen over ElevenLabs/Azure.
 
-**Ingen automatisk failover.** Prata växlar aldrig backend tyst. Aktiv backend
-väljs medvetet och visas alltid. Är aktiv server nere → felton, inte tyst byte.
-En backend som byts under dig i ett injektionsverktyg för patientdata är ett
-patientsäkerhetsproblem, inte en bekvämlighet.
+**No automatic failover.** Prata never switches backend silently. The active backend
+is chosen deliberately and is always shown. If the active server is down → error tone, not a silent switch.
+A backend that changes under you in an injection tool for patient data is a
+patient-safety problem, not a convenience.
 
-**Återanvänder Diktells modell och byggkedja.** whisper.cpp valdes som server
-(inte faster-whisper) av två skäl: (1) den laddar exakt samma `ggml-model.bin`
-som Diktell redan använder — byte-identiskt modellbeteende, ingen
-formatkonvertering; (2) den återanvänder den CUDA-byggkedja du redan har på
-plats för Diktell.
+**Reuses Diktell's model and build chain.** whisper.cpp was chosen as the server
+(not faster-whisper) for two reasons: (1) it loads exactly the same `ggml-model.bin`
+that Diktell already uses — byte-identical model behavior, no
+format conversion; (2) it reuses the CUDA build chain you already have in place
+for Diktell.
 
-## Verifierad topologi (2026-06-16)
+## Verified topology (2026-06-16)
 
-Tabellen beskriver den faktiska driftsättningen efter att rum 4 (klient) skulle
-nå GPU-servern i rum 1. Använd den som referens vid felsökning på nya maskiner.
+The table describes the actual deployment after room 4 (client) needed to
+reach the GPU server in room 1. Use it as a reference when troubleshooting on new machines.
 
-| Maskin (Tailscale-namn) | LAN-IP | Tailscale-IP | Roll | Nyckelfakta |
+| Machine (Tailscale name) | LAN IP | Tailscale IP | Role | Key facts |
 |---|---|---|---|---|
-| **rum-ett** | `10.64.3.60` (statisk) | `100.80.217.12` | Jobb-PC, **GPU — server** | `whisper-server` port 8080, autostart vid boot |
-| **rum4-9700k** | `10.64.3.59` | `100.78.209.16` | Jobb-PC, **utan GPU — klient** | Kör Prata, backend LAN GPU-server |
-| **ringvagen** | — | `100.87.6.56` | Hem-PC (Windows 11), GPU — server | Backend Rngv GPU-server (Tailscale) |
-| **ringvagen-wsl** | — | `100.115.64.39` | WSL på hem-PC | Cursor SSH, **ej** i transkriberingsvägen |
+| **rum-ett** | `10.64.3.60` (static) | `100.80.217.12` | clinic PC, **GPU — server** | `whisper-server` port 8080, autostart at boot |
+| **rum4-9700k** | `10.64.3.59` | `100.78.209.16` | clinic PC, **no GPU — client** | Runs Prata, backend LAN GPU-server |
+| **ringvagen** | — | `100.87.6.56` | home PC (Windows 11), GPU — server | Backend Rngv GPU-server (Tailscale) |
+| **ringvagen-wsl** | — | `100.115.64.39` | WSL on home PC | Cursor SSH, **not** in the transcription path |
 
-**Vald produktionsväg i kliniken:** rum4 → rum-ett **direkt över LAN**
-(`10.64.3.59 → 10.64.3.60`, samma subnät, Ethernet). Patientljudet stannar
-därmed inom sjukhuset — inget Tailscale-relä inblandat. Tailscale behålls som
-fallback och för fjärråtkomst hemma.
+**Chosen production path at the clinic:** rum4 → rum-ett **directly over LAN**
+(`10.64.3.59 → 10.64.3.60`, same subnet, Ethernet). The patient audio therefore stays
+within the hospital — no Tailscale relay involved. Tailscale is kept as a
+fallback and for remote access at home.
 
-**Tailscale är ett mesh (tailnet), inte parvisa uppkopplingar.** Varje maskin
-som loggats in med samma konto blir en nod och når alla andra via sin `100.x`-IP.
-Man "kopplar inte upp mot" en enskild maskin.
+**Tailscale is a mesh (tailnet), not pairwise connections.** Every machine
+logged in with the same account becomes a node and reaches all the others via its `100.x` IP.
+You don't "connect to" a single machine.
 
-**Fallback om LAN-vägen stängs** (segmentering): peka Jobb-backenden till rum-etts
-Tailscale-IP `100.80.217.12` i stället för LAN-IP. Kontrollera då med
-`tailscale status` att kopplingen står som **direct** (inte **relay**) — relay
-innebär att krypterad trafik går ut via ett DERP-relä utanför huset. Detta är
-en nödfallback, inte produktionsvägen (patientljud ska stanna på LAN).
+**Fallback if the LAN path is closed** (segmentation): point the Jobb backend to rum-ett's
+Tailscale IP `100.80.217.12` instead of the LAN IP. In that case, check with
+`tailscale status` that the connection shows as **direct** (not **relay**) — relay
+means encrypted traffic goes out via a DERP relay outside the building. This is
+an emergency fallback, not the production path (patient audio must stay on the LAN).
 
-**Känd varning (MagicDNS):** `tailscale status` kan rapportera att MagicDNS inte
-kunde sätta DNS-konfigurationen ("filen används av en annan process"). Konsekvens:
-använd `100.x`-IP-adresser, inte värdnamn, tills det är löst. Blockerar inte
-IP-trafiken.
+**Known warning (MagicDNS):** `tailscale status` may report that MagicDNS could
+not set the DNS configuration ("the file is in use by another process"). Consequence:
+use `100.x` IP addresses, not hostnames, until it is resolved. Does not block
+the IP traffic.
 
-**Mätt latens (2026-06-16, rum-ett GPU):** ca **1,4 s** per diktering. Jämför
-Berget Ai ~2,6 s (mätt 2026-05-27).
+**Measured latency (2026-06-16, rum-ett GPU):** approx. **1.4 s** per dictation. Compare
+Berget Ai ~2.6 s (measured 2026-05-27).
 
-### Två separata komponenter — viktigt att hålla isär
+### Two separate components — important to keep apart
 
-Servern består av **två delar** som hanteras på olika sätt:
+The server consists of **two parts** that are handled in different ways:
 
-| Komponent | Vad det är | Hur det hamnar på maskinen |
+| Component | What it is | How it gets onto the machine |
 |---|---|---|
-| **whisper.cpp** | Serverprogrammet — open source C++ som tar emot HTTP-anrop och kör inferens | Byggs från källkod i Steg 1 (en gång) |
-| **KB-Whisper-large** (`ggml-model.bin`) | Modellen — en färdigtränad fil från KBLab. Det är den som avgör att du får svenska och inte generisk Whisper | Laddas ned (Alternativ B) eller finns redan via Diktell (Alternativ A) |
+| **whisper.cpp** | The server program — open source C++ that receives HTTP calls and runs inference | Built from source in Step 1 (once) |
+| **KB-Whisper-large** (`ggml-model.bin`) | The model — a pre-trained file from KBLab. It's what determines that you get Swedish and not generic Whisper | Downloaded (Option B) or already present via Diktell (Option A) |
 
-Du "bygger" alltså **inte** KB-Whisper — den är färdigtränad av KBLab och laddas
-ned som en enstaka ~3 GB-fil. Det är `-m`-flaggan i Steg 2 som pekar
-serverprogrammet på just KB-Whisper-filen. Den garantin sitter i det kommandot,
-inte i bygget.
+So you do **not** "build" KB-Whisper — it is pre-trained by KBLab and downloaded
+as a single ~3 GB file. It's the `-m` flag in Step 2 that points the
+server program at the KB-Whisper file specifically. That guarantee lives in that command,
+not in the build.
 
 ---
 
-### Alternativ A — Diktell redan installerat på maskinen
+### Option A — Diktell already installed on the machine
 
-**Byggkedja** (CUDA Toolkit, CMake, Visual Studio Build Tools 2022) finns redan
-på plats. Inget extra att installera.
+**The build chain** (CUDA Toolkit, CMake, Visual Studio Build Tools 2022) is already
+in place. Nothing extra to install.
 
-**KB-Whisper-modellen** finns redan — det är *exakt* samma `ggml-model.bin` som
-Diktell laddar. Hitta sökvägen:
+**The KB-Whisper model** is already present — it is *exactly* the same `ggml-model.bin` as
+Diktell loads. Find the path:
 
 ```powershell
 Get-Content C:\Dev\diktell\config.toml | Select-String "model_path"
-# typiskt: model_path = "models/ggml-model.bin"
-# dvs C:\Dev\diktell\models\ggml-model.bin
+# typically: model_path = "models/ggml-model.bin"
+# i.e. C:\Dev\diktell\models\ggml-model.bin
 ```
 
-Du kan peka servern direkt på Diktells modell, eller kopiera filen till en egen
-katalog. På den här maskinen finns en kopia i
-`C:\Dev\whisper-models\ggml-model.bin` — det är den path autostart-uppgiften och
-Steg 2-kommandot använder. Byt path om du väljer en annan plats.
+You can point the server directly at Diktell's model, or copy the file to your own
+directory. On this machine there is a copy at
+`C:\Dev\whisper-models\ggml-model.bin` — that is the path the autostart task and
+the Step 2 command use. Change the path if you choose a different location.
 
-**→ Gå direkt till Steg 1.** Det enda som saknas är serverprogrammet whisper.cpp.
+**→ Go directly to Step 1.** The only thing missing is the server program whisper.cpp.
 
 ---
 
-### Alternativ B — ny maskin utan Diktell
+### Option B — new machine without Diktell
 
-Server-maskinen behöver:
+The server machine needs:
 
-- Ett RTX 50-kort (Blackwell, compute capability sm_120). Gäller både 5070 Ti
-  och 5060 Ti.
-- NVIDIA-drivrutin 570+ och CUDA Toolkit 12.8 eller senare (Blackwell kräver
-  minst 12.8).
-- CMake 3.20+, Visual Studio Build Tools 2022 med C++-arbetsbörda, Git.
+- An RTX 50 card (Blackwell, compute capability sm_120). Applies to both the 5070 Ti
+  and the 5060 Ti.
+- NVIDIA driver 570+ and CUDA Toolkit 12.8 or later (Blackwell requires
+  at least 12.8).
+- CMake 3.20+, Visual Studio Build Tools 2022 with the C++ workload, Git.
 
-Se Diktells `docs/03-dev-environment.md` för CUDA/CMake/Build
-Tools-installationen (~30 min).
+See Diktell's `docs/03-dev-environment.md` for the CUDA/CMake/Build
+Tools installation (~30 min).
 
-**Hämta KB-Whisper-large** från KBLab (~3 GB — ta en kopp kaffe):
+**Fetch KB-Whisper-large** from KBLab (~3 GB — grab a cup of coffee):
 
 ```powershell
 New-Item -ItemType Directory -Path C:\Dev\whisper-models -Force
@@ -141,16 +141,16 @@ Invoke-WebRequest `
   -OutFile "C:\Dev\whisper-models\ggml-model.bin"
 ```
 
-KB-Whisper-large är en svensk Whisper-variant tränad av KBLab på svenska texter.
-Generisk Whisper ger sämre resultat på svenska och används inte.
+KB-Whisper-large is a Swedish Whisper variant trained by KBLab on Swedish texts.
+Generic Whisper gives worse results on Swedish and is not used.
 
-**→ Fortsätt till Steg 1.**
+**→ Continue to Step 1.**
 
-## Steg 1 — Bygg whisper.cpp (serverprogrammet)
+## Step 1 — Build whisper.cpp (the server program)
 
-Det här steget bygger **serverprogrammet** whisper.cpp — inte modellen. Modellen
-(`ggml-model.bin`) är redan på plats efter Alternativ A eller B ovan. Steg 1
-behöver bara göras en gång per maskin:
+This step builds the **server program** whisper.cpp — not the model. The model
+(`ggml-model.bin`) is already in place after Option A or B above. Step 1
+only needs to be done once per machine:
 
 ```powershell
 cd C:\Dev
@@ -160,28 +160,28 @@ cmake -B build -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES=120 -DWHISPER_BUILD_EXAM
 cmake --build build -j --config Release
 ```
 
-- `GGML_CUDA=1` aktiverar CUDA-backend (den tidigare flaggan `WHISPER_CUBLAS`
-  är utfasad).
-- `CMAKE_CUDA_ARCHITECTURES=120` = Blackwell/sm_120. Samma värde för 5070 Ti
-  och 5060 Ti.
-- Bygget tar några minuter (kompilerar C++/CUDA).
+- `GGML_CUDA=1` enables the CUDA backend (the former flag `WHISPER_CUBLAS`
+  is deprecated).
+- `CMAKE_CUDA_ARCHITECTURES=120` = Blackwell/sm_120. Same value for the 5070 Ti
+  and the 5060 Ti.
+- The build takes a few minutes (compiles C++/CUDA).
 
-Resultat: serverbinären hamnar i `build\bin\Release\whisper-server.exe`.
+Result: the server binary ends up in `build\bin\Release\whisper-server.exe`.
 
-> ✅ *Verifierat 2026-06-15 på RTX 5070 Ti (hem-PC).* Bygget gick igenom med
-> CUDA Toolkit 12.9 och Visual Studio Build Tools 2022 (`exit code 0`). Endast
-> ofarliga kompilatorvarningar (floating-point och `size_t`-konvertering).
-> Binären hamnade på
-> `C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe` och CUDA-backend
-> hittar kortet vid start: *NVIDIA GeForce RTX 5070 Ti, compute capability
-> 12.0, 16 GB VRAM*. `system_info` rapporterar `CUDA : ARCHS = 1200` och
-> `BLACKWELL_NATIVE_FP4 = 1` — rätt arkitektur byggd.
+> ✅ *Verified 2026-06-15 on the RTX 5070 Ti (home PC).* The build passed with
+> CUDA Toolkit 12.9 and Visual Studio Build Tools 2022 (`exit code 0`). Only
+> harmless compiler warnings (floating-point and `size_t` conversion).
+> The binary ended up at
+> `C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe` and the CUDA backend
+> finds the card at startup: *NVIDIA GeForce RTX 5070 Ti, compute capability
+> 12.0, 16 GB VRAM*. `system_info` reports `CUDA : ARCHS = 1200` and
+> `BLACKWELL_NATIVE_FP4 = 1` — the correct architecture was built.
 
-## Steg 2 — Starta servern med KB-Whisper
+## Step 2 — Start the server with KB-Whisper
 
-Kommandot pekar servern på **KB-Whisper-large** (`ggml-model.bin`) — exakt samma
-modell som Diktell laddar. Justera `-m`-sökvägen om du lade modellen på en annan
-plats (se Förutsättningar → Alternativ A eller B).
+The command points the server at **KB-Whisper-large** (`ggml-model.bin`) — exactly the same
+model that Diktell loads. Adjust the `-m` path if you put the model in a different
+location (see Prerequisites → Option A or B).
 
 ```powershell
 C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe `
@@ -192,39 +192,39 @@ C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe `
   -l sv
 ```
 
-- `-m` — sökväg till **KB-Whisper-large** (`ggml-model.bin`). Har du Diktell
-  kan du även peka direkt på `C:\Dev\diktell\models\ggml-model.bin` — det är
-  samma fil.
-- `--host 0.0.0.0` — lyssna på alla nätverksinterface så andra maskiner på
-  LAN:et kan nå servern. Default `127.0.0.1` betyder *bara den här maskinen*.
-- `--port 8080` — serverns port (default).
-- `--inference-path /v1/audio/transcriptions` — gör endpointen byte-identisk
-  med den OpenAI/Berget-form Prata redan skickar. Default är `/inference`.
-- `-l sv` — svenska som standardspråk (default är `en`). KB-Whisper är en
-  svensk modell.
+- `-m` — path to **KB-Whisper-large** (`ggml-model.bin`). If you have Diktell
+  you can also point directly at `C:\Dev\diktell\models\ggml-model.bin` — it's
+  the same file.
+- `--host 0.0.0.0` — listen on all network interfaces so other machines on
+  the LAN can reach the server. The default `127.0.0.1` means *only this machine*.
+- `--port 8080` — the server's port (default).
+- `--inference-path /v1/audio/transcriptions` — makes the endpoint byte-identical
+  to the OpenAI/Berget form Prata already sends. The default is `/inference`.
+- `-l sv` — Swedish as the default language (the default is `en`). KB-Whisper is a
+  Swedish model.
 
-Servern laddar modellen i VRAM en gång vid start och håller den laddad —
-ingen kallstart per anrop (till skillnad från lokal Diktell-kallstart).
+The server loads the model into VRAM once at startup and keeps it loaded —
+no cold start per call (unlike Diktell's local cold start).
 
-> ✅ *Verifierat 2026-06-15 på RTX 5070 Ti.* Vid start laddas modellen i CUDA0
-> (`whisper_model_load: type = 5 (large v3)`, 3094 MB i VRAM) och servern
-> börjar lyssna på `0.0.0.0:8080`. Modellfilen är ~2,9 GiB (≈3,1 GB), samma
-> KB-Whisper-large som Diktell.
+> ✅ *Verified 2026-06-15 on the RTX 5070 Ti.* At startup the model is loaded into CUDA0
+> (`whisper_model_load: type = 5 (large v3)`, 3094 MB in VRAM) and the server
+> starts listening on `0.0.0.0:8080`. The model file is ~2.9 GiB (≈3.1 GB), the same
+> KB-Whisper-large as Diktell.
 
-> ✅ *Verifierat 2026-06-16 på rum-ett (klinik).* GPU-processen syns i
-> `nvidia-smi`, endpointen svarar på `http://10.64.3.60:8080/v1/audio/transcriptions`,
-> live-diktering från rum4 ger ca 1,4 s latens per anrop.
+> ✅ *Verified 2026-06-16 on rum-ett (clinic).* The GPU process is visible in
+> `nvidia-smi`, the endpoint responds at `http://10.64.3.60:8080/v1/audio/transcriptions`,
+> and live dictation from rum4 gives approx. 1.4 s latency per call.
 
-## Steg 2b — Autostarta servern vid boot (hemma)
+## Step 2b — Autostart the server at boot (home)
 
-Servern ska bete sig som Tailscale: igång efter omstart eller strömavbrott
-*utan* att någon loggar in. Den körs därför som en schemalagd uppgift som
-**SYSTEM, startad vid boot** (`AtStartup`) — inte knuten till din inloggning. Då
-startar den i session 0 vid uppstart, behöver inget lagrat lösenord (SYSTEM har
-inget), visar inget konsolfönster (session 0 har ingen interaktiv desktop), och
-får auto-omstart vid krasch.
+The server should behave like Tailscale: up after a reboot or power loss
+*without* anyone logging in. It therefore runs as a scheduled task as
+**SYSTEM, started at boot** (`AtStartup`) — not tied to your logon. It then
+starts in session 0 at boot, needs no stored password (SYSTEM has
+none), shows no console window (session 0 has no interactive desktop), and
+gets auto-restart on crash.
 
-**Registrera uppgiften** (kör som administratör — UAC-ruta dyker upp):
+**Register the task** (run as administrator — a UAC prompt appears):
 
 ```powershell
 $TaskName  = "PrataWhisperServer"
@@ -237,95 +237,94 @@ $Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
 ```
 
-- **SYSTEM / ServiceAccount / Highest** — kör vid boot utan inloggning, som en
-  tjänst, utan lagrat lösenord. Eftersom session 0 saknar interaktiv desktop
-  körs exe:n direkt — inget dölj-fönster-trick (VBScript) behövs.
-- **`AtStartup`** — utlöses vid uppstart, oberoende av inloggning. Överlever
-  omstart och strömavbrott (kommer igång vid nästa boot, precis som Tailscale).
-- **`RestartCount 3` / `RestartInterval 1 min`** — kraschar servern startas den
-  om, upp till tre gånger med en minuts mellanrum.
-- **`ExecutionTimeLimit 0`** — ingen tidsgräns; servern får köra hur länge som
-  helst.
+- **SYSTEM / ServiceAccount / Highest** — runs at boot without logon, like a
+  service, without a stored password. Since session 0 has no interactive desktop,
+  the exe runs directly — no hide-window trick (VBScript) needed.
+- **`AtStartup`** — triggers at boot, independent of logon. Survives
+  reboot and power loss (comes up at the next boot, just like Tailscale).
+- **`RestartCount 3` / `RestartInterval 1 min`** — if the server crashes it is restarted,
+  up to three times one minute apart.
+- **`ExecutionTimeLimit 0`** — no time limit; the server may run indefinitely.
 
-> **GeForce + session 0:** den enda tekniska osäkerheten var om CUDA fungerar för
-> SYSTEM i session 0 (inget interaktivt skrivbord). Det är verifierat att det
-> gör det på den här maskinen (se noten nedan) — ren GPU-beräkning behöver ingen
+> **GeForce + session 0:** the only technical uncertainty was whether CUDA works for
+> SYSTEM in session 0 (no interactive desktop). It is verified that it
+> does on this machine (see the note below) — pure GPU computation needs no
 > desktop.
 
-**Starta nu** utan att vänta på en omstart (kräver administratör eftersom
-uppgiften körs som SYSTEM — vid en riktig boot startar Schemaläggaren den själv
-utan UAC):
+**Start now** without waiting for a reboot (requires administrator because the
+task runs as SYSTEM — at a real boot the Task Scheduler starts it itself
+without UAC):
 
 ```powershell
 Start-ScheduledTask -TaskName PrataWhisperServer
 ```
 
-**Datorn får inte själv somna.** Skärmens viloläge är ofarligt (servern
-påverkas inte), men om hela maskinen går i vila/viloläge (S3/hibernate) stannar
-GPU:n och nätet — då är servern onåbar. Sätt systemets timeouts till 0 på
-nätström (skärmen får gärna släckas):
+**The computer must not fall asleep on its own.** Display sleep is harmless (the server
+is unaffected), but if the whole machine goes into sleep/hibernate (S3/hibernate) the
+GPU and the network stop — then the server is unreachable. Set the system timeouts to 0 on
+AC power (the screen may well turn off):
 
 ```powershell
-powercfg /change standby-timeout-ac 0     # datorn somnar aldrig på nätström
+powercfg /change standby-timeout-ac 0     # the computer never sleeps on AC power
 powercfg /change hibernate-timeout-ac 0
 ```
 
-**Hantering** (start/stopp/borttagning kräver administratör eftersom uppgiften
-ägs av SYSTEM):
+**Management** (start/stop/removal requires administrator because the task
+is owned by SYSTEM):
 
 ```powershell
 Get-ScheduledTask -TaskName PrataWhisperServer                          # status
-Get-Process whisper-server | Select Id, StartTime                       # körs den?
-Stop-ScheduledTask  -TaskName PrataWhisperServer                        # stoppa servern
-Unregister-ScheduledTask -TaskName PrataWhisperServer -Confirm:$false   # ta bort autostart
+Get-Process whisper-server | Select Id, StartTime                       # is it running?
+Stop-ScheduledTask  -TaskName PrataWhisperServer                        # stop the server
+Unregister-ScheduledTask -TaskName PrataWhisperServer -Confirm:$false   # remove autostart
 ```
 
-> ✅ *Verifierat 2026-06-15 på hem-PC:n.* Uppgiften kör som
-> `NT AUTHORITY\SYSTEM`, port 8080 lyssnar på `0.0.0.0` och ett
-> transkriberings-anrop mot den SYSTEM-startade instansen gav korrekt JSON —
-> dvs **CUDA/GPU fungerar i session 0**. Ströminställningarna är redan rätt
-> (`standby-timeout-ac = 0`, `hibernate-timeout-ac = 0`), så datorn somnar aldrig
-> av sig själv på nätström. Nettoresultat: servern startar vid boot utan
-> inloggning och överlever omstart/strömavbrott — som Tailscale.
+> ✅ *Verified 2026-06-15 on the home PC.* The task runs as
+> `NT AUTHORITY\SYSTEM`, port 8080 listens on `0.0.0.0`, and a
+> transcription call against the SYSTEM-started instance returned correct JSON —
+> i.e. **CUDA/GPU works in session 0**. The power settings are already correct
+> (`standby-timeout-ac = 0`, `hibernate-timeout-ac = 0`), so the computer never sleeps
+> on its own on AC power. Net result: the server starts at boot without
+> logon and survives reboot/power loss — like Tailscale.
 
-> ✅ *Verifierat 2026-06-16 på rum-ett (klinik).* Uppgiften **`PrataWhisperServer`**
-> startar servern vid boot utan inloggning. Se avsnittet om brandväggen under
-> Steg 4 — SYSTEM-autostart triggar **aldrig** den interaktiva brandväggsdialogen,
-> så en explicit inbound-regel måste läggas manuellt.
+> ✅ *Verified 2026-06-16 on rum-ett (clinic).* The task **`PrataWhisperServer`**
+> starts the server at boot without logon. See the firewall section under
+> Step 4 — SYSTEM autostart **never** triggers the interactive firewall dialog,
+> so an explicit inbound rule must be added manually.
 
-> **Jobbet:** samma uppgift gäller där, men följ klinikens IT-policy för
-> tjänster/autostart. Skillnaden är brandväggsregeln (LAN, inte Tailscale).
+> **Clinic:** the same task applies there, but follow the clinic's IT policy for
+> services/autostart. The difference is the firewall rule (LAN, not Tailscale).
 
-## Steg 3 — Verifiera servern
+## Step 3 — Verify the server
 
-**Lokalt på servern.** Kontrollera att porten lyssnar och gör ett litet
-test-anrop med whisper.cpp:s medföljande exempelljud (`samples\jfk.wav`):
+**Locally on the server.** Check that the port is listening and make a small
+test call with whisper.cpp's bundled sample audio (`samples\jfk.wav`):
 
 ```powershell
-# lyssnar porten?
+# is the port listening?
 (Test-NetConnection 127.0.0.1 -Port 8080).TcpTestSucceeded   # -> True
 
-# transkriberings-anrop (jfk.wav är engelska, så sätt language=en just här)
+# transcription call (jfk.wav is English, so set language=en just here)
 curl.exe -X POST "http://127.0.0.1:8080/v1/audio/transcriptions" `
   -F "file=@C:\Dev\whisper.cpp\samples\jfk.wav" `
   -F "response_format=json" `
   -F "language=en"
 ```
 
-Svaret ska vara OpenAI-kompatibel JSON, t.ex.:
+The response should be OpenAI-compatible JSON, e.g.:
 
 ```json
 {"text":" And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country."}
 ```
 
-> ✅ *Verifierat lokalt 2026-06-15 på RTX 5070 Ti.* Porten svarade och
-> endpointen returnerade korrekt JSON. Inferens ~1,3 s för ett 11-sekunders
-> klipp på GPU:n.
+> ✅ *Verified locally 2026-06-15 on the RTX 5070 Ti.* The port responded and
+> the endpoint returned correct JSON. Inference ~1.3 s for an 11-second
+> clip on the GPU.
 
-**Hemma — externt över Tailscale.** Hemmaservern nås alltid externt (aldrig
-från en maskin på samma fysiska hemnät), så det meningsfulla testet görs från
-en off-nät enhet, t.ex. en MacBook tjudrad till mobilen. Byt `127.0.0.1` mot
-serverns **Tailscale-IP** (`100.87.6.56`). curl finns inbyggt i macOS:
+**Home — externally over Tailscale.** The home server is always reached externally (never
+from a machine on the same physical home network), so the meaningful test is done from
+an off-network device, e.g. a MacBook tethered to a phone. Replace `127.0.0.1` with
+the server's **Tailscale IP** (`100.87.6.56`). curl is built into macOS:
 
 ```bash
 curl -X POST "http://100.87.6.56:8080/v1/audio/transcriptions" \
@@ -334,57 +333,57 @@ curl -X POST "http://100.87.6.56:8080/v1/audio/transcriptions" \
   -F "language=en"
 ```
 
-Detta bevisar hela produktionsvägen hemma: off-nät klient → Tailscale → GPU.
-Notera: testet verifierar *serverns nåbarhet*. Själva Prata-klienten (Steg 5)
-är Windows-only och körs inte på Mac:en — Mac:en är ett uppkopplingstest, inte
-en dikteringsklient.
+This proves the entire production path at home: off-network client → Tailscale → GPU.
+Note: the test verifies *the server's reachability*. The Prata client itself (Step 5)
+is Windows-only and does not run on the Mac — the Mac is a connectivity test, not
+a dictation client.
 
-> ⏳ *Verifieras när servern körs och MacBook:en kopplas via Tailscale.*
+> ⏳ *To be verified when the server is running and the MacBook is connected via Tailscale.*
 
-**Jobbet — internt på klinikens LAN.** På jobbet är det tvärtom: dikteringen
-sker från andra arbetsstationer på *samma* nät som GPU-maskinen, och patientljud
-får aldrig lämna det nätet. Testa från klientmaskinen (t.ex. rum4), **inte bara
-lokalt på servern** — se avsnittet "Servern fungerar lokalt men inte från
-klienten" under Felsökning.
+**Clinic — internally on the clinic LAN.** At the clinic it's the opposite: dictation
+happens from other workstations on the *same* network as the GPU machine, and patient audio
+must never leave that network. Test from the client machine (e.g. rum4), **not just
+locally on the server** — see the section "The server works locally but not from the
+client" under Troubleshooting.
 
-PowerShell **på klientmaskinen** (t.ex. rum4):
+PowerShell **on the client machine** (e.g. rum4):
 
 ```powershell
 Test-NetConnection 10.64.3.60 -Port 8080
-# TcpTestSucceeded : True  ← krävs innan Prata kan diktera
+# TcpTestSucceeded : True  ← required before Prata can dictate
 ```
 
-> ✅ *Verifierat 2026-06-16.* Från rum4 (`10.64.3.59`) mot rum-ett (`10.64.3.60`):
-> `TcpTestSucceeded : True` efter brandväggsregeln lagts på servern. Live-diktering
-> mot LAN GPU-server fungerar.
+> ✅ *Verified 2026-06-16.* From rum4 (`10.64.3.59`) to rum-ett (`10.64.3.60`):
+> `TcpTestSucceeded : True` after the firewall rule was added on the server. Live dictation
+> against LAN GPU-server works.
 
-## Steg 4 — Brandväggsregel (inbound)
+## Step 4 — Firewall rule (inbound)
 
-Windows Defender släpper inte in trafik till serverporten förrän en inbound-regel
-lagts. **Det här är det vanligaste felet vid ny driftsättning** — servern verkar
-fungera på GPU-maskinen men når inte från klienter (se Felsökning).
+Windows Defender does not let traffic into the server port until an inbound rule
+has been added. **This is the most common error in a new deployment** — the server appears
+to work on the GPU machine but is not reachable from clients (see Troubleshooting).
 
-> **SYSTEM-autostart och brandväggen.** När `whisper-server` startas via
-> schemaläggningsuppgiften (`PrataWhisperServer`, SYSTEM vid boot) triggas **aldrig**
-> den interaktiva brandväggsdialogen som dyker upp vid manuell start. Inkommande
-> TCP 8080 är därför blockerat som standard tills du lägger en explicit regel —
-> även om servern lyssnar på `0.0.0.0:8080`.
+> **SYSTEM autostart and the firewall.** When `whisper-server` is started via the
+> scheduled task (`PrataWhisperServer`, SYSTEM at boot), the interactive firewall dialog
+> that pops up at manual start is **never** triggered. Inbound
+> TCP 8080 is therefore blocked by default until you add an explicit rule —
+> even though the server listens on `0.0.0.0:8080`.
 
-Vilken regel beror på *platsen* — och de två platserna har medvetet olika
-åtkomstmodell:
+Which rule depends on the *location* — and the two locations deliberately have different
+access models:
 
-| Plats | Åtkomst | Regel |
+| Location | Access | Rule |
 |---|---|---|
-| **Hemma** | Alltid externt (Tailscale). Ingen klient sitter på samma fysiska hemnät. | Endast Tailscale-regel. |
-| **Jobbet** | Alltid internt på klinikens LAN. Patientljud lämnar aldrig nätet. | Endast LAN-regel (LocalSubnet). |
+| **Home** | Always external (Tailscale). No client sits on the same physical home network. | Tailscale rule only. |
+| **Clinic** | Always internal on the clinic LAN. Patient audio never leaves the network. | LAN rule only (LocalSubnet). |
 
-### Hemma — Tailscale-regel
+### Home — Tailscale rule
 
-Hemmaservern når du från dina egna enheter (Landet-PC, MacBook) över Tailscale.
-Regeln scopas till tailnet-intervallet (`100.64.0.0/10`) så bara dina egna
-Tailscale-enheter kan nå porten — inte internet i stort, eftersom serverns
-`100.x`-adress bara är nåbar genom den krypterade tunneln. Kör som
-administratör (UAC-ruta dyker upp om sessionen inte är förhöjd):
+You reach the home server from your own devices (the country-house PC, MacBook) over Tailscale.
+The rule is scoped to the tailnet range (`100.64.0.0/10`) so only your own
+Tailscale devices can reach the port — not the internet at large, since the server's
+`100.x` address is only reachable through the encrypted tunnel. Run as
+administrator (a UAC prompt appears if the session is not elevated):
 
 ```powershell
 New-NetFirewallRule `
@@ -394,27 +393,27 @@ New-NetFirewallRule `
   -Profile Any
 ```
 
-- `-RemoteAddress 100.64.0.0/10` — Tailscales CGNAT-intervall. Säkerhetsspärren
-  är att adressen bara är nåbar via tunneln.
-- `-Profile Any` — Tailscale-adapterns nätverksprofil varierar; scopningen på
-  remote-adress är den faktiska spärren, inte profilen.
-- Klienter pekar på hemmaserverns **Tailscale-IP** (`100.87.6.56`), inte LAN-IP.
-  Ytterligare åtstramning kan göras i Tailscales egna ACL:er (vilka enheter som
-  får nå port 8080).
-- Någon LAN-regel (`LocalSubnet`) behövs *inte* hemma — ingen klient sitter på
-  hemnätet, så port 8080 hålls stängd mot LAN för minsta exponering.
+- `-RemoteAddress 100.64.0.0/10` — Tailscale's CGNAT range. The security guard
+  is that the address is only reachable via the tunnel.
+- `-Profile Any` — the Tailscale adapter's network profile varies; scoping on
+  remote address is the actual guard, not the profile.
+- Clients point at the home server's **Tailscale IP** (`100.87.6.56`), not the LAN IP.
+  Further tightening can be done in Tailscale's own ACLs (which devices may
+  reach port 8080).
+- A LAN rule (`LocalSubnet`) is *not* needed at home — no client sits on
+  the home network, so port 8080 is kept closed to the LAN for minimal exposure.
 
-> ✅ *Verifierat 2026-06-15 på hem-PC:n.* Regeln är aktiv: `Enabled = True`,
+> ✅ *Verified 2026-06-15 on the home PC.* The rule is active: `Enabled = True`,
 > `Inbound`, `Allow`, `TCP/8080`, `Profile = Any`,
-> `RemoteAddress = 100.64.0.0/10`. (En tidigare LocalSubnet-regel togs bort —
-> hemma används bara den externa Tailscale-vägen.) ⏳ Test-anrop från en
-> off-nät enhet (MacBook via mobil) över Tailscale återstår.
+> `RemoteAddress = 100.64.0.0/10`. (An earlier LocalSubnet rule was removed —
+> at home only the external Tailscale path is used.) ⏳ A test call from an
+> off-network device (MacBook via phone) over Tailscale is still pending.
 
-### Jobbet — LAN-regel
+### Clinic — LAN rule
 
-På jobbet sker dikteringen från andra arbetsstationer på klinikens *eget* nät,
-och Tailscale är uteslutet (patientljud får inte lämna nätet). Regeln begränsas
-till lokala nätet:
+At the clinic, dictation happens from other workstations on the clinic's *own* network,
+and Tailscale is out of the question (patient audio must not leave the network). The rule is limited
+to the local network:
 
 ```powershell
 New-NetFirewallRule `
@@ -424,338 +423,338 @@ New-NetFirewallRule `
   -Profile Domain
 ```
 
-- `-RemoteAddress LocalSubnet` håller åtkomsten inom klinikens nät — inga
-  anslutningar utifrån.
-- `-Profile Domain` är den sannolika profilen på ett klinik-/regionnät.
-  Brandvägg och portöppning kan dock styras centralt av klinikens IT — följ
-  deras policy i stället för att öppna porten på egen hand.
+- `-RemoteAddress LocalSubnet` keeps access within the clinic network — no
+  connections from outside.
+- `-Profile Domain` is the likely profile on a clinic/region network.
+  The firewall and port opening may, however, be controlled centrally by the clinic's IT — follow
+  their policy instead of opening the port on your own.
 
-**Diagnosregel (vid felsökning).** Om du behöver snabbt bekräfta att brandväggen
-är rotorsaken kan du temporärt lägga en bredare regel — kör som administratör
-**på GPU-servern**:
+**Diagnostic rule (during troubleshooting).** If you need to quickly confirm that the firewall
+is the root cause, you can temporarily add a broader rule — run as administrator
+**on the GPU server**:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Prata Whisper Server 8080" `
   -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any
 ```
 
-Verifiera därefter från klientmaskinen (`Test-NetConnection 10.64.3.60 -Port 8080`).
-Strama sedan åt regeln (servern saknar auth):
+Then verify from the client machine (`Test-NetConnection 10.64.3.60 -Port 8080`).
+Then tighten the rule (the server has no auth):
 
 ```powershell
 Set-NetFirewallRule -DisplayName "Prata Whisper Server 8080" `
   -RemoteAddress 10.64.3.0/24
-# eller explicit lista: -RemoteAddress 10.64.3.59,10.64.3.61
+# or an explicit list: -RemoteAddress 10.64.3.59,10.64.3.61
 ```
 
-> ⚠️ **Viktigt — nätmasken begränsar vem som når servern.** På GPU-maskinen är
-> nätmasken `255.255.255.192`. Windows `LocalSubnet` i brandväggsregeln ovan
-> motsvarar det adressområde som hör ihop med den nätmasken på servern — inte
-> hela klinikens nät. Ligger dikterings-arbetsstationerna utanför det
-> området (troligt om de har annan IP/nätmask) når de inte servern. Då måste
-> `-RemoteAddress` vidgas till klienternas adressområde i stället för
-> `LocalSubnet` — men håll det internt, aldrig internet.
+> ⚠️ **Important — the netmask limits who can reach the server.** On the GPU machine the
+> netmask is `255.255.255.192`. Windows `LocalSubnet` in the firewall rule above
+> corresponds to the address range that belongs to that netmask on the server — not
+> the entire clinic network. If the dictation workstations lie outside that
+> range (likely if they have a different IP/netmask), they cannot reach the server. Then
+> `-RemoteAddress` must be widened to the clients' address range instead of
+> `LocalSubnet` — but keep it internal, never the internet.
 
-> ✅ *Verifierat 2026-06-16 på rum-ett.* Rotorsak till att rum4 inte nådde servern
-> var **saknad inbound-regel**, inte LAN-segmentering (rum4 `10.64.3.59` och
-> rum-ett `10.64.3.60` ligger i samma subnät). Efter regeln:
-> `Test-NetConnection` från rum4 → `TcpTestSucceeded : True`, live-diktering
-> fungerar. Jobbservern får *aldrig* en Tailscale-regel.
+> ✅ *Verified 2026-06-16 on rum-ett.* The root cause of rum4 not reaching the server
+> was a **missing inbound rule**, not LAN segmentation (rum4 `10.64.3.59` and
+> rum-ett `10.64.3.60` are on the same subnet). After the rule:
+> `Test-NetConnection` from rum4 → `TcpTestSucceeded : True`, live dictation
+> works. The clinic server *never* gets a Tailscale rule.
 
-## Steg 5 — Peka Prata mot servern
+## Step 5 — Point Prata at the server
 
-Prata har en **backend-väljare** med tre alternativ i tray-menyn:
+Prata has a **backend selector** with three options in the tray menu:
 
-| Plats (infra) | Tray-ID (sparas i `backend.txt`) | Visningsnamn i menyn |
+| Location (infra) | Tray ID (saved in `backend.txt`) | Display name in the menu |
 |---|---|---|
-| Hem-GPU (Tailscale) | `Hemma` | Rngv GPU-server (Tailscale) |
-| Jobb-GPU (LAN) | `Jobb` | LAN GPU-server |
-| Moln | `Berget` | Berget Ai |
+| Home GPU (Tailscale) | `Hemma` | Rngv GPU-server (Tailscale) |
+| Clinic GPU (LAN) | `Jobb` | LAN GPU-server |
+| Cloud | `Berget` | Berget Ai |
 
-Rngv och Rum1 är lokala whisper.cpp-GPU-servrar (ingen auth); Berget Ai är
-moln-fallbacken (Bearer-autentiserad). ID:t är stabilt och sparas i
-`backend.txt`; visningsnamnen kan ändras i kod utan att bryta befintliga val.
+Rngv and Rum1 are local whisper.cpp GPU servers (no auth); Berget Ai is the
+cloud fallback (Bearer-authenticated). The ID is stable and saved in
+`backend.txt`; the display names can be changed in code without breaking existing choices.
 
-### Endpoint-konstanter
+### Endpoint constants
 
-Endpointerna är hårdkodade konstanter i `internal/transcribe/client.go`
-(Prata följer "ändra konstant + kompilera om", ingen config-fil):
+The endpoints are hard-coded constants in `internal/transcribe/client.go`
+(Prata follows "change a constant + recompile", no config file):
 
 ```go
 const (
-	HomeURL   = "http://100.87.6.56:8080/v1/audio/transcriptions" // hem-GPU via Tailscale
-	WorkURL   = "http://10.64.3.60:8080/v1/audio/transcriptions"  // jobb-GPU, fast LAN-IP
+	HomeURL   = "http://100.87.6.56:8080/v1/audio/transcriptions" // home GPU via Tailscale
+	WorkURL   = "http://10.64.3.60:8080/v1/audio/transcriptions"  // clinic GPU, static LAN IP
 	BergetURL = "https://api.berget.ai/v1/audio/transcriptions"
 )
 ```
 
-- **HomeURL** pekar på hem-serverns **Tailscale-IP**, så den fungerar oavsett
-  vilket nät klienten sitter på (stuga, mobil-hotspot, hemnät).
-- **WorkURL** pekar på jobb-serverns **fasta LAN-IP** (`10.64.3.60`). Den nås
-  bara inifrån klinikens nät, så att välja LAN GPU-server utanför kliniken ger
-  felton — aldrig tyst fallback. Ändras serverns adress: uppdatera konstanten
-  och bygg om.
+- **HomeURL** points at the home server's **Tailscale IP**, so it works regardless of
+  which network the client is on (cottage, mobile hotspot, home network).
+- **WorkURL** points at the clinic server's **static LAN IP** (`10.64.3.60`). It is
+  only reachable from inside the clinic network, so choosing LAN GPU-server outside the clinic gives
+  an error tone — never a silent fallback. If the server's address changes: update the constant
+  and rebuild.
 
-### Hur klienten hittar servern (adressering)
+### How the client finds the server (addressing)
 
-`WorkURL` är en kompilerad konstant — adressen bakas in i `prata.exe`. Servern
-lyssnar på `0.0.0.0:8080` och svarar oavsett om den nås via IP eller namn.
+`WorkURL` is a compiled-in constant — the address is baked into `prata.exe`. The server
+listens on `0.0.0.0:8080` and responds regardless of whether it is reached via IP or name.
 
-**Nätverksinställningar på kliniken.** Vid varje ny datorinstallation knappas
-nätverket in manuellt på nätverkskortet (IPv4, statisk konfiguration — inte
-DHCP). **DNS är samma på alla maskiner**; **IP och nätmask varierar per dator**
-och sätts utifrån vilken plats i nätet maskinen får. GPU-servern är ingen
-undantag — den får sin egen IP och subnät precis som övriga arbetsstationer.
+**Network settings at the clinic.** At every new computer installation, the
+network is entered manually on the network card (IPv4, static configuration — not
+DHCP). **DNS is the same on all machines**; **the IP and netmask vary per computer**
+and are set based on which place in the network the machine is assigned. The GPU server is no
+exception — it gets its own IP and subnet just like the other workstations.
 
-| Värde | GPU-servern (rum-ett) | Klient (rum4) | Övriga datorer |
+| Value | GPU server (rum-ett) | Client (rum4) | Other computers |
 |---|---|---|---|
-| IP | `10.64.3.60` | `10.64.3.59` | annan per maskin |
-| Nätmask | `255.255.255.192` | samma subnät | kan variera per maskin |
-| DNS 1 | `192.44.242.131` | samma | samma |
-| DNS 2 | `192.44.243.131` | samma | samma |
+| IP | `10.64.3.60` | `10.64.3.59` | different per machine |
+| Netmask | `255.255.255.192` | same subnet | may vary per machine |
+| DNS 1 | `192.44.242.131` | same | same |
+| DNS 2 | `192.44.243.131` | same | same |
 
-`WorkURL` pekar på **GPU-maskinens** IP — inte klientens. På den här
-installationen:
+`WorkURL` points at the **GPU machine's** IP — not the client's. On this
+installation:
 
 ```go
 WorkURL = "http://10.64.3.60:8080/v1/audio/transcriptions"
 ```
 
-Byter GPU-servern IP (ny maskin, annan nätmask): uppdatera `WorkURL` till den nya
-adressen och bygg om Prata. DNS-adresserna behöver normalt inte ändras.
+If the GPU server changes IP (new machine, different netmask): update `WorkURL` to the new
+address and rebuild Prata. The DNS addresses normally do not need to change.
 
-Brandväggsregeln (`LocalSubnet`) följer serverns nätmask — se varningen under
-Steg 4 → Jobbet om dikterings-arbetsstationerna har annan IP/nätmask än servern.
+The firewall rule (`LocalSubnet`) follows the server's netmask — see the warning under
+Step 4 → Clinic if the dictation workstations have a different IP/netmask than the server.
 
-Värdnamn fungerar också (delad DNS), t.ex.
-`http://RBS-PC:8080/v1/audio/transcriptions`, om GPU-maskinen är registrerad i
-DNS. Med manuellt satta IP:n per maskin är det enklast att använda IP direkt i
+Hostnames also work (shared DNS), e.g.
+`http://RBS-PC:8080/v1/audio/transcriptions`, if the GPU machine is registered in
+DNS. With manually set IPs per machine, it is easiest to use the IP directly in
 `WorkURL`.
 
-Två saker att hålla reda på oavsett val:
+Two things to keep track of regardless of choice:
 
-- `WorkURL` är en konstant, så en *ändrad* adress kräver ombyggnad av Prata och
-  omdistribution till arbetsstationerna.
-- Klient och server måste ligga på samma LAN/subnät som brandväggsregeln
-  (`LocalSubnet`) tillåter — sitter klienterna på ett annat subnät/VLAN måste
-  regeln vidgas, vilket klinikens IT i så fall styr.
+- `WorkURL` is a constant, so a *changed* address requires rebuilding Prata and
+  redistributing it to the workstations.
+- Client and server must be on the same LAN/subnet that the firewall rule
+  (`LocalSubnet`) allows — if the clients are on a different subnet/VLAN, the
+  rule must be widened, which the clinic's IT controls in that case.
 
-### Villkorlig auth
+### Conditional auth
 
-Bara Berget Ai skickar `Authorization: Bearer <nyckel>`. De lokala GPU-servrarna
-får aldrig nyckeln. API-nyckeln laddas numera "best-effort": saknas den startar
-Prata ändå (lokala backends behöver ingen), men Berget Ai rapporterar fel om det
-väljs utan nyckel.
+Only Berget Ai sends `Authorization: Bearer <key>`. The local GPU servers
+never get the key. The API key is now loaded "best-effort": if it is missing, Prata
+still starts (local backends need none), but Berget Ai reports an error if it
+is selected without a key.
 
-### Välja backend
+### Choosing a backend
 
-Högerklicka tray-ikonen → välj **Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai**
-(radioknappar, aktivt val är prickat). Aktiv backend visas alltid:
+Right-click the tray icon → choose **Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai**
+(radio buttons, the active choice is marked). The active backend is always shown:
 
-- i tray-tooltipen (`Prata — Rngv GPU-server (Tailscale)`), och
-- som en balong när du byter (`Aktiv transkribering: Rngv GPU-server (Tailscale)`).
+- in the tray tooltip (`Prata — Rngv GPU-server (Tailscale)`), and
+- as a balloon when you switch (`Aktiv transkribering: Rngv GPU-server (Tailscale)`).
 
-Valet sparas som stabilt ID (`Hemma`, `Jobb` eller `Berget`) i
-`%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart. **Standard vid första
-start** (saknad eller ogiltig `backend.txt`) är **LAN GPU-server** (`Jobb`) —
-den interna GPU-servern på klinik-LAN, som inte kräver API-nyckel. Välj
-**Rngv GPU-server (Tailscale)** hemma eller **Berget Ai** i menyn vid behov.
+The choice is saved as a stable ID (`Hemma`, `Jobb`, or `Berget`) in
+`%LOCALAPPDATA%\Prata\backend.txt` and survives reboot. **The default on first
+start** (missing or invalid `backend.txt`) is **LAN GPU-server** (`Jobb`) —
+the internal GPU server on the clinic LAN, which requires no API key. Choose
+**Rngv GPU-server (Tailscale)** at home or **Berget Ai** in the menu as needed.
 
-**Ingen tyst failover:** är vald server nere får du felton vid diktering, inte
-ett tyst byte till en annan backend. Byte sker bara när *du* väljer i menyn.
+**No silent failover:** if the chosen server is down you get an error tone when dictating, not
+a silent switch to another backend. A switch happens only when *you* choose in the menu.
 
-### Testa
+### Testing
 
-**Klinik (rum4 → rum-ett):**
+**Clinic (rum4 → rum-ett):**
 
-1. Bekräfta att GPU-servern kör på rum-ett (`Get-Process whisper-server` eller
-   att schemaläggningsuppgiften `PrataWhisperServer` är igång).
-2. Från rum4: `Test-NetConnection 10.64.3.60 -Port 8080` → `TcpTestSucceeded : True`.
-3. Kör Prata på rum4. Högerklicka tray-ikonen → **LAN GPU-server**.
-4. Håll **F1**, diktera, släpp — texten transkriberas mot GPU-servern (~1,4 s).
+1. Confirm that the GPU server is running on rum-ett (`Get-Process whisper-server` or
+   that the scheduled task `PrataWhisperServer` is running).
+2. From rum4: `Test-NetConnection 10.64.3.60 -Port 8080` → `TcpTestSucceeded : True`.
+3. Run Prata on rum4. Right-click the tray icon → **LAN GPU-server**.
+4. Hold **F1**, dictate, release — the text is transcribed against the GPU server (~1.4 s).
 
-**Hemma (Tailscale):**
+**Home (Tailscale):**
 
-1. Starta servern på hem-PC:n (Steg 2-kommandot eller autostart).
-2. Kör Prata. Högerklicka tray-ikonen → **Rngv GPU-server (Tailscale)**.
-3. Håll **F1**, diktera, släpp.
+1. Start the server on the home PC (the Step 2 command or autostart).
+2. Run Prata. Right-click the tray icon → **Rngv GPU-server (Tailscale)**.
+3. Hold **F1**, dictate, release.
 
-Snabbtest av nåbarhet utan Prata (t.ex. från MacBook över Tailscale) — se
-Steg 3.
+Quick reachability test without Prata (e.g. from a MacBook over Tailscale) — see
+Step 3.
 
-> ✅ *Implementerat och verifierat 2026-06-15:* bygger rent (`go build`,
-> `go vet`), enhetstester för backend-routing och villkorlig auth passerar.
-> ✅ *Live-diktering verifierad 2026-06-16:* rum4 → rum-ett (LAN GPU-server,
-> LAN, ~1,4 s latens). ⏳ Live-diktering mot Rngv GPU-server (Tailscale) återstår
-> som separat test.
+> ✅ *Implemented and verified 2026-06-15:* builds cleanly (`go build`,
+> `go vet`), unit tests for backend routing and conditional auth pass.
+> ✅ *Live dictation verified 2026-06-16:* rum4 → rum-ett (LAN GPU-server,
+> LAN, ~1.4 s latency). ⏳ Live dictation against Rngv GPU-server (Tailscale) is still pending
+> as a separate test.
 
-## Installationsprompt — jobb-PC (klistra in i Cursor/Claude)
+## Installation prompt — clinic PC (paste into Cursor/Claude)
 
-Tanken med jobb-driftsättningen: checka ut Prata-repot på jobb-maskinen (det här
-dokumentet följer med), öppna Cursor/Claude i repo-mappen och klistra in prompten
-nedan. Agenten kör hela serveruppsättningen för **jobb-scenariot** (LAN-only) och
-stannar bara där du behöver godkänna (UAC) eller fatta ett beslut. Allt agenten
-behöver står i det här dokumentet.
+The idea behind the clinic deployment: check out the Prata repo on the clinic machine (this
+document comes with it), open Cursor/Claude in the repo folder, and paste the prompt
+below. The agent runs the entire server setup for the **clinic scenario** (LAN-only) and
+stops only where you need to approve (UAC) or make a decision. Everything the agent
+needs is in this document.
 
 ```text
-Du sätter upp Prata-GPU-servern på en JOBB-PC (klinik). Hela guiden finns i
-PRATA-GPU-SERVER.md i den här mappen — läs den först och följ den. Kör från
-Prata-repots rot (där dokumentet ligger). Det här är JOBB-scenariot, inte hemma:
+You are setting up the Prata GPU server on a CLINIC PC (clinic). The full guide is in
+PRATA-GPU-SERVER.md in this folder — read it first and follow it. Run from
+the root of the Prata repo (where the document lives). This is the CLINIC scenario, not home:
 
-- Endast LAN. Tailscale är UTESLUTET. Patientljud får ALDRIG lämna klinikens nät.
-- Brandväggen scopas till LocalSubnet/Domain — lägg ALDRIG en Tailscale-regel.
-- Lämna HomeURL orörd. Rör inga hemma-specifika delar.
+- LAN only. Tailscale is OUT OF THE QUESTION. Patient audio must NEVER leave the clinic network.
+- The firewall is scoped to LocalSubnet/Domain — NEVER add a Tailscale rule.
+- Leave HomeURL untouched. Do not touch any home-specific parts.
 
-Arbeta autonomt. Stanna bara för (a) UAC-godkännanden och (b) beslut som kräver
-mig. Slå ihop ALLA förhöjda steg i ETT enda elevererat anrop så jag bara behöver
-godkänna en (1) UAC-ruta. Verifiera varje steg innan du går vidare; rapportera
-kort vad som gjordes.
+Work autonomously. Stop only for (a) UAC approvals and (b) decisions that require
+me. Combine ALL elevated steps into ONE single elevated call so I only need to
+approve one (1) UAC prompt. Verify each step before moving on; report
+briefly what was done.
 
-Steg:
+Steps:
 
-1. FÖRUTSÄTTNINGAR. Kör `nvidia-smi`, fastställ GPU-modell och compute
-   capability och sätt `CMAKE_CUDA_ARCHITECTURES` därefter (RTX 50-serien =
-   Blackwell sm_120 -> 120; annat kort -> slå upp rätt arch-nummer). Kontrollera
-   att CUDA Toolkit (>=12.8 för Blackwell), CMake 3.20+ och Visual Studio Build
-   Tools 2022 finns. Bygger maskinen redan Diktell finns kedjan på plats; annars
-   följ avsnittet Förutsättningar. Ladda ner modellen (`ggml-model.bin`, samma
-   som Diktell) om den saknas.
+1. PREREQUISITES. Run `nvidia-smi`, determine the GPU model and compute
+   capability and set `CMAKE_CUDA_ARCHITECTURES` accordingly (RTX 50 series =
+   Blackwell sm_120 -> 120; other card -> look up the correct arch number). Check
+   that CUDA Toolkit (>=12.8 for Blackwell), CMake 3.20+, and Visual Studio Build
+   Tools 2022 are present. If the machine already builds Diktell the chain is in place; otherwise
+   follow the Prerequisites section. Download the model (`ggml-model.bin`, the same
+   as Diktell) if it is missing.
 
-2. BYGG. Följ Steg 1 (whisper.cpp med CUDA) med rätt arch-värde. Verifiera att
-   `whisper-server.exe` byggts och att CUDA-backend hittar kortet.
+2. BUILD. Follow Step 1 (whisper.cpp with CUDA) with the correct arch value. Verify that
+   `whisper-server.exe` was built and that the CUDA backend finds the card.
 
-3. NÄTVERKSKORT. Nätverket knappas in manuellt på nätverkskortet (IPv4, statisk).
-   DNS är alltid `192.44.242.131` och `192.44.243.131` (samma på alla maskiner).
-   IP och nätmask varierar per dator — på GPU-servern (den här maskinen) är det
-   IP `10.64.3.60`, nätmask `255.255.255.192`. Bekräfta med `ipconfig` att
-   inställningarna stämmer; notera IP:n — den blir `WorkURL`.
+3. NETWORK CARD. The network is entered manually on the network card (IPv4, static).
+   DNS is always `192.44.242.131` and `192.44.243.131` (the same on all machines).
+   IP and netmask vary per computer — on the GPU server (this machine) it is
+   IP `10.64.3.60`, netmask `255.255.255.192`. Confirm with `ipconfig` that the
+   settings are correct; note the IP — it becomes `WorkURL`.
 
-4. ETT FÖRHÖJT ANROP (en UAC) som gör allt nedan i följd:
-   a. Brandvägg: lägg LAN-regeln från "Steg 4 -> Jobbet". Om osäker, använd
-      diagnosregeln (-Profile Any) först och verifiera från klientmaskinen med
-      Test-NetConnection; strama sedan åt med -RemoteAddress. OBS: SYSTEM-autostart
-      triggar ALDRIG brandväggsdialogen — regeln måste läggas explicit. Om
-      LocalSubnet inte räcker (klient utanför serverns subnät), stanna och fråga
-      mig om rätt adressområde. Blockeras regeln eller styrs av GPO -> stanna
-      och be mig involvera klinikens IT.
-   b. Strömläge: `powercfg /change standby-timeout-ac 0` och
-      `powercfg /change hibernate-timeout-ac 0` så maskinen inte somnar (skärmen
-      får släckas). Styrs detta av GPO -> notera det.
-   c. Autostart: registrera SYSTEM/boot-uppgiften EXAKT som i Steg 2b
+4. ONE ELEVATED CALL (one UAC) that does everything below in sequence:
+   a. Firewall: add the LAN rule from "Step 4 -> Clinic". If unsure, use the
+      diagnostic rule (-Profile Any) first and verify from the client machine with
+      Test-NetConnection; then tighten with -RemoteAddress. NOTE: SYSTEM autostart
+      NEVER triggers the firewall dialog — the rule must be added explicitly. If
+      LocalSubnet is not enough (client outside the server's subnet), stop and ask
+      me for the correct address range. If the rule is blocked or governed by GPO -> stop
+      and ask me to involve the clinic's IT.
+   b. Power mode: `powercfg /change standby-timeout-ac 0` and
+      `powercfg /change hibernate-timeout-ac 0` so the machine does not sleep (the screen
+      may turn off). If this is governed by GPO -> note it.
+   c. Autostart: register the SYSTEM/boot task EXACTLY as in Step 2b
       (AtStartup, ServiceAccount/Highest, restart 3x1 min, ExecutionTimeLimit 0).
-      Styr klinikens IT tjänster/autostart centralt -> stäm av med dem.
-   d. Starta uppgiften (Start-ScheduledTask).
+      If the clinic's IT controls services/autostart centrally -> check with them.
+   d. Start the task (Start-ScheduledTask).
 
-5. VERIFIERA. Vänta in modell-laddningen, bekräfta att processen kör som
-   NT AUTHORITY\SYSTEM, att port 8080 lyssnar på 0.0.0.0. Testa från en
-   ANDRA arbetsstation på LAN:et (inte bara lokalt på servern). Test-NetConnection
-   mot serverns LAN-IP ska ge TcpTestSucceeded : True. Gör ett transkriberings-anrop
-   (Steg 3).
+5. VERIFY. Wait for the model load, confirm that the process runs as
+   NT AUTHORITY\SYSTEM, that port 8080 listens on 0.0.0.0. Test from ANOTHER
+   workstation on the LAN (not just locally on the server). Test-NetConnection
+   against the server's LAN IP should give TcpTestSucceeded : True. Make a transcription call
+   (Step 3).
 
-6. PEKA PRATA MOT SERVERN. `WorkURL` är redan satt i
-   `internal/transcribe/client.go` till `http://10.64.3.60:8080/v1/audio/transcriptions`
-   (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
-   fått en annan adress. Bygg om Prata (`go build …`). Notera att den ombyggda
-   `prata.exe` måste distribueras till de arbetsstationer som ska
-   diktera mot servern. Verifiera att backend LAN GPU-server går att välja och dikterar.
+6. POINT PRATA AT THE SERVER. `WorkURL` is already set in
+   `internal/transcribe/client.go` to `http://10.64.3.60:8080/v1/audio/transcriptions`
+   (the clinic server's static IP). Confirm that the IP is correct; only change it if the server
+   got a different address. Rebuild Prata (`go build …`). Note that the rebuilt
+   `prata.exe` must be distributed to the workstations that will
+   dictate against the server. Verify that the LAN GPU-server backend can be selected and dictates.
 
-7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
-   GPU/arch, modellsökväg, brandväggsregel, autostart-status, verifieringsresultat
-   och vilken WorkURL som sattes.
+7. FINAL REPORT. Update the clinic status lines in PRATA-GPU-SERVER.md and give me:
+   GPU/arch, model path, firewall rule, autostart status, verification result,
+   and which WorkURL was set.
 ```
 
-## Felsökning
+## Troubleshooting
 
-### Servern fungerar lokalt men inte från klienten
+### The server works locally but not from the client
 
-**Symptom:** GPU-servern svarar när du öppnar `http://10.64.3.60:8080` *på
-servermaskinen*, men klienten (t.ex. rum4) får timeout eller Prata spelar
-felton vid diktering.
+**Symptom:** the GPU server responds when you open `http://10.64.3.60:8080` *on
+the server machine*, but the client (e.g. rum4) gets a timeout or Prata plays an
+error tone when dictating.
 
-**Varför det ser förvirrande ut:** lokal åtkomst till maskinens egen IP går via
-loopback och **passerar aldrig Windows-brandväggen**. En anslutning från en
-annan maskin gör det. Att servern "fungerar lokalt" bevisar därför *inte* att
-klienter kan nå den — bara att processen lyssnar.
+**Why it looks confusing:** local access to the machine's own IP goes via
+loopback and **never passes the Windows firewall**. A connection from another
+machine does. The server "working locally" therefore does *not* prove that
+clients can reach it — only that the process is listening.
 
-**Felsökningsordning:**
+**Troubleshooting order:**
 
-| Steg | Hypotes | Kommando / åtgärd | Typiskt utfall |
+| Step | Hypothesis | Command / action | Typical outcome |
 |---|---|---|---|
-| 1 | Servern nere | `Get-Process whisper-server` på GPU-maskinen | Process saknas → starta uppgiften |
-| 2 | Fel port | `Test-NetConnection 10.64.3.60 -Port 8080` från klient | Servern lyssnar på **8080**, inte 8000 |
-| 3 | Bunden till localhost | Testa `10.64.3.60` lokalt *på servern* | Fungerar lokalt men inte från klient → brandvägg, inte bindning |
-| 4 | LAN-segmentering | `Test-NetConnection` från klient, titta på `SourceAddress` | Samma subnät (t.ex. `10.64.3.59 → 10.64.3.60`) → segmentering utesluten |
-| 5 | **Brandvägg** | Lägg inbound-regel (Steg 4 → Jobbet) | **Vanligaste rotorsaken** vid SYSTEM-autostart |
+| 1 | Server down | `Get-Process whisper-server` on the GPU machine | Process missing → start the task |
+| 2 | Wrong port | `Test-NetConnection 10.64.3.60 -Port 8080` from the client | The server listens on **8080**, not 8000 |
+| 3 | Bound to localhost | Test `10.64.3.60` locally *on the server* | Works locally but not from the client → firewall, not binding |
+| 4 | LAN segmentation | `Test-NetConnection` from the client, look at `SourceAddress` | Same subnet (e.g. `10.64.3.59 → 10.64.3.60`) → segmentation ruled out |
+| 5 | **Firewall** | Add an inbound rule (Step 4 → Clinic) | **Most common root cause** with SYSTEM autostart |
 
-**Verifiering efter brandväggsfix** (PowerShell på klientmaskinen):
+**Verification after the firewall fix** (PowerShell on the client machine):
 
 ```powershell
 Test-NetConnection 10.64.3.60 -Port 8080
 # TcpTestSucceeded : True
 ```
 
-> ✅ *Verifierat 2026-06-16:* rum4 kunde inte nå rum-ett trots att servern svarade
-> lokalt. Rotorsak: saknad inbound-regel. Efter regeln: live-diktering fungerar.
+> ✅ *Verified 2026-06-16:* rum4 could not reach rum-ett even though the server responded
+> locally. Root cause: a missing inbound rule. After the rule: live dictation works.
 
-### Verifiera att KB-Whisper-Large körs
+### Verify that KB-Whisper-Large is running
 
-KB-Whisper-Large är en finjustering av OpenAI:s whisper-large — identisk
-arkitektur och vokabulär. Modellens interna metadata avslöjar **inte** om det är
-KB-versionen. Verifiera istället på två sätt:
+KB-Whisper-Large is a fine-tune of OpenAI's whisper-large — identical
+architecture and vocabulary. The model's internal metadata does **not** reveal whether it is
+the KB version. Instead, verify in two ways:
 
-1. **Ursprung (identitet).** Kontrollera vilken `.bin` servern startades med:
+1. **Origin (identity).** Check which `.bin` the server was started with:
 
    ```powershell
    Get-CimInstance Win32_Process -Filter "Name='whisper-server.exe'" |
      Select-Object -ExpandProperty CommandLine
    ```
 
-   Titta på `-m`/`--model`-argumentet. En `ggml-model.bin` från
-   `KBLab/kb-whisper-large` är rätt; ett generiskt `ggml-large-v3.bin` från
-   whisper.cpp:s standardnedladdning är fel modell.
+   Look at the `-m`/`--model` argument. A `ggml-model.bin` from
+   `KBLab/kb-whisper-large` is correct; a generic `ggml-large-v3.bin` from
+   whisper.cpp's default download is the wrong model.
 
-2. **Beteende (klinisk bekräftelse).** Diktera samma svenska mening med medicinska
-   termer mot **LAN GPU-server** respektive **Berget Ai** (bekräftad
-   KB-Whisper-Large) och jämför. Identiskt felmönster ⇒ samma modell, och
-   `dictionary-corrections.txt` (baslinjen är inbäddad i binären; override-filen
-   per användare ligger i `%LOCALAPPDATA%\Prata\`) är rätt kalibrerad.
+2. **Behavior (clinical confirmation).** Dictate the same Swedish sentence with medical
+   terms against **LAN GPU-server** and **Berget Ai** (confirmed
+   KB-Whisper-Large) respectively and compare. An identical error pattern ⇒ the same model, and
+   `dictionary-corrections.txt` (the baseline is embedded in the binary; the per-user override file
+   lives in `%LOCALAPPDATA%\Prata\`) is correctly calibrated.
 
-### Prata-klientinstallation — kända problem
+### Prata client installation — known issues
 
-- **AV/EDR-blockering:** osignerad `prata.exe` kan blockeras av Webroot/SmartScreen
-  på nya maskiner (loaderfel utan krasch). Allowlista `%ProgramFiles%\Prata`
-  (maskinbred install), eller signera binären.
-- **Maskinbred install (rekommenderat på klinik):** kopiera `prata.exe` från USB
-  och kör `prata.exe --install` (UAC). Binären hamnar i
-  `%ProgramFiles%\Prata\`, autostart registreras maskinbrett för alla användare.
-  Per-användardata (`apikey.dat`, `backend.txt`, dictionary-override) skapas
-  automatiskt under `%LOCALAPPDATA%\Prata\` vid behov. Hårdvaru-smoke-test
-  deferrat — se PRATA-DESIGN-LOG.md (2026-06-17).
-- **Bygg själv / offline:** för maskiner utan förbyggd binär — bygg `prata.exe`
-  från källkod (`go build …`, kräver Go + C-verktygskedja) och kör sedan
-  `prata.exe --install`. Har du en förbyggd binär: kopiera `prata.exe`
-  (+ `.bat`-wrappers) från USB och kör `--install`.
-- **Autostart:** schemaläggningsuppgiften **`Prata`** startar klienten vid
-  inloggning (skilj från serveruppgiften **`PrataWhisperServer`** på GPU-maskinen).
-  Maskinbred install: en uppgift för alla användare (RunLevel Limited).
+- **AV/EDR blocking:** an unsigned `prata.exe` can be blocked by Webroot/SmartScreen
+  on new machines (loader error without a crash). Allowlist `%ProgramFiles%\Prata`
+  (machine-wide install), or sign the binary.
+- **Machine-wide install (recommended at the clinic):** copy `prata.exe` from USB
+  and run `prata.exe --install` (UAC). The binary ends up in
+  `%ProgramFiles%\Prata\`, autostart is registered machine-wide for all users.
+  Per-user data (`apikey.dat`, `backend.txt`, dictionary override) is created
+  automatically under `%LOCALAPPDATA%\Prata\` as needed. Hardware smoke test
+  deferred — see PRATA-DESIGN-LOG.md (2026-06-17).
+- **Build yourself / offline:** for machines without a prebuilt binary — build `prata.exe`
+  from source (`go build …`, requires Go + a C toolchain) and then run
+  `prata.exe --install`. If you have a prebuilt binary: copy `prata.exe`
+  (+ the `.bat` wrappers) from USB and run `--install`.
+- **Autostart:** the scheduled task **`Prata`** starts the client at
+  logon (distinct from the server task **`PrataWhisperServer`** on the GPU machine).
+  Machine-wide install: one task for all users (RunLevel Limited).
 
-### Öppna säkerhetspunkter
+### Open security points
 
-- **Strama åt brandväggsregeln** på GPU-servern: byt från `-Profile Any` till
-  `-RemoteAddress` med kända klient-IP:n (se Steg 4 → Jobbet).
-- **Rotera Berget-nyckeln** om den exponerats i klartext under felsökning; kör
-  `prata.exe --set-key` igen på berörda maskiner.
+- **Tighten the firewall rule** on the GPU server: switch from `-Profile Any` to
+  `-RemoteAddress` with known client IPs (see Step 4 → Clinic).
+- **Rotate the Berget key** if it was exposed in cleartext during troubleshooting; run
+  `prata.exe --set-key` again on the affected machines.
 
 ## Status
 
-| Steg | Status |
+| Step | Status |
 |---|---|
-| Arkitektur & principer | Klar |
-| Förutsättningar | Klar |
-| Steg 1 — Bygg whisper.cpp | ✅ Verifierat på RTX 5070 Ti (hem-PC) |
-| Steg 2 — Starta servern | ✅ Verifierat — modell laddad på GPU, lyssnar |
-| Steg 2b — Autostart (hemma) | ✅ Körs som SYSTEM vid boot — överlever omstart/strömavbrott, GPU verifierad i session 0 |
-| Steg 3 — Verifiera | ✅ Lokalt + LAN från rum4→rum-ett (2026-06-16); ⏳ Tailscale-test (hemma) kvar |
-| Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n (ringvagen) |
-| Steg 4 — Brandvägg (jobbet/LAN) | ✅ Verifierad på rum-ett (2026-06-16); rotorsak vid fel: saknad inbound-regel |
-| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); LAN GPU-server produktionsväg; maskinbred `--install` implementerad (smoke-test deferrat) |
+| Architecture & principles | Done |
+| Prerequisites | Done |
+| Step 1 — Build whisper.cpp | ✅ Verified on the RTX 5070 Ti (home PC) |
+| Step 2 — Start the server | ✅ Verified — model loaded on the GPU, listening |
+| Step 2b — Autostart (home) | ✅ Runs as SYSTEM at boot — survives reboot/power loss, GPU verified in session 0 |
+| Step 3 — Verify | ✅ Locally + LAN from rum4→rum-ett (2026-06-16); ⏳ Tailscale test (home) remaining |
+| Step 4 — Firewall (home/Tailscale) | ✅ Rule active on the home PC (ringvagen) |
+| Step 4 — Firewall (clinic/LAN) | ✅ Verified on rum-ett (2026-06-16); root cause on failure: missing inbound rule |
+| Step 5 — Prata client | ✅ Live dictation rum4→rum-ett (~1.4 s); LAN GPU-server production path; machine-wide `--install` implemented (smoke test deferred) |

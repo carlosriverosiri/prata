@@ -1,453 +1,462 @@
-# Prata — Komplett översikt för extern granskning
+# Prata — Complete Overview for External Review
 
-> **Syfte.** Detta är ett *självbärande* dokument avsett att klistras in i olika
-> AI-modeller för att få synpunkter, kritik och nya idéer. En granskare ska kunna
-> förstå hela appen — funktioner, teknik, designval och öppna frågor — utan
-> tillgång till koden eller övriga dokument.
+> **Purpose.** This is a *self-contained* document meant to be pasted into various
+> AI models to gather feedback, criticism, and new ideas. A reviewer should be able
+> to understand the entire app — features, technology, design choices, and open
+> questions — without access to the code or the other documents.
 >
-> **Status.** Ögonblicksbild **2026-06-21** (efter v0.3.0; några finputsningar
-> ligger i `[Unreleased]`). Detta dokument är en *destillering* — den löpande
-> sanningen finns i `PRATA-MASTER.md`, `PRATA-DESIGN-LOG.md`,
-> `PRATA-GPU-SERVER.md`, `README.md` och `CHANGELOG.md`. Det genereras inte
-> automatiskt; uppdatera det när du vill ha en ny granskningsrunda.
+> **Status.** Snapshot **2026-06-21** (after v0.3.0; a few finishing touches sit
+> in `[Unreleased]`). This document is a *distillation* — the running truth lives
+> in `PRATA-MASTER.md`, `PRATA-DESIGN-LOG.md`, `PRATA-GPU-SERVER.md`, `README.md`,
+> and `CHANGELOG.md`. It is not generated automatically; update it when you want a
+> fresh round of review.
 >
-> **Längst ned** finns en sektion *"Frågor till granskaren"* — börja gärna där om
-> du är en AI som ombeds ge feedback.
+> **At the very bottom** there is a section *"Questions for the reviewer"* — feel
+> free to start there if you are an AI being asked to give feedback.
 
 ---
 
 ## TL;DR
 
-Prata är en minimal, Windows-native push-to-talk-app för **svensk medicinsk
-diktering**. Du håller **F1**, talar, släpper — ljudet transkriberas med
-`KBLab/kb-whisper-large` mot en vald backend (lokal whisper.cpp-GPU-server över
-nätet, eller Berget Ai i molnet), körs genom en korrigeringsordlista och skrivs in
-i fönstret som var aktivt när du tryckte F1. En andra operation, **F8**, är en
-snabbfix för ordlistan. Appen har inget eget fönster — bara en tray-ikon. Den är
-skriven i **Go** med **ett enda externt beroende** (`malgo` för ljud); allt annat
-är direkt Win32 via `syscall`. Den är byggd för att *installeras och glömmas*
-("see and forget") på ~12 delade klinikdatorer, och hela designen är genomsyrad av
-**patientsekretess** (ljud aldrig till disk, dikterad journaltext aldrig till
-urklipp/molnurklipp).
+Prata is a minimal, Windows-native push-to-talk app for **Swedish medical
+dictation**. You hold **F1**, speak, release — the audio is transcribed with
+`KBLab/kb-whisper-large` against a chosen backend (a local whisper.cpp GPU server
+over the network, or Berget Ai in the cloud), run through a correction dictionary,
+and typed into the window that was active when you pressed F1. A second operation,
+**F8**, is a dictionary quick-fix. The app has no window of its own — just a tray
+icon. It is written in **Go** with **a single external dependency** (`malgo` for
+audio); everything else is direct Win32 via `syscall`. It is built to be *installed
+and forgotten* ("see and forget") on ~12 shared clinic computers, and the entire
+design is steeped in **patient confidentiality** (audio never to disk, dictated
+medical-record text never to the clipboard/cloud clipboard).
 
-Prata är ett systerverktyg till **Diktell** (samma utvecklares befintliga,
-frysta dikteringsapp i Rust med lokal CUDA-Whisper). Diktell kräver en dedikerad
-GPU; Prata fyller luckan på maskiner utan GPU.
-
----
-
-## 1. Kontext och problem
-
-- **Användaren** är ortoped/läkare som bygger AI-verktyg men inte skriver kod
-  själv — all kod drivs via AI-assistenter. Hög arkitektonisk förståelse, läser
-  kod på hög nivå.
-- **Miljön** är ett sjukhus där användaren ofta **byter dator under dagen**.
-  Många av dessa är mini-PC:s **utan GPU**, där Diktell (lokal CUDA-Whisper) inte
-  kan köras. Det är problemet Prata löser.
-- **Texten landar i en patientjournal** (webbaserad, "Webdoc"). Det höjer ribban:
-  fel injektion är en patientsäkerhetsrisk, och patientdata får inte läcka.
-- **Skala:** ~10–12 klinikdatorer, inloggade kliniker har lokal admin,
-  distribution via USB-minne (inte Intune/SCCM ännu, men designen är förberedd för
-  det).
+Prata is a sibling tool to **Diktell** (the same developer's existing, frozen
+dictation app in Rust with local CUDA Whisper). Diktell requires a dedicated GPU;
+Prata fills the gap on machines without a GPU.
 
 ---
 
-## 2. Designprinciper
+## 1. Context and problem
 
-1. **"See and forget"** — installeras en gång, ska fungera i åratal utan tillsyn.
-   Driver valet av Go (Go 1 compatibility promise), en självständig binär utan
-   runtime, och inga konfigurationsfiler.
-2. **Minimalism / stdlib-only** — ett enda externt beroende (`malgo`). Allt annat
-   (HTTP, DPAPI, urklipp, hotkeys, ljud, tray, installer) är direkt Win32
-   P/Invoke. Inga paketeringsverktyg (MSI/Inno/WiX), inga ramverk.
-3. **Patientsäkerhet är en hård invariant** — flera designval (se §5, §8, §9) är
-   låsta för att dikterad text aldrig ska hamna fel eller läcka.
-4. **Windows-only just nu** — ingen cross-platform-abstraktion betalas innan den
-   behövs. Mac/Linux är "kanske senare".
-5. **Inget app-initierat arbetsflödes-UI** — bara ljudsignaler i flödet, en passiv
-   tray-ikon, och en användarinitierad F8-popup. Appen "stör" aldrig.
-
----
-
-## 3. Funktioner
-
-### 3.1 F1 — diktering (huvudflödet)
-
-1. Användaren håller **F1** nere (global hotkey via `RegisterHotKey`).
-2. Prata fångar förgrundsfönstret (mål för injektion) och spelar in mikrofonen
-   (16 kHz mono PCM via WASAPI/`malgo`). En startton (880 Hz) spelas.
-3. Vid släpp (stoppton 587 Hz): PCM → WAV → POST (multipart, OpenAI-kompatibelt)
-   till vald backend.
-4. Svaret normaliseras till löpande prosa (segmentihopslagning — se §7.4) och
-   körs genom korrigeringsordlistan.
-5. Målfönstret återställs och texten skrivs in via **klassbaserad routing** (se
-   §8). Kan fönstret inte återställas säkert → injektionen avbryts med felton
-   (hellre ingen text än fel ställe).
-6. Transkribering sker **asynkront i en FIFO-worker** — en långsam backend-runda
-   blockerar inte nästa F1-inspelning.
-
-### 3.2 F8 — snabbfix för ordlistan
-
-1. Användaren markerar ett feltranskriberat ord/uttryck och trycker **F8**.
-2. Prata kopierar markeringen och visar en liten popup (DWM-skugga, rundade hörn,
-   F8-chip) förankrad över markeringen.
-3. Användaren skriver rätt form, trycker Enter (Esc/klick utanför avbryter).
-4. Regeln sparas i per-användarens override-fil, ordlistan laddas om, källfönstret
-   återställs och den korrigerade texten klistras tillbaka.
-
-F8- och F1-injektioner är **serialiserade** så att deras urklipps-/tangent-
-operationer inte kan flätas in i varandra.
-
-### 3.3 Övrigt
-
-- **Backend-väljare** i tray-menyn (radioknappar) — se §7.
-- **Ljudsignaler** syntetiseras i processen (winmm `PlaySoundW`), inga ljudfiler:
-  start (hög ton), stopp (låg ton), fel (dubbel låg puls på alla tysta felvägar).
-- **Tray-ikon** (liten röd Prata-ikon): backend-val, "Sök efter uppdatering…",
-  "Avsluta". Primärt sätt att avsluta när appen kör vid inloggning utan konsol.
-- **Uppdateringskoll** — notifierande, aldrig självuppdaterande (se §9.3).
-- **Single-instance-vakt** — namngiven, sessionsbunden mutex (`Local\`) → en
-  instans per session på en delad PC.
-- **Autostart** via en maskinbred Task Scheduler-uppgift (se §9).
+- **The user** is an orthopedist/physician who builds AI tools but does not write
+  code himself — all code is driven via AI assistants. High architectural
+  understanding, reads code at a high level.
+- **The environment** is a hospital where the user often **switches computers
+  during the day**. Many of these are mini-PCs **without a GPU**, where Diktell
+  (local CUDA Whisper) cannot run. That is the problem Prata solves.
+- **The text lands in a patient record** (web-based, "Webdoc"). That raises the
+  bar: a wrong injection is a patient-safety risk, and patient data must not leak.
+- **Scale:** ~10–12 clinic computers, logged-in clinicians have local admin,
+  distribution via USB stick (not Intune/SCCM yet, but the design is prepared for
+  it).
 
 ---
 
-## 4. Arkitektur och teknik
+## 2. Design principles
 
-| Område | Val | Not |
+1. **"See and forget"** — installed once, should work for years without
+   supervision. This drives the choice of Go (Go 1 compatibility promise), a
+   self-contained binary with no runtime, and no configuration files.
+2. **Minimalism / stdlib-only** — a single external dependency (`malgo`).
+   Everything else (HTTP, DPAPI, clipboard, hotkeys, audio, tray, installer) is
+   direct Win32 P/Invoke. No packaging tools (MSI/Inno/WiX), no frameworks.
+3. **Patient safety is a hard invariant** — several design choices (see §5, §8,
+   §9) are locked so that dictated text can never end up in the wrong place or
+   leak.
+4. **Windows-only for now** — no cross-platform abstraction is paid for before it
+   is needed. Mac/Linux is "maybe later".
+5. **No app-initiated workflow UI** — only audio cues in the flow, a passive tray
+   icon, and a user-initiated F8 popup. The app never "interrupts".
+
+---
+
+## 3. Features
+
+### 3.1 F1 — dictation (the main flow)
+
+1. The user holds **F1** down (global hotkey via `RegisterHotKey`).
+2. Prata captures the foreground window (the injection target) and records the
+   microphone (16 kHz mono PCM via WASAPI/`malgo`). A start tone (880 Hz) plays.
+3. On release (stop tone 587 Hz): PCM → WAV → POST (multipart,
+   OpenAI-compatible) to the chosen backend.
+4. The response is normalized to running prose (segment joining — see §7.4) and
+   run through the correction dictionary.
+5. The target window is restored and the text is typed in via **class-based
+   routing** (see §8). If the window cannot be restored safely → the injection is
+   aborted with an error tone (better no text than the wrong place).
+6. Transcription happens **asynchronously in a FIFO worker** — a slow backend
+   round does not block the next F1 recording.
+
+### 3.2 F8 — dictionary quick-fix
+
+1. The user selects a mistranscribed word/phrase and presses **F8**.
+2. Prata copies the selection and shows a small popup (DWM shadow, rounded
+   corners, F8 chip) anchored over the selection.
+3. The user types the correct form and presses Enter (Esc/click outside cancels).
+4. The rule is saved to the per-user override file, the dictionary is reloaded,
+   the source window is restored, and the corrected text is pasted back.
+
+F8 and F1 injections are **serialized** so that their clipboard/keystroke
+operations cannot interleave with each other.
+
+### 3.3 Other
+
+- **Backend selector** in the tray menu (radio buttons) — see §7.
+- **Audio cues** are synthesized in-process (winmm `PlaySoundW`), no audio files:
+  start (high tone), stop (low tone), error (double low pulse on all silent error
+  paths).
+- **Tray icon** (small red Prata icon): backend selection, "Sök efter
+  uppdatering…", "Avsluta". The primary way to exit when the app runs at login
+  without a console.
+- **Update check** — notifying, never self-updating (see §9.3).
+- **Single-instance guard** — a named, session-bound mutex (`Local\`) → one
+  instance per session on a shared PC.
+- **Autostart** via a machine-wide Task Scheduler task (see §9).
+
+---
+
+## 4. Architecture and technology
+
+| Area | Choice | Note |
 |---|---|---|
-| Språk | **Go** (1.26, se `go.mod`) | Go 1 compat, självständig binär, ~150 MB toolchain. |
-| Ljudfångst | **gen2brain/malgo** (miniaudio/WASAPI, cgo) | Enda externa beroendet; `CGO_ENABLED=1`. |
-| Hotkeys, tray, urklipp, injektion, DPAPI, popup, MessageBox, single-instance, installer | **stdlib `syscall` + direkt Win32** | Inga tredjepartsbibliotek; bindningarna är handskrivna i `internal/`. |
-| HTTP | **stdlib `net/http`** | multipart POST till OpenAI-kompatibla transkriberingsendpoints. |
+| Language | **Go** (1.26, see `go.mod`) | Go 1 compat, self-contained binary, ~150 MB toolchain. |
+| Audio capture | **gen2brain/malgo** (miniaudio/WASAPI, cgo) | The only external dependency; `CGO_ENABLED=1`. |
+| Hotkeys, tray, clipboard, injection, DPAPI, popup, MessageBox, single-instance, installer | **stdlib `syscall` + direct Win32** | No third-party libraries; the bindings are hand-written in `internal/`. |
+| HTTP | **stdlib `net/http`** | multipart POST to OpenAI-compatible transcription endpoints. |
 
-**Trådmodell:** hotkey-lyssnaren kör på meddelandekön (`RegisterHotKey` → `WM_HOTKEY`
-för tryck; 20 ms `GetAsyncKeyState`-polling för släpp, startad vid tryck och avslutad
-vid släpp = noll vilokostnad). Transkriberingen körs i **en FIFO-worker** skild från
-inspelningen.
+**Thread model:** the hotkey listener runs on the message queue (`RegisterHotKey`
+→ `WM_HOTKEY` for the press; 20 ms `GetAsyncKeyState` polling for the release,
+started on press and stopped on release = zero idle cost). Transcription runs in
+**a FIFO worker** separate from the recording.
 
-**Paketkarta (`internal/`):** `audio` (malgo-capture), `transcribe` (multi-backend
-HTTP-klient + WAV-encoder + normalisering), `hotkey` (F1/F8 via RegisterHotKey),
-`inject` (hybrid textinjektion), `dict` (ordlista: embeddad baslinje + override),
-`sanity` (degenererings-vakt via gzip-ratio), `auth` (DPAPI), `single`
-(mutex-vakt), `cue` (ljudsignaler), `tray` (ikon/meny/balong/uppdateringskoll),
-`icon` (`go:embed` av ikonen), `installer` (maskinbred `--install`/`--uninstall`),
-`ui` (`MessageBox`-helper), `update` (notifierande versionskoll), `popup`
-(F8-popupen, Win32/DWM). `cmd/prata/` är daemonen + subkommandona; `cmd/*-test/`
-är isolerade smoke-test-/kalibreringsverktyg.
+**Package map (`internal/`):** `audio` (malgo capture), `transcribe` (multi-backend
+HTTP client + WAV encoder + normalization), `hotkey` (F1/F8 via RegisterHotKey),
+`inject` (hybrid text injection), `dict` (dictionary: embedded baseline +
+override), `sanity` (degenerate-output guard via gzip ratio), `auth` (DPAPI),
+`single` (mutex guard), `cue` (audio cues), `tray` (icon/menu/balloon/update
+check), `icon` (`go:embed` of the icon), `installer` (machine-wide
+`--install`/`--uninstall`), `ui` (`MessageBox` helper), `update` (notifying version
+check), `popup` (the F8 popup, Win32/DWM). `cmd/prata/` is the daemon + the
+subcommands; `cmd/*-test/` are isolated smoke-test/calibration tools.
 
 ---
 
-## 5. Transkribering och backends
+## 5. Transcription and backends
 
-### 5.1 De tre backendarna
+### 5.1 The three backends
 
-| Visningsnamn | Stabilt ID | Pekar på | Auth |
+| Display name | Stable ID | Points to | Auth |
 |---|---|---|---|
-| Rngv GPU-server (Tailscale) | `Hemma` | Hem-GPU (whisper.cpp) över Tailscale | Ingen |
-| LAN GPU-server | `Jobb` | Klinikens GPU på LAN | Ingen |
-| Berget Ai | `Berget` | Berget Ai moln-API | Bearer-nyckel (DPAPI) |
+| Rngv GPU-server (Tailscale) | `Hemma` | Home GPU (whisper.cpp) over Tailscale | None |
+| LAN GPU-server | `Jobb` | The clinic's GPU on the LAN | None |
+| Berget Ai | `Berget` | Berget Ai cloud API | Bearer key (DPAPI) |
 
-- Alla kör **samma modell** (`KBLab/kb-whisper-large`) → samma felmönster, och
-  Diktells `dictionary-corrections.txt` är direkt återanvändbar.
-- **Endpoint-URL:er är hårdkodade konstanter** i binären (backend-*valet* är
-  tillstånd, inte konfiguration).
+- All run **the same model** (`KBLab/kb-whisper-large`) → the same error patterns,
+  and Diktell's `dictionary-corrections.txt` is directly reusable.
+- **The endpoint URLs are hardcoded constants** in the binary (the backend
+  *selection* is state, not configuration).
 - **Berget:** `https://api.berget.ai/v1/audio/transcriptions`, multipart,
-  zero retention, servrar i Stockholm (data lämnar inte Sverige — för en läkare
-  förmodligen den enda *legitima* molntjänsten för dikterad medicinsk text).
-  ~50 öre/månad vid användarens volym; ~2,6 s latens (mätt).
+  zero retention, servers in Stockholm (data does not leave Sweden — for a
+  physician probably the only *legitimate* cloud service for dictated medical
+  text). ~50 öre/month at the user's volume; ~2.6 s latency (measured).
 
-### 5.2 Val, persistens, default
+### 5.2 Selection, persistence, default
 
-- Valet sparas som **stabilt ID** i `%LOCALAPPDATA%\Prata\backend.txt` →
-  visningsnamn kan ändras utan att bryta sparade val.
-- **Default vid första körning: `Jobb` (LAN GPU-server)** — intern GPU utan
-  nyckel. (Annars hade en ny användare träffat Berget-utan-nyckel vid F1 → felton.)
-- **Ingen tyst failover** — är vald server nere får du felton, inte ett tyst byte.
-  Byte sker bara när användaren väljer i menyn.
+- The selection is saved as a **stable ID** in `%LOCALAPPDATA%\Prata\backend.txt`
+  → the display name can change without breaking saved selections.
+- **Default on first run: `Jobb` (LAN GPU-server)** — internal GPU without a key.
+  (Otherwise a new user would have hit Berget-without-a-key on F1 → error tone.)
+- **No silent failover** — if the chosen server is down you get an error tone, not
+  a silent switch. A switch happens only when the user selects in the menu.
 
-### 5.3 Nätverkstopologi och sekretess
+### 5.3 Network topology and confidentiality
 
-- **Klinikens GPU exponeras ALDRIG över Tailscale.** Patientljud får inte lämna
-  klinikens nät. Brandväggen scopas till LocalSubnet/Domain.
-- **Hem-GPU** nås alltid externt över Tailscale (Tailscale-IP, CGNAT-intervall
-  `100.64.0.0/10`). Egna maskiner, inte patientljud.
-- GPU-servern körs som en egen SYSTEM-task (`PrataWhisperServer`) — skild från
-  Prata-klientens task.
+- **The clinic's GPU is NEVER exposed over Tailscale.** Patient audio must not
+  leave the clinic's network. The firewall is scoped to LocalSubnet/Domain.
+- **The home GPU** is always reached externally over Tailscale (Tailscale IP,
+  CGNAT range `100.64.0.0/10`). Own machines, not patient audio.
+- The GPU server runs as its own SYSTEM task (`PrataWhisperServer`) — separate
+  from the Prata client's task.
 
-### 5.4 Textnormalisering (en lärorik bugg)
+### 5.4 Text normalization (an instructive bug)
 
-whisper-servrar serialiserar varje tidssegment på egen rad i `text`-fältet.
-whisper lägger **ibland en segmentgräns mitt i ett långt ord**. Det avgör hur
-raderna ska slås ihop — och det skiljer sig per backend:
+whisper servers serialize each time segment on its own line in the `text` field.
+whisper **sometimes puts a segment boundary in the middle of a long word**. That
+determines how the lines should be joined — and it differs per backend:
 
-- **Lokal whisper.cpp** lämnar segmenttexten **otrimmad**: en äkta ordgräns bär
-  sitt eget inledande mellanslag på nästa segment; bara en gräns *inuti* ett ord
-  saknar det. Därför: **droppa radbytet utan separator** → "Tyd"+"lighet" =
-  "Tydlighet" (rätt), och äkta ordgränser behåller sitt mellanslag.
-- **Berget** **trimmar** varje segmentrad → radbytet är då det *enda* som skiljer
-  mening från mening. Därför: **låt radbytet bli ett mellanslag** → annars
-  "förluster.Ungdomarna".
+- **Local whisper.cpp** leaves the segment text **untrimmed**: a genuine word
+  boundary carries its own leading space on the next segment; only a boundary
+  *inside* a word lacks it. Therefore: **drop the line break without a separator**
+  → "Tyd"+"lighet" = "Tydlighet" (correct), and genuine word boundaries keep their
+  space.
+- **Berget** **trims** each segment line → the line break is then the *only* thing
+  separating sentence from sentence. Therefore: **let the line break become a
+  space** → otherwise "förluster.Ungdomarna".
 
-Lösningen är en `Backend.TrimmedSegments`-flagga (true endast för Berget).
-Heuristik på skiljetecken förkastades: "få"+"skriva" (ska separeras) och
-"Tyd"+"lighet" (ska limmas) är båda bokstav+bokstav utan mellanslag — omöjliga att
-skilja åt utan tokendata.
+The solution is a `Backend.TrimmedSegments` flag (true only for Berget).
+A punctuation heuristic was rejected: "få"+"skriva" (should be separated) and
+"Tyd"+"lighet" (should be glued) are both letter+letter without a space —
+impossible to distinguish without token data.
 
-### 5.5 Degenererings-vakt (`internal/sanity`)
+### 5.5 Degenerate-output guard (`internal/sanity`)
 
-whisper kan fastna i repetitionsloopar (samma fras om och om igen). Prata mäter
-**gzip-kompressionsgrad** på utdata och kasserar degenererad output innan den
-skrivs in. Tröskeln kalibreras med `cmd/sanity-test`.
-
----
-
-## 6. Korrigeringsordlistan
-
-Två lager:
-
-1. **Baslinje** — `go:embed`:ad i binären vid build
-   (`internal/dict/dictionary-corrections.txt`). Laddas alltid → kan inte "tyst
-   inaktiveras" för att en fil saknas.
-2. **Per-användare-override** — `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
-   (skapas vid första F8-spar). Override **lägger till** eller **ersätter per
-   nyckel** baslinjeposter (first-match-wins).
-
-- Matchning är skiftlägeskänslig med **Unicode-medvetna ordgränser**
-  (`[\p{L}\p{N}_]`), literal indexering (ingen regexp), regler i filordning.
-- **Byggtids-fold-in (designat, implementation faslagd):** ett litet CLI
-  (`cmd/dict-foldin`) ska kunna vika in värdefulla override-poster i den embeddade
-  baslinjen inför en release (klinikkorrigeringar = domänkunskap, inte personlig
-  preferens). Kontraktet är specat; verktyget är inte byggt ännu.
+whisper can get stuck in repetition loops (the same phrase over and over). Prata
+measures the **gzip compression ratio** of the output and discards degenerate
+output before it is typed in. The threshold is calibrated with `cmd/sanity-test`.
 
 ---
 
-## 7. Textinjektion (klassbaserad routing)
+## 6. The correction dictionary
 
-Detta är ett av de mest säkerhetskänsliga besluten.
+Two layers:
 
-- **Routing på förgrundsfönstrets klass** (`GetClassNameW(GetForegroundWindow())`):
-  - `Chrome_WidgetWin_1` (hela Chromium/Electron-familjen + den webbaserade
-    journalen, bekräftat samma klass) → **SendInput Unicode**, hela strängen i
-    *ett* anrop. Urklippet rörs aldrig.
-  - Alla andra fönster → **urklipps-paste** (`CF_UNICODETEXT`, spara/återställ
-    föregående urklipp).
-- **Invarianter (patientsäkerhet — får inte ändras):**
-  - **Säker default:** all osäkerhet (inget förgrundsfönster, misslyckad
-    klassläsning, okänd klass) → urklipps-paste.
-  - **Ingen exekverings-fallback:** vägen väljs en gång. Vid SendInput-fel faller
-    den *aldrig* tillbaka på paste — SendInput kan redan ha skickat tecken, och en
-    efterföljande paste skulle dubbelinjicera (i en journal en säkerhetsrisk).
-    Tappad text → användaren omdikterar (säkert).
-  - **Allowlista, inte denylista:** otestade appar defaultar till den bevisade
-    paste-vägen. Inget får SendInput förrän klassen verifierats med realistisk,
-    flerradig text. **Exakt** klassmatchning, inte prefix.
-- **Varför:** (1) i AI-chattar ska man kunna kopiera en skärmbild, diktera, och
-  sedan Ctrl+V:a in bilden — dikteringen får inte röra urklippet; (2)
-  patientsekretess: journaltext ska inte ligga kvar i Win+V eller synka till
-  molnurklippet.
-- **Historik:** en tidig Unicode-väg tappade key-up-event i Chromium/moderna
-  Notepad → OS-autorepeat. Det löstes genom att skicka hela transkriptionen i
-  *ett* SendInput-anrop. Moderna Notepad allowlistas medvetet *inte* (SendInput
-  fallerar där längd-/innehållsberoende).
+1. **Baseline** — `go:embed`-ed into the binary at build time
+   (`internal/dict/dictionary-corrections.txt`). Always loaded → cannot be
+   "silently disabled" because a file is missing.
+2. **Per-user override** — `%LOCALAPPDATA%\Prata\dictionary-corrections.txt`
+   (created on the first F8 save). The override **adds** or **replaces per key**
+   baseline entries (first-match-wins).
+
+- Matching is case-sensitive with **Unicode-aware word boundaries**
+  (`[\p{L}\p{N}_]`), literal indexing (no regex), rules in file order.
+- **Build-time fold-in (designed, implementation phased):** a small CLI
+  (`cmd/dict-foldin`) should be able to fold valuable override entries into the
+  embedded baseline ahead of a release (clinic corrections = domain knowledge, not
+  personal preference). The contract is specified; the tool is not built yet.
+
+---
+
+## 7. Text injection (class-based routing)
+
+This is one of the most safety-sensitive decisions.
+
+- **Routing on the foreground window's class**
+  (`GetClassNameW(GetForegroundWindow())`):
+  - `Chrome_WidgetWin_1` (the whole Chromium/Electron family + the web-based
+    medical record, confirmed to be the same class) → **SendInput Unicode**, the
+    whole string in *one* call. The clipboard is never touched.
+  - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
+    previous clipboard).
+- **Invariants (patient safety — must not change):**
+  - **Safe default:** all uncertainty (no foreground window, a failed class read,
+    an unknown class) → clipboard paste.
+  - **No execution fallback:** the path is chosen once. On a SendInput failure it
+    *never* falls back to paste — SendInput may already have sent characters, and
+    a subsequent paste would double-inject (in a medical record a safety risk).
+    Lost text → the user re-dictates (safe).
+  - **Allowlist, not denylist:** untested apps default to the proven paste path.
+    Nothing gets SendInput until the class has been verified with realistic,
+    multi-line text. **Exact** class matching, not prefix.
+- **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
+  then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
+  confidentiality: medical-record text should not linger in Win+V or sync to the
+  cloud clipboard.
+- **History:** an early Unicode path dropped key-up events in Chromium/modern
+  Notepad → OS autorepeat. It was solved by sending the entire transcription in
+  *one* SendInput call. Modern Notepad is deliberately *not* allowlisted (SendInput
+  fails there in a length-/content-dependent way).
 
 ---
 
 ## 8. Hotkeys
 
-- **F1 = PTT-diktering, F8 = ordlistesnabbfix.** Via `RegisterHotKey`
-  (`MOD_NOREPEAT`), inte en `WH_KEYBOARD_LL`-hook.
-- **Varför inte hook:** lågnivå-tangentbordshookar har en dokumenterad felklass
-  (tyst avinstallation vid >~300 ms callback, ogiltigförklaring vid sleep/resume,
-  och AV/EDR-misstanke — hookar mönstermatchar keyloggers). Diktell bär den
-  klassen med en watchdog; Prata vill inte ärva den. En kanary (`cmd/regkey-test`)
-  bevisade att bara F-tangenter via `RegisterHotKey` *inte* når den fokuserade
-  appen (en tidigare motobservation visade sig vara en crate-artefakt).
-- **F8 (inte F9):** Diktell äger F9 (och Ctrl+Win). Genom att Prata tar F8 kan
-  båda apparna köras parallellt på samma maskin: **F9 = Diktell, F8 = Prata
-  snabbfix, F1 = Prata PTT**. Det möjliggör också A/B-jämförelse av de två
-  pipelinerna på samma diktering.
-- F1:s nativa Hjälp-funktion konsumeras systemvitt medan Prata kör; återställs vid
-  exit.
+- **F1 = PTT dictation, F8 = dictionary quick-fix.** Via `RegisterHotKey`
+  (`MOD_NOREPEAT`), not a `WH_KEYBOARD_LL` hook.
+- **Why not a hook:** low-level keyboard hooks have a documented failure class
+  (silent uninstallation on a >~300 ms callback, invalidation on sleep/resume, and
+  AV/EDR suspicion — hooks pattern-match keyloggers). Diktell carries that class
+  with a watchdog; Prata does not want to inherit it. A canary
+  (`cmd/regkey-test`) proved that F-keys via `RegisterHotKey` *do not* reach the
+  focused app (an earlier counter-observation turned out to be a crate artifact).
+- **F8 (not F9):** Diktell owns F9 (and Ctrl+Win). By having Prata take F8, both
+  apps can run in parallel on the same machine: **F9 = Diktell, F8 = Prata
+  quick-fix, F1 = Prata PTT**. It also enables A/B comparison of the two pipelines
+  on the same dictation.
+- F1's native Help function is consumed system-wide while Prata runs; it is
+  restored on exit.
 
 ---
 
-## 9. Distribution och livscykel
+## 9. Distribution and lifecycle
 
-### 9.1 En binär, maskinbred install
+### 9.1 One binary, machine-wide install
 
-- Leveransen är **en enda `prata.exe`** + USB-wrappers `Installera-Prata.bat` /
-  `Avinstallera-Prata.bat`. Samma binär kör daemon, `--install`, `--uninstall`,
-  `--set-key`.
-- `prata.exe --install` (self-elevating via UAC): kopierar binären till
-  `%ProgramFiles%\Prata\` (skrivskyddad för icke-admin → daemonen kan inte
-  modifiera sin egen image), registrerar en **maskinbred Task Scheduler-uppgift**
-  (`Prata`, alla användare via SID `S-1-5-32-545`), och startar i sessionen via
-  `schtasks /Run`.
-- **All skrivbar state är per-användare** i `%LOCALAPPDATA%\Prata\` (`apikey.dat`,
-  `backend.txt`, ordlista-override). **Ingen maskinbred skrivbar data** → inget
-  `%ProgramData%`, inga ACL-/multisession-write-race.
-- `--uninstall` stoppar daemonen, tar bort tasken + `%ProgramFiles%\Prata`, men
-  **lämnar per-användardata** (dyr att återskapa; symmetri — install skapade den
-  aldrig).
+- The delivery is **a single `prata.exe`** + the USB wrappers
+  `Installera-Prata.bat` / `Avinstallera-Prata.bat`. The same binary runs the
+  daemon, `--install`, `--uninstall`, `--set-key`.
+- `prata.exe --install` (self-elevating via UAC): copies the binary to
+  `%ProgramFiles%\Prata\` (read-only for non-admin → the daemon cannot modify its
+  own image), registers a **machine-wide Task Scheduler task** (`Prata`, all users
+  via SID `S-1-5-32-545`), and starts it in the session via `schtasks /Run`.
+- **All writable state is per-user** in `%LOCALAPPDATA%\Prata\` (`apikey.dat`,
+  `backend.txt`, dictionary override). **No machine-wide writable data** → no
+  `%ProgramData%`, no ACL/multi-session write races.
+- `--uninstall` stops the daemon, removes the task + `%ProgramFiles%\Prata`, but
+  **leaves the per-user data** (expensive to recreate; symmetry — install never
+  created it).
 
-### 9.2 Den hårda elevations-invarianten (UIPI)
+### 9.2 The hard elevation invariant (UIPI)
 
-Daemonen kör på **medium IL** (Task Scheduler RunLevel Limited). **Bara**
-install-åtgärden förhöjer. En förhöjd daemon skulle **tyst** bryta
-SendInput-injektion i ett icke-förhöjt Webdoc (UIPI blockerar lågnivå-input från
-high IL → medium IL). Därför startas daemonen aldrig direkt från den förhöjda
-installern; post-install-start sker via `schtasks /Run` (medium IL).
+The daemon runs at **medium IL** (Task Scheduler RunLevel Limited). **Only** the
+install action elevates. An elevated daemon would **silently** break SendInput
+injection into a non-elevated Webdoc (UIPI blocks low-level input from high IL →
+medium IL). Therefore the daemon is never started directly from the elevated
+installer; the post-install start happens via `schtasks /Run` (medium IL).
 
-### 9.3 Uppdatering — notifierande, inte självuppdaterande
+### 9.3 Update — notifying, not self-updating
 
-- Binären stämplas med version via `-ldflags "-X main.version=…"`.
-  `internal/update.Check` frågar GitHubs latest-release-API och jämför `vX.Y.Z`.
-  Tray-item "Sök efter uppdatering…" rapporterar i en balong.
-- **Uppgraderingen är manuell:** kör om `--install` från den *nya* binären på USB.
-  En `samePath`-vakt gör att den redan installerade binären bara reparerar tasken
-  (ingen versionshöjning) — uppdatering måste ske från USB-kopian.
-- **Varför inte självuppdatering:** en binär som laddar ner och kör en ersättning
-  av sig själv är precis det download-and-execute-mönster som beteende-AV/EDR
-  flaggar för en osignerad exe (se §10). Det skulle dessutom lägga en tyst
-  felväg i den enda operation som inte får gå fel på ett kliniskt verktyg.
-
----
-
-## 10. Det stora öppna problemet: osignerad binär vs AV/EDR
-
-- En osignerad, nybyggd `prata.exe` blockeras vid start av beteende-AV (bekräftat:
-  **Webroot SecureAnywhere**). Symptom: loader-avvisning ("not a valid Win32
-  application" / "Åtkomst nekad"), ingen krasch loggad. Orsak: en okänd,
-  nollprevalens-binär som registrerar hotkeys, fångar mikrofonen och syntetiserar
-  tangenttryck = lärobokens "misstänkta okända".
-- **`go run` fungerar** (kör från Go-byggcachen, som Webroot tolererar) → det är
-  den verifierade dev-vägen.
-- **Nuvarande hantering (skala ~12 maskiner):** USB-kopierade exe:er saknar
-  Mark-of-the-Web → SmartScreen triggar inte; **per-maskin-allowlisting** ersätter
-  publik signering. Windows Defender-undantag sätts av `--install` själv
-  (`Add-MpPreference`); tredjeparts-EDR allowlistas i konsolen (dokumenterat i
-  USB-runbooken).
-- **Den varaktiga fixen — Authenticode-signering — är förberedd men deferrad:** en
-  no-op hook i `release.yml` (gated på `CODE_SIGN_PFX`-secret) tills ett cert finns.
-  Publikt EV-cert blir kritiskt först vid IT-driven skalning (Intune/SCCM).
+- The binary is stamped with a version via `-ldflags "-X main.version=…"`.
+  `internal/update.Check` queries GitHub's latest-release API and compares
+  `vX.Y.Z`. The tray item "Sök efter uppdatering…" reports in a balloon.
+- **The upgrade is manual:** re-run `--install` from the *new* binary on USB.
+  A `samePath` guard makes the already-installed binary only repair the task (no
+  version bump) — an update must come from the USB copy.
+- **Why not self-update:** a binary that downloads and runs a replacement of
+  itself is exactly the download-and-execute pattern that behavior-based AV/EDR
+  flags for an unsigned exe (see §10). It would also add a silent error path to
+  the one operation that must not fail on a clinical tool.
 
 ---
 
-## 11. Säkerhet och integritet (sammanfattning)
+## 10. The big open problem: unsigned binary vs AV/EDR
 
-- **Patientljud skrivs aldrig till disk** — buffras i minnet, kasseras efter
-  transkriberingsrundan.
-- **Dikterad journaltext lämnar aldrig urklippet** i Chromium/journalen (SendInput-
-  vägen) → varken Win+V eller molnurklipp.
-- **Berget-nyckeln är DPAPI-krypterad** per användare/maskin
-  (`%LOCALAPPDATA%\Prata\apikey.dat`) — oläsbar för andra konton/maskiner. *Ingen*
-  machine-scope DPAPI (skulle exponera nyckeln för alla på en delad PC).
-- **Klinikens GPU exponeras aldrig över Tailscale.**
-- Repot är **privat**.
+- A freshly built, unsigned `prata.exe` is blocked at launch by behavior-based AV
+  (confirmed: **Webroot SecureAnywhere**). Symptom: loader rejection ("not a valid
+  Win32 application" / "Åtkomst nekad"), no crash logged. Cause: an unknown,
+  zero-prevalence binary that registers hotkeys, captures the microphone, and
+  synthesizes keystrokes = the textbook "suspicious unknown".
+- **`go run` works** (runs from the Go build cache, which Webroot tolerates) → it
+  is the verified dev path.
+- **Current handling (scale ~12 machines):** USB-copied exes lack the
+  Mark-of-the-Web → SmartScreen does not trigger; **per-machine allowlisting**
+  replaces public signing. Windows Defender exclusions are set by `--install`
+  itself (`Add-MpPreference`); third-party EDR is allowlisted in the console
+  (documented in the USB runbook).
+- **The lasting fix — Authenticode signing — is prepared but deferred:** a no-op
+  hook in `release.yml` (gated on the `CODE_SIGN_PFX` secret) until a cert exists.
+  A public EV cert only becomes critical at IT-driven scaling (Intune/SCCM).
 
 ---
 
-## 12. Viktiga designbeslut i korthet (med motivering)
+## 11. Security and privacy (summary)
 
-| Beslut | Motivering | Förkastat alternativ |
+- **Patient audio is never written to disk** — buffered in memory, discarded after
+  the transcription round.
+- **Dictated medical-record text never leaves the clipboard** in Chromium/the
+  record (the SendInput path) → neither Win+V nor the cloud clipboard.
+- **The Berget key is DPAPI-encrypted** per user/machine
+  (`%LOCALAPPDATA%\Prata\apikey.dat`) — unreadable for other accounts/machines.
+  *No* machine-scope DPAPI (it would expose the key to everyone on a shared PC).
+- **The clinic's GPU is never exposed over Tailscale.**
+- The repo is **private**.
+
+---
+
+## 12. Key design decisions in brief (with rationale)
+
+| Decision | Rationale | Rejected alternative |
 |---|---|---|
-| Go, inte Rust | "See and forget", stdlib täcker det mesta, liten toolchain, självständig binär | Rust (samma stack som Diktell, men tyngre toolchain) |
-| Ett externt beroende (`malgo`) | Minimalism, långsiktig stabilitet | Bibliotek för tray/hotkey/urklipp (valdes bort till förmån för Win32 direkt) |
-| Hårdkodade endpoints, inget config | "See and forget" | `config.toml` |
-| F1/F8 via `RegisterHotKey` | Undviker hook-failklassen + AV-misstanke | `WH_KEYBOARD_LL` (Diktells väg) |
-| Klassbaserad hybridinjektion | Patientsekretess + robusthet i Chromium/journal | Ovillkorligt SendInput (bröt Notepad/journal); denylista (osäker default) |
-| Backend-specifik segmentihopslagning | Lokal whisper otrimmad, Berget trimmad | Skiljetecken-heuristik (omöjlig utan tokendata) |
-| Notifierande uppdatering | Självuppdatering = AV-flaggat download-and-execute | Full self-update; tyst auto-koll vid start (deferrad) |
-| Maskinbred install, per-användare state | Delade PC, byter dator; ingen maskinbred skrivbar data | `%ProgramData%`-delad ordlista (ACL/race); MSI/Inno/WiX (bryter en-fil) |
-| Medium IL via Task Scheduler | UIPI: förhöjd daemon bryter injektion tyst | HKLM\Run (ingen RunLevel-kontroll) |
-| Signering deferrad | USB + allowlisting räcker vid ~12 maskiner | Att blockera all leverans på EV-cert-ledtid |
+| Go, not Rust | "See and forget", stdlib covers most of it, small toolchain, self-contained binary | Rust (the same stack as Diktell, but a heavier toolchain) |
+| One external dependency (`malgo`) | Minimalism, long-term stability | Libraries for tray/hotkey/clipboard (dropped in favor of direct Win32) |
+| Hardcoded endpoints, no config | "See and forget" | `config.toml` |
+| F1/F8 via `RegisterHotKey` | Avoids the hook failure class + AV suspicion | `WH_KEYBOARD_LL` (Diktell's path) |
+| Class-based hybrid injection | Patient confidentiality + robustness in Chromium/the record | Unconditional SendInput (broke Notepad/the record); denylist (unsafe default) |
+| Backend-specific segment joining | Local whisper untrimmed, Berget trimmed | Punctuation heuristic (impossible without token data) |
+| Notifying update | Self-update = AV-flagged download-and-execute | Full self-update; silent auto-check at start (deferred) |
+| Machine-wide install, per-user state | Shared PCs, switching computers; no machine-wide writable data | `%ProgramData%`-shared dictionary (ACL/race); MSI/Inno/WiX (breaks one-file) |
+| Medium IL via Task Scheduler | UIPI: an elevated daemon breaks injection silently | HKLM\Run (no RunLevel control) |
+| Signing deferred | USB + allowlisting is enough at ~12 machines | Blocking all delivery on EV-cert lead time |
 
 ---
 
-## 13. Vad som fungerar bra (verifierat)
+## 13. What works well (verified)
 
-- **Fas 0-validering (2026-05-27):** Berget ger *identiskt felmönster* som lokal
-  Diktell (samma modell); Diktells ordlista direkt återanvändbar; latens medel
-  2,61 s (min 2,56 / max 2,77) över 5 anrop, ingen kallstartseffekt.
-- **Skarp diktering live-verifierad** på sekundär maskin (4 dikteringar,
-  ~2,1–2,7 s round-trip).
-- **Hybridinjektion** verifierad ren i Chrome, Cursor, Claude Desktop (flerradig
-  text) och i journalsystemet via `cmd/inject-test` (klass bekräftad).
-- **Maskinbred install/uninstall/uppdatering hårdvaruverifierad (2026-06-20):**
-  överskriv-medan-igång (döda gammal daemon → retry-copy → omregistrering →
-  omstart), medium-IL-injektion i oförhöjt fönster, användardata bevarad.
-- **Särskrivnings-/Berget-spacing-buggarna** lösta och live-verifierade, med
-  enhetstester på verklig serveroutput.
-- **F8-popupen** omstylad (DWM-skugga, rundade hörn, centrerad text) och
-  live-verifierad.
-
----
-
-## 14. Medvetna begränsningar och icke-mål
-
-- **Inte cross-platform** (Windows-only; Mac/Linux "kanske senare").
-- **Inte konfigurerbar** — ändra konstant + kompilera om.
-- **Inte kommersiell** — personligt + kollegialt bruk.
-- **Inte moln-först** — local-first med moln-fallback (Berget) för transkribering.
-- **Inget ramverk** — ett verktyg.
-- **Ingen AI-efterbearbetning** av texten (till skillnad från vissa
-  dikteringsverktyg) — bara deterministisk ordlistekorrigering.
+- **Phase 0 validation (2026-05-27):** Berget gives an *identical error pattern* to
+  local Diktell (the same model); Diktell's dictionary directly reusable; latency
+  mean 2.61 s (min 2.56 / max 2.77) over 5 calls, no cold-start effect.
+- **Live dictation verified** on a secondary machine (4 dictations, ~2.1–2.7 s
+  round-trip).
+- **Hybrid injection** verified clean in Chrome, Cursor, Claude Desktop (multi-line
+  text) and in the medical-record system via `cmd/inject-test` (class confirmed).
+- **Machine-wide install/uninstall/update hardware-verified (2026-06-20):**
+  overwrite-while-running (kill the old daemon → retry-copy → re-registration →
+  restart), medium-IL injection into a non-elevated window, user data preserved.
+- **The word-splitting / Berget-spacing bugs** are solved and live-verified, with
+  unit tests on real server output.
+- **The F8 popup** restyled (DWM shadow, rounded corners, centered text) and
+  live-verified.
 
 ---
 
-## 15. Frågor till granskaren (öppna trådar)
+## 14. Deliberate limitations and non-goals
 
-Om du är en AI som ombeds ge synpunkter: här är de punkter där feedback och idéer
-är mest värdefulla.
-
-1. **Signering / leverans.** Är "USB + per-maskin-allowlisting + deferrad
-   signtool-hook" rätt avvägning vid ~12 maskiner? Vilken signeringsväg (OV/EV,
-   Azure Trusted Signing, internt cert i EDR) ger bäst nytta/kostnad innan
-   IT-driven skalning? Finns ett sätt att minska AV-friktionen *utan* cert?
-2. **Injektionens täckning.** Klassbaserad allowlista med exakt
-   `Chrome_WidgetWin_1`. Vilka realistiska fönsterklasser (Win32-native journaler,
-   Java/Qt-appar, RDP/Citrix-sessioner, virtuella desktops) riskerar att hamna på
-   den säkra-men-urklippsläckande paste-vägen, och hur skulle du verifiera nya
-   klasser säkert? Är "ingen exekverings-fallback" rätt även när SendInput
-   *garanterat* inte hann skicka något?
-3. **Patientsekretess i paste-vägen.** På icke-Chromium-fönster används urklipp
-   (spara/återställ). Det finns ett kort tidsfönster där journaltext ligger i
-   urklippet. Hur allvarligt är det, och finns en bättre väg som inte bryter
-   en-fil-/stdlib-only-principen?
-4. **Multisession på delad PC.** `--install`/uppdatering dödar *alla* andras
-   `prata.exe`. Är "uppdatera när ingen dikterar" en hållbar driftsregel, eller bör
-   uppdateringen vara sessionsmedveten?
-5. **Ordlista-fold-in.** Gränssnittet (`cmd/dict-foldin`) är specat men inte byggt.
-   Är manuell fold-in inför release rätt, eller bör klinikkorrigeringar
-   synkroniseras på något smartare sätt mellan ~12 maskiner?
-6. **Backend-robusthet.** Ingen tyst failover (medvetet). Men vore en *explicit*,
-   användarbekräftad fallback (t.ex. "LAN nere — vill du använda Berget?") värd
-   komplexiteten? Hur påverkar det sekretessmodellen?
-7. **Degenererings-vakten.** gzip-ratio-tröskel mot whisper-repetitionsloopar — är
-   det robust, eller finns falska positiv/negativ-risker för korta kliniska fraser?
-8. **Ergonomi.** F1 (PTT) + F8 (snabbfix). Risk för Fn-lager på mini-PC-tangentbord
-   (kräver Fn+F1). Bättre tangentval, eller är detta rätt?
-9. **Generella idéer.** Vad saknas för att detta ska vara ett robust kliniskt
-   verktyg i åratal utan tillsyn? Vilka felmoder har vi inte tänkt på?
+- **Not cross-platform** (Windows-only; Mac/Linux "maybe later").
+- **Not configurable** — change a constant + recompile.
+- **Not commercial** — personal + collegial use.
+- **Not cloud-first** — local-first with a cloud fallback (Berget) for
+  transcription.
+- **No framework** — one tool.
+- **No AI post-processing** of the text (unlike some dictation tools) — only
+  deterministic dictionary correction.
 
 ---
 
-## 16. Teknisk fakta-appendix
+## 15. Questions for the reviewer (open threads)
 
-- **Modell:** `KBLab/kb-whisper-large` (GGUF, lokalt på GPU; samma via Berget).
-- **Berget-endpoint:** `https://api.berget.ai/v1/audio/transcriptions`.
-- **Hem-GPU-endpoint (exempel):** `http://100.87.6.56:8080/v1/audio/transcriptions`
-  (Tailscale-IP).
-- **Ljud:** 16 kHz mono PCM, WASAPI via `malgo`.
-- **Hotkeys:** F1 (PTT), F8 (ordlistesnabbfix), via `RegisterHotKey` + `MOD_NOREPEAT`.
-- **Latens:** ~2,6 s medel mot Berget (mätt); lokal GPU snabbare vid upprepad
-  diktering, ~1,85 s modelladdning vid lokal kallstart.
-- **Per-användare-sökvägar:** `%LOCALAPPDATA%\Prata\{apikey.dat, backend.txt,
+If you are an AI being asked to give input: here are the points where feedback and
+ideas are most valuable.
+
+1. **Signing / delivery.** Is "USB + per-machine allowlisting + a deferred
+   signtool hook" the right trade-off at ~12 machines? Which signing path (OV/EV,
+   Azure Trusted Signing, an internal cert in the EDR) gives the best
+   benefit/cost before IT-driven scaling? Is there a way to reduce the AV friction
+   *without* a cert?
+2. **Injection coverage.** Class-based allowlist with exact
+   `Chrome_WidgetWin_1`. Which realistic window classes (Win32-native records,
+   Java/Qt apps, RDP/Citrix sessions, virtual desktops) risk ending up on the
+   safe-but-clipboard-leaking paste path, and how would you verify new classes
+   safely? Is "no execution fallback" right even when SendInput *guaranteed* did
+   not manage to send anything?
+3. **Patient confidentiality on the paste path.** On non-Chromium windows the
+   clipboard is used (save/restore). There is a short time window where
+   medical-record text sits in the clipboard. How serious is that, and is there a
+   better path that does not break the one-file/stdlib-only principle?
+4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
+   `prata.exe`. Is "update when no one is dictating" a sustainable operational
+   rule, or should the update be session-aware?
+5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is specified but not
+   built. Is manual fold-in ahead of a release right, or should clinic corrections
+   be synchronized in some smarter way across ~12 machines?
+6. **Backend robustness.** No silent failover (deliberate). But would an
+   *explicit*, user-confirmed fallback (e.g. "LAN down — do you want to use
+   Berget?") be worth the complexity? How does it affect the confidentiality
+   model?
+7. **The degenerate-output guard.** A gzip-ratio threshold against whisper
+   repetition loops — is that robust, or are there false-positive/negative risks
+   for short clinical phrases?
+8. **Ergonomics.** F1 (PTT) + F8 (quick-fix). Risk of an Fn layer on mini-PC
+   keyboards (requires Fn+F1). A better key choice, or is this right?
+9. **General ideas.** What is missing for this to be a robust clinical tool for
+   years without supervision? Which failure modes have we not thought of?
+
+---
+
+## 16. Technical fact appendix
+
+- **Model:** `KBLab/kb-whisper-large` (GGUF, locally on GPU; the same via Berget).
+- **Berget endpoint:** `https://api.berget.ai/v1/audio/transcriptions`.
+- **Home GPU endpoint (example):**
+  `http://100.87.6.56:8080/v1/audio/transcriptions` (Tailscale IP).
+- **Audio:** 16 kHz mono PCM, WASAPI via `malgo`.
+- **Hotkeys:** F1 (PTT), F8 (dictionary quick-fix), via `RegisterHotKey` +
+  `MOD_NOREPEAT`.
+- **Latency:** ~2.6 s mean against Berget (measured); local GPU faster on repeated
+  dictation, ~1.85 s model load on a local cold start.
+- **Per-user paths:** `%LOCALAPPDATA%\Prata\{apikey.dat, backend.txt,
   dictionary-corrections.txt}`.
-- **Installationsväg:** `%ProgramFiles%\Prata\prata.exe` (skrivskyddad), Task
-  Scheduler-uppgift `Prata` (medium IL, alla användare).
-- **Bygg:** `go build -ldflags="-s -w -H windowsgui -X main.version=<tag>" -o
+- **Install path:** `%ProgramFiles%\Prata\prata.exe` (read-only), Task Scheduler
+  task `Prata` (medium IL, all users).
+- **Build:** `go build -ldflags="-s -w -H windowsgui -X main.version=<tag>" -o
   prata.exe ./cmd/prata/`, `CGO_ENABLED=1`.
-- **CI:** `gofmt -l .` → `go vet` → `go build` → `go test` på `windows-latest`.
-- **Beroende:** `github.com/gen2brain/malgo` (enda externa).
+- **CI:** `gofmt -l .` → `go vet` → `go build` → `go test` on `windows-latest`.
+- **Dependency:** `github.com/gen2brain/malgo` (the only external one).

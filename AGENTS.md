@@ -22,14 +22,14 @@ Each document has a distinct job. Know which one to update.
 
 | File | Purpose | Language |
 | --- | --- | --- |
-| `PRATA-MASTER.md` | Curated single source of truth — *what is built and how it was reasoned*, at a glance. **Hand-maintained.** | Swedish |
+| `PRATA-MASTER.md` | Curated single source of truth — *what is built and how it was reasoned*, at a glance. **Hand-maintained.** | English |
 | `README.md` | Public entry point / overview. | English |
-| `PRATA-GPU-SERVER.md` | Backend & server setup: network topology, Tailscale vs LAN, firewall, deployment. | Swedish |
-| `PRATA-DESIGN-LOG.md` | Design decisions and Win32 traps — the *"how I reasoned"* log (dated entries). | Swedish |
+| `PRATA-GPU-SERVER.md` | Backend & server setup: network topology, Tailscale vs LAN, firewall, deployment. | English |
+| `PRATA-DESIGN-LOG.md` | Design decisions and Win32 traps — the *"how I reasoned"* log (dated entries). | English |
 | `CHANGELOG.md` | Release / work history (Keep a Changelog). | English |
 | `AGENTS.md` | This file — process and policy for agents. | English |
 | `CONTRIBUTING.md` | Developer setup and contribution workflow. | English |
-| `PRATA-REVIEW.md` | Self-contained snapshot for soliciting external AI feedback. **Derived, not a source of truth** — regenerated on demand, not kept perfectly in sync. | Swedish |
+| `PRATA-REVIEW.md` | Self-contained snapshot for soliciting external AI feedback. **Derived, not a source of truth** — regenerated on demand, not kept perfectly in sync. | English |
 
 ## 2. The single most important rule — keep `PRATA-MASTER.md` fresh
 
@@ -111,12 +111,12 @@ prata/
 
 ## 6. Language policy
 
-Prata splits developer-facing language (English) from product-facing language (Swedish). Note that the **design docs themselves are Swedish** (they are the author's working documents) — this differs from a generic "all docs in English" rule.
+Prata separates developer/documentation language (English) from product-facing strings (Swedish). **All documentation is English** — including the design docs, which are the author's working documents.
 
-- **English**: code identifiers, `//` comments, log/panic messages, commit messages, branch names, `README.md`, `CHANGELOG.md`, `AGENTS.md`.
-- **Swedish**: UI text (tray menu, tooltip, `MessageBox`, F8 popup), user-facing error messages, `dictionary-corrections.txt` content, dictation examples, and the design docs `PRATA-MASTER.md` / `PRATA-GPU-SERVER.md` / `PRATA-DESIGN-LOG.md`.
+- **English** — all code (identifiers, `//` comments, log/panic messages), commit messages, branch names, and **every document**: `README.md`, `CHANGELOG.md`, `AGENTS.md`, `CONTRIBUTING.md`, `PRATA-MASTER.md`, `PRATA-GPU-SERVER.md`, `PRATA-DESIGN-LOG.md`, `PRATA-REVIEW.md`.
+- **Swedish (product strings only)** — UI text (tray menu, tooltip, `MessageBox`, F8 popup), user-facing error messages, `dictionary-corrections.txt` content, and **Swedish dictation examples inside docs** (e.g. `tydlighet → tyd lighet`). These illustrate real Swedish ASR/UI behavior and stay verbatim even in an English doc.
 
-When in doubt, match the language already used in the file or surface you are editing.
+When writing a new document, write it in English.
 
 ## 7. Code style and conventions
 

@@ -20,10 +20,9 @@ Duplicated here from `AGENTS.md` because they are the easiest to forget:
   - design decision or Win32 trap → `PRATA-DESIGN-LOG.md` (dated),
   - backend / server / network → `PRATA-GPU-SERVER.md`,
   - any user-visible change → `CHANGELOG.md` `[Unreleased]`.
-- **Language**: code, comments, commits, `README.md`, `CHANGELOG.md`, `AGENTS.md` → **English**;
-  UI text, user-facing errors, `dictionary-corrections.txt`, and the design docs
-  `PRATA-MASTER.md` / `PRATA-GPU-SERVER.md` / `PRATA-DESIGN-LOG.md` → **Swedish**.
-  Match the language already used in the file you edit.
+- **Language**: all code and **all documentation** → **English** (including the design docs).
+  Swedish only for product strings — UI text, user-facing errors, `dictionary-corrections.txt`,
+  and Swedish dictation examples inside docs (e.g. `tydlighet → tyd lighet`), kept verbatim.
 - **Verification gate before "done"**: `gofmt -l .` (empty) → `go vet ./...` → `go build ./...`
   → `go test ./... -count=1`.
 - **Shell is PowerShell, not bash**: no `&&`, no heredocs, no `$(cat …)`. For multi-line commit
