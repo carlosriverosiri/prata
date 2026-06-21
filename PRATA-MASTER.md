@@ -1,5 +1,10 @@
 # Prata — Master Document
 
+> **Handkurerad översikt — genereras inte.** Detta är projektets samlade sanning i
+> destillerad form. Den hålls aktuell för hand: uppdatera den i samma ändring som
+> beteende ändras (se `AGENTS.md` §2). Den är medvetet *inte* en hopslagning av övriga
+> docs — värdet ligger i syntesen.
+
 ## Vad Prata är
 
 En minimal Windows-native push-to-talk dikteringsapp för svensk medicinsk diktering med

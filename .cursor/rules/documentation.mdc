@@ -1,0 +1,39 @@
+---
+description: Prata project rules — read AGENTS.md and keep PRATA-MASTER.md fresh.
+alwaysApply: true
+---
+
+# Prata — Project Rules
+
+**Single source of truth:** [`PRATA-MASTER.md`](../../PRATA-MASTER.md) (what Prata is) and
+[`AGENTS.md`](../../AGENTS.md) (how to work on it). Read both at session start.
+
+## Highest-leverage reminders
+
+Duplicated here from `AGENTS.md` because they are the easiest to forget:
+
+- **`PRATA-MASTER.md` is hand-maintained, not generated.** It is curated synthesis, so it
+  drifts the instant behavior changes. When you implement a feature or change documented
+  behavior, update `PRATA-MASTER.md` in the **same agent run** as the code — never defer.
+- **Route doc updates** to the right file:
+  - behavior / flow change → `PRATA-MASTER.md` (+ `README.md` if public),
+  - design decision or Win32 trap → `PRATA-DESIGN-LOG.md` (dated),
+  - backend / server / network → `PRATA-GPU-SERVER.md`,
+  - any user-visible change → `CHANGELOG.md` `[Unreleased]`.
+- **Language**: code, comments, commits, `README.md`, `CHANGELOG.md`, `AGENTS.md` → **English**;
+  UI text, user-facing errors, `dictionary-corrections.txt`, and the design docs
+  `PRATA-MASTER.md` / `PRATA-GPU-SERVER.md` / `PRATA-DESIGN-LOG.md` → **Swedish**.
+  Match the language already used in the file you edit.
+- **Verification gate before "done"**: `gofmt -l .` (empty) → `go vet ./...` → `go build ./...`
+  → `go test ./... -count=1`.
+- **Shell is PowerShell, not bash**: no `&&`, no heredocs, no `$(cat …)`. For multi-line commit
+  messages write a temp file and `git commit -F <file>`.
+
+## What does NOT require a PRATA-MASTER.md update
+
+Pure refactors, `gofmt`/`go vet` fixes, comment/typo fixes, test-only changes.
+
+## Forbidden without explicit confirmation
+
+Changing hotkeys (`F1`/`F8`), writing audio to disk, making the repo public, force-pushing,
+deleting source files, or adding/swapping dependencies (especially `malgo`). See `AGENTS.md` §10.

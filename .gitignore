@@ -20,7 +20,9 @@ prata-tests.wav
 # IDE / editor
 .vscode/
 .idea/
-.cursor/
+# Ignore machine-local Cursor state, but keep shared project rules tracked.
+.cursor/*
+!.cursor/rules/
 prata.code-workspace
 
 # OS junk
