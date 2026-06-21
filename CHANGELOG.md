@@ -10,6 +10,9 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup caption and chip now use their own
+  10pt semibold font (`createFont` generalized to take point size and weight),
+  distinct from the 11pt regular field font. The owned font is freed on teardown.
 - `internal/popup/popup.go` — the F8 popup caption now carries a small teal
   "F8" chip (white text) at the right of the strip, as a second STATIC child;
   `WM_CTLCOLORSTATIC` branches on the control to give the chip a teal
