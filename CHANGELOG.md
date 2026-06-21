@@ -8,6 +8,15 @@ that point.
 
 ## [Unreleased]
 
+### Changed
+
+- `internal/popup/popup.go` — the F8 quick-fix popup now casts a system drop
+  shadow (`CS_DROPSHADOW`) and opts into Windows 11 rounded corners via
+  `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`,
+  guarded with `.Find()` so it is a harmless no-op on Windows 10 and earlier.
+  Visibility only: the white background, size, and WS_BORDER are unchanged.
+  First step of the F8 popup restyle (Variant 1).
+
 ## v0.3.0 — 2026-06-21
 
 ### Added
