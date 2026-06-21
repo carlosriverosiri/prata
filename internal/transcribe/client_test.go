@@ -67,7 +67,7 @@ func TestTranscribeLocalBackendSendsNoAuth(t *testing.T) {
 	defer srv.Close()
 
 	// A key is present but the local backend must never send it.
-	c := newTestClient("secret-key", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
+	c := newTestClient("secret-key", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: srv.URL, RequiresKey: false})
 	text, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -139,7 +139,7 @@ func TestTranscribeNormalizesSegmentedText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
+	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: srv.URL, RequiresKey: false})
 	got, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -162,7 +162,7 @@ func TestTranscribeJoinsMidWordSegmentSplit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
+	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: srv.URL, RequiresKey: false})
 	got, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)

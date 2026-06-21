@@ -52,7 +52,7 @@ type Backend struct {
 // The selectable backends. Home and Work are local whisper.cpp GPU servers
 // (no auth); Berget is the cloud fallback (Bearer-authenticated).
 var (
-	Home   = Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: HomeURL, RequiresKey: false}
+	Home   = Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: HomeURL, RequiresKey: false}
 	Work   = Backend{ID: "Jobb", DisplayName: "Rum1 GPU-server", URL: WorkURL, RequiresKey: false}
 	Berget = Backend{ID: "Berget", DisplayName: "Berget Ai", URL: BergetURL, RequiresKey: true}
 )
