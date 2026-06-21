@@ -30,6 +30,7 @@ const (
 	wsVisible     = 0x10000000
 	wsChild       = 0x40000000
 	esAutoHScroll = 0x0080
+	esMultiline   = 0x0004     // EDIT: needed for EM_SETRECT vertical centering
 	ssCenter      = 0x00000001 // STATIC: horizontal-centre the text
 	ssCenterImage = 0x00000200 // STATIC: vertical-centre the caption text
 
@@ -38,9 +39,6 @@ const (
 	ecRightMargin = 0x0002
 	emGetRect     = 0x00B2
 	emSetRectNp   = 0x00B4
-
-	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
-	csDropShadow = 0x00020000
 
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
@@ -300,7 +298,11 @@ func (p *popup) run(initial string) (string, bool, error) {
 	defer procDeleteObject.Call(p.fieldBrush)
 
 	wc := wndClassExW{
-		style:         csDropShadow,
+		// No CS_DROPSHADOW: its rectangular legacy shadow pokes a sharp corner
+		// past the DWM-rounded window edge (worst at bottom-right). A shadow that
+		// follows the rounded contour needs the DwmExtendFrameIntoClientArea +
+		// WM_NCCALCSIZE custom-frame approach; the popup relies on the DWM rounded
+		// corners and teal border for definition instead.
 		lpfnWndProc:   syscall.NewCallback(p.wndProc),
 		hInstance:     hInstance,
 		hbrBackground: p.panelBrush,
@@ -374,6 +376,11 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 	centerEditText(edit, font)
 
+	// Round the field AFTER its font is set: a multiline EDIT recomputes its
+	// layout and drops its window region on WM_SETFONT (same trap as the chip,
+	// see roundChip), so rounding in createEdit would be undone.
+	roundEdit(edit, dpi)
+
 	caption, err := p.createCaption(hwnd, hInstance, dpi)
 	if err != nil {
 		return "", false, err
@@ -433,7 +440,7 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 		0,
 		uintptr(unsafe.Pointer(editClass)),
 		0,
-		wsChild|wsVisible|esAutoHScroll,
+		wsChild|wsVisible|esMultiline|esAutoHScroll,
 		uintptr(margin), uintptr(top),
 		uintptr(w), uintptr(h),
 		hwnd, 1, hInstance, 0,
@@ -441,16 +448,6 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 	if edit == 0 {
 		return 0, fmt.Errorf("create edit control: %v", sysErr)
 	}
-
-	// Rounded clipping region. w+1/h+1 because the region's right/bottom are
-	// exclusive. SetWindowRgn takes ownership — do NOT DeleteObject the region;
-	// the system frees it when the window is destroyed.
-	radius := int32(baseRadius) * int32(dpi) / baseDPI
-	rgn, _, _ := procCreateRoundRectRgn.Call(
-		0, 0, uintptr(w+1), uintptr(h+1),
-		uintptr(2*radius), uintptr(2*radius),
-	)
-	procSetWindowRgn.Call(edit, rgn, 1)
 
 	// Inner text padding so text clears the rounded corners.
 	tm := int32(baseTextMargin) * int32(dpi) / baseDPI
@@ -461,12 +458,14 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 	return edit, nil
 }
 
-// centerEditText vertically centres a single-line EDIT's text, which the
-// control otherwise top-aligns. The formatting rectangle must be exactly one
-// line tall, positioned at the centred y: a rect taller than one line lets the
-// single line drift within it. The existing left/right margins (EM_SETMARGINS)
-// are preserved by reading them from the current formatting rect. font is the
-// field font (0 = system default), used only to measure the line height.
+// centerEditText vertically centres the EDIT's single line of text, which the
+// control otherwise top-aligns. This requires the ES_MULTILINE style: a true
+// single-line EDIT ignores the top/bottom of EM_SETRECT, so the line would stay
+// pinned to the top. The control is used as one line (ES_AUTOHSCROLL, Enter is
+// intercepted by the modal loop), but multiline layout honours the formatting
+// rectangle. The rect is positioned at the centred y and made one line tall.
+// font is the field font (0 = system default), used only to measure the line
+// height.
 func centerEditText(edit, font uintptr) {
 	lineH := textLineHeight(edit, font)
 	if lineH <= 0 {
@@ -577,6 +576,25 @@ func (p *popup) roundChip(dpi uint32) {
 		uintptr(2*radius), uintptr(2*radius),
 	)
 	procSetWindowRgn.Call(p.chip, rgn, 1)
+}
+
+// roundEdit applies the field's rounded clipping region from the EDIT's own
+// client size. Call it AFTER the EDIT receives WM_SETFONT: a multiline EDIT
+// recomputes its layout and drops the window region on WM_SETFONT, so rounding
+// in createEdit would be undone (same trap as the STATIC chip, see roundChip).
+// w+1/h+1 because the region's right/bottom are exclusive. SetWindowRgn takes
+// ownership — do NOT DeleteObject the region; the system frees it on destroy.
+func roundEdit(edit uintptr, dpi uint32) {
+	var rc rect
+	procGetClientRect.Call(edit, uintptr(unsafe.Pointer(&rc)))
+	w := rc.right - rc.left
+	h := rc.bottom - rc.top
+	radius := int32(baseRadius) * int32(dpi) / baseDPI
+	rgn, _, _ := procCreateRoundRectRgn.Call(
+		0, 0, uintptr(w+1), uintptr(h+1),
+		uintptr(2*radius), uintptr(2*radius),
+	)
+	procSetWindowRgn.Call(edit, rgn, 1)
 }
 
 // loop runs the modal message pump. Enter/Esc are queued WM_KEYDOWN
