@@ -28,6 +28,8 @@ Each document has a distinct job. Know which one to update.
 | `PRATA-DESIGN-LOG.md` | Design decisions and Win32 traps — the *"how I reasoned"* log (dated entries). | Swedish |
 | `CHANGELOG.md` | Release / work history (Keep a Changelog). | English |
 | `AGENTS.md` | This file — process and policy for agents. | English |
+| `CONTRIBUTING.md` | Developer setup and contribution workflow. | English |
+| `PRATA-REVIEW.md` | Self-contained snapshot for soliciting external AI feedback. **Derived, not a source of truth** — regenerated on demand, not kept perfectly in sync. | Swedish |
 
 ## 2. The single most important rule — keep `PRATA-MASTER.md` fresh
 
@@ -79,6 +81,8 @@ prata/
 ├── PRATA-GPU-SERVER.md  # Backend/server/network setup
 ├── PRATA-DESIGN-LOG.md  # Design decisions + Win32 traps
 ├── CHANGELOG.md         # Release/work history
+├── CONTRIBUTING.md      # Developer setup and contribution workflow
+├── PRATA-REVIEW.md      # Self-contained snapshot for external AI review (derived)
 ├── go.mod / go.sum      # Single external dep: malgo
 ├── Installera-Prata.bat / Avinstallera-Prata.bat
 ├── scripts/
