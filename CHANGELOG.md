@@ -10,6 +10,11 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup caption now carries a small teal
+  "F8" chip (white text) at the right of the strip, as a second STATIC child;
+  `WM_CTLCOLORSTATIC` branches on the control to give the chip a teal
+  background (reusing the frame brush, now promoted onto the popup struct) and
+  the caption the tint background. No new GDI objects.
 - `internal/popup/popup.go` — the F8 popup now shows a caption label
   "Lägg till i lexikon" above the field, as a STATIC child on the field tint
   with teal text (`WM_CTLCOLORSTATIC`, reusing the field brush). The window
