@@ -871,4 +871,77 @@ inspelade serveroutputen och kräver "Tydlighet", inte "Tyd lighet".
   Berget lika).
 - Stavningsvariationen io→eo ("akromeoplastik") är ett ASR-igenkänningsfel från
   modellen och påverkas inte av denna fix.
+
+### 2026-06-21: F8-popup restyle — Win32-beslut och fällor
+
+**Status:** Klar och live-verifierad. Koden sitter i
+`internal/popup/popup.go`. Alla steg committade med individuella
+konventionella commit-meddelanden; hela CHANGELOG.md är à jour.
+
+**Bakgrund**
+
+F8-popupens ursprungliga utseende var ett tomt `WS_BORDER`-fönster med vit
+bakgrund och ett vanligt editfält — funktionellt men visuellt oinspirerat. Tre
+omstyleiterationer (Variant 1, Variant B, och skuggtillägg) gav det nuvarande
+utseendet: tonal mintpanelbakgrund, vitt centrerat editfält med rundade hörn,
+teal-kant via DWM, F8-chip i caption-raden, rymlig padding och en DWM-skugga
+som följer de rundade hörnen.
+
+**Beslut 1 — DWM-skugga via custom frame (inte CS_DROPSHADOW)**
+
+`CS_DROPSHADOW` gav en rektangulär legacy-skugga vars fyrkantiga hörn stack ut
+förbi fönstrets DWM-rundade hörn (artefakt synlig i nedre högra hörnet). En
+skugga som verkligen följer de rundade hörnen kräver DWM-kompositorns egna
+skuggrendering, som bara är aktiv när DWM behandlar fönstret som "ramat".
+
+Vägen dit: skapa fönstret med `WS_CAPTION` (inte bara `WS_POPUP`) så att DWM
+anser att fönstret är ramat och ritar skuggan; ta sedan bort den synliga
+titelraden och kanten genom att returnera 0 från `WM_NCCALCSIZE` (med
+`wParam == TRUE`). `DwmExtendFrameIntoClientArea({cyBottomHeight: 1})` håller
+DWM-ramen vid liv medan klientytan täcker hela fönstret, och
+`SetWindowPos(SWP_FRAMECHANGED)` tvingar omräkning direkt. `WS_VISIBLE` tas
+bort från skapandet och fönstret visas via `ShowWindow` efter formen — annars
+blinkar titelraden en ram innan den hinner försvinna.
+
+`CS_DROPSHADOW` togs bort permanent som en mellanfix (den enda rena lösningen
+av rektangelkrocken); den ersattes sedan av DWM-varianten ovan.
+
+**Beslut 2 — ES_MULTILINE för vertikal textcentrering**
+
+En äkta enradig `EDIT` (`!ES_MULTILINE`) ignorerar `EM_SETRECT` / `EM_SETRECTNP`
+top/bottom — Win32 toppäljer alltid texten och bryr sig inte om
+formateringsrektangelns vertikala position. Det gör att centreringskalkylen
+(läs `tmHeight`, beräkna centrat y, sätt formatrect) inte har någon effekt.
+
+Lösningen: ge fältet `ES_MULTILINE`. En multiline-edit respekterar
+formateringsrektangeln vertikalt. Fältet används fortfarande som en enda rad:
+`ES_AUTOHSCROLL` förhindrar radbrytning, och Enter fångas i modal-loopen innan
+det når kontrollen, så ingen ny rad kan skapas. Beteendet är identiskt med ett
+vanligt enradigt fält, men centreringskoden fungerar.
+
+**Beslut 3 — Region måste sättas EFTER WM_SETFONT**
+
+Både `EDIT` (med `ES_MULTILINE`) och `STATIC` resetar sin fönsterregion
+(satt av `SetWindowRgn`) när de tar emot `WM_SETFONT`, eftersom kontrollen
+räknar om sin inre layout och skriver om regionen som en del av det arbetet.
+Följden är att rundade hörn satta i `createEdit` / `createChip` tappas tyst
+när typsnittet tilldelas senare i `run()`.
+
+Lösningen: flytta ut regiontillämpningen till egna hjälpfunktioner
+(`roundEdit`, `roundChip`) som anropas *efter* att `WM_SETFONT` skickats. Detta
+är inte ett edge-case — det gäller alla vanliga Win32-kontroller som kan rita
+om sig vid typsnittsbyte.
+
+**Konsekvenser**
+
+- Popupen kräver Windows Vista+ för DWM-skuggan (`.Find()`-guard → harmless
+  no-op på äldre system om sådana ens kan köra resten av Prata).
+- `WM_NCCALCSIZE` med `wParam == TRUE` returnerar 0 → klientytan fyller hela
+  fönstret. `wParam == FALSE` faller igenom till `DefWindowProc` normalt.
+- Tre GDI-borstar (panel, chip/teal, fält/vitt) skapas i `run()` och frigörs
+  via `defer` med LIFO-ordning (efter `DestroyWindow`) — aldrig per meddelande.
+- Typsnitt: 11pt normal för fältet, 10pt semibold för caption och chip. Båda
+  DPI-skalade via `CreateFontW` med negativ `lfHeight` (punktstorlek, inte px).
+- Layoutkonstanter (Variant B): `baseMargin` 16, `baseGap` 14, `baseHeight`
+  104, `baseTextMargin` 12, `baseChipGap` 12 — allt @ 96 DPI, skalat uppåt.
 - Släppt i **v0.3.0** (omdistribution via `prata.exe --install` / `Installera-Prata.bat`).
