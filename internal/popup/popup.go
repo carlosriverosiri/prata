@@ -27,6 +27,7 @@ import (
 const (
 	wsPopup       = 0x80000000
 	wsBorder      = 0x00800000
+	wsCaption     = 0x00c00000 // WS_CAPTION: a frame DWM shadows; stripped via WM_NCCALCSIZE
 	wsVisible     = 0x10000000
 	wsChild       = 0x40000000
 	esAutoHScroll = 0x0080
@@ -46,6 +47,7 @@ const (
 	wmDestroy        = 0x0002
 	wmActivate       = 0x0006
 	wmClose          = 0x0010
+	wmNcCalcSize     = 0x0083
 	wmSetFont        = 0x0030
 	wmKeyDown        = 0x0100
 	wmNull           = 0x0000
@@ -60,6 +62,14 @@ const (
 
 	swShow      = 5
 	colorWindow = 5 // hbrBackground = COLOR_WINDOW+1; the window is shown
+
+	// SetWindowPos flags: force a WM_NCCALCSIZE recalc without moving/sizing/
+	// reordering the window (SWP_FRAMECHANGED).
+	swpNoSize        = 0x0001
+	swpNoMove        = 0x0002
+	swpNoZOrder      = 0x0004
+	swpFrameChanged  = 0x0020
+	swpNoOwnerZOrder = 0x0200
 
 	// Prata profile teal as a COLORREF (0x00BBGGRR).
 	tealDeep   = 0x00566E0F // #0F6E56
@@ -234,13 +244,27 @@ var (
 	procGetTextMetricsW    = gdi32.NewProc("GetTextMetricsW")
 
 	procSetWindowRgn = user32.NewProc("SetWindowRgn")
+	procSetWindowPos = user32.NewProc("SetWindowPos")
 
 	// Windows 8.1+; guard with .Find and fall back to 96 DPI.
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
 
 	// Windows 11 (build 22000)+; guard with .Find, no-op on older Windows.
 	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+
+	// Windows Vista+ (DWM composition); guard with .Find. Used to give the
+	// borderless popup the system drop shadow that follows its rounded corners.
+	procDwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 )
+
+// margins mirrors the Win32 MARGINS struct passed to
+// DwmExtendFrameIntoClientArea (frame extension widths, in pixels).
+type margins struct {
+	cxLeftWidth    int32
+	cxRightWidth   int32
+	cyTopHeight    int32
+	cyBottomHeight int32
+}
 
 // popup holds the per-call window state. Its fields are touched only on
 // the modal-loop thread (the loop itself and the WndProc it dispatches),
@@ -347,11 +371,16 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 
 	windowName, _ := syscall.UTF16PtrFromString("Prata")
+	// WS_CAPTION (not a bare WS_POPUP) so DWM treats the window as framed and
+	// draws its drop shadow; the visible frame is removed by returning 0 from
+	// WM_NCCALCSIZE (see wndProc + enableShadowFrame). No WS_VISIBLE: the window
+	// is shown later (ShowWindow), after the frame is reshaped, to avoid a
+	// title-bar flash.
 	hwnd, _, sysErr := procCreateWindowExW.Call(
 		wsExTopmost|wsExToolWindow,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
-		wsPopup|wsVisible,
+		wsPopup|wsCaption,
 		uintptr(x), uintptr(y), uintptr(width), uintptr(height),
 		0, 0, hInstance, 0,
 	)
@@ -363,6 +392,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 
 	setRoundedCorners(hwnd)
 	setBorderColor(hwnd, tealDeep)
+	enableShadowFrame(hwnd)
 
 	edit, err := p.createEdit(hwnd, hInstance, dpi)
 	if err != nil {
@@ -646,6 +676,14 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 			p.activated = true
 		}
 		return 0
+	case wmNcCalcSize:
+		// Custom frame: with wParam TRUE, returning 0 makes the client area fill
+		// the whole window rectangle, so the WS_CAPTION title bar and border are
+		// never drawn — while the window keeps the frame that DWM shadows (see
+		// enableShadowFrame). wParam FALSE falls through to DefWindowProc.
+		if wParam != 0 {
+			return 0
+		}
 	case wmClose, wmDestroy:
 		p.cancel()
 		return 0
@@ -781,6 +819,26 @@ func setBorderColor(hwnd, color uintptr) {
 		uintptr(dwmwaBorderColor),
 		uintptr(unsafe.Pointer(&c)),
 		unsafe.Sizeof(c),
+	)
+}
+
+// enableShadowFrame gives the borderless popup the system drop shadow that
+// follows its DWM-rounded corners. A bare WS_POPUP has no frame and thus no
+// shadow; the window is created WS_CAPTION so DWM treats it as framed (and
+// shadows it), and the visible frame is removed by returning 0 from
+// WM_NCCALCSIZE. Extending the DWM frame by a single bottom pixel keeps that
+// frame — and its shadow — alive while the client covers the whole window;
+// SWP_FRAMECHANGED forces the WM_NCCALCSIZE recalculation immediately. No-op
+// (no shadow) where DWM composition is unavailable, guarded by .Find().
+func enableShadowFrame(hwnd uintptr) {
+	if procDwmExtendFrameIntoClientArea.Find() != nil {
+		return
+	}
+	m := margins{cyBottomHeight: 1}
+	procDwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&m)))
+	procSetWindowPos.Call(
+		hwnd, 0, 0, 0, 0, 0,
+		swpNoMove|swpNoSize|swpNoZOrder|swpNoOwnerZOrder|swpFrameChanged,
 	)
 }
 
