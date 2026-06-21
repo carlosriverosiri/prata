@@ -30,6 +30,7 @@ const (
 	wsVisible     = 0x10000000
 	wsChild       = 0x40000000
 	esAutoHScroll = 0x0080
+	ssCenter      = 0x00000001 // STATIC: horizontal-centre the text
 	ssCenterImage = 0x00000200 // STATIC: vertical-centre the caption text
 
 	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
@@ -57,9 +58,10 @@ const (
 	colorWindow = 5 // hbrBackground = COLOR_WINDOW+1; the window is shown
 
 	// Prata profile teal as a COLORREF (0x00BBGGRR).
-	tealDeep  = 0x00566E0F // #0F6E56
-	fieldTint = 0x00F8FBF4 // #F4FBF8 (very light teal), EDIT field interior
-	inkColor  = 0x002E2A1F // #1f2a2e, EDIT text colour
+	tealDeep   = 0x00566E0F // #0F6E56
+	fieldTint  = 0x00F8FBF4 // #F4FBF8 (very light teal), EDIT field interior
+	inkColor   = 0x002E2A1F // #1f2a2e, EDIT text colour
+	whiteColor = 0x00FFFFFF // chip "F8" text
 
 	monitorDefaultToNearest = 0x00000002
 	mdtEffectiveDPI         = 0
@@ -80,6 +82,9 @@ const (
 	baseMargin    = 5
 	baseCaptionH  = 18 // caption strip height @96dpi
 	baseGap       = 3  // gap between caption and field
+	baseChipW     = 26 // chip width @96dpi
+	baseChipH     = 14 // chip height @96dpi (shorter than strip)
+	baseChipGap   = 6  // gap between caption text and chip
 	baseOffset    = 16 // popup offset from the cursor
 	fontPointSize = 11
 
@@ -201,7 +206,9 @@ var (
 type popup struct {
 	hwnd uintptr
 
-	editBrush uintptr // persistent field-tint brush returned from WM_CTLCOLOREDIT
+	editBrush  uintptr // persistent field-tint brush returned from WM_CTLCOLOREDIT
+	frameBrush uintptr // persistent teal frame brush; also the chip background
+	chip       uintptr // "F8" chip STATIC; distinguishes it in WM_CTLCOLORSTATIC
 
 	ok        bool // user confirmed with Enter
 	done      bool // modal loop should exit
@@ -235,8 +242,8 @@ func (p *popup) run(initial string) (string, bool, error) {
 	// frame. Registering this defer before RegisterClassExW/CreateWindowExW
 	// means (LIFO) it runs after DestroyWindow and UnregisterClassW, so the
 	// window never references a deleted brush.
-	brush, _, _ := procCreateSolidBrush.Call(uintptr(tealDeep))
-	defer procDeleteObject.Call(brush)
+	p.frameBrush, _, _ = procCreateSolidBrush.Call(uintptr(tealDeep))
+	defer procDeleteObject.Call(p.frameBrush)
 
 	// Persistent field-tint brush returned from WM_CTLCOLOREDIT. Same defer
 	// discipline as the frame brush: freed (LIFO) after the window is gone.
@@ -247,7 +254,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 		style:         csDropShadow,
 		lpfnWndProc:   syscall.NewCallback(p.wndProc),
 		hInstance:     hInstance,
-		hbrBackground: brush,
+		hbrBackground: p.frameBrush,
 		lpszClassName: className,
 	}
 	wc.cbSize = uint32(unsafe.Sizeof(wc))
@@ -324,6 +331,14 @@ func (p *popup) run(initial string) (string, bool, error) {
 		procSendMessageW.Call(caption, wmSetFont, font, 1)
 	}
 
+	p.chip, err = p.createChip(hwnd, hInstance, dpi)
+	if err != nil {
+		return "", false, err
+	}
+	if font != 0 {
+		procSendMessageW.Call(p.chip, wmSetFont, font, 1)
+	}
+
 	if initial != "" {
 		if text, terr := syscall.UTF16PtrFromString(initial); terr == nil {
 			procSetWindowTextW.Call(edit, uintptr(unsafe.Pointer(text)))
@@ -375,8 +390,10 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 func (p *popup) createCaption(hwnd, hInstance uintptr, dpi uint32) (uintptr, error) {
 	var rc rect
 	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-	margin := int32(baseMargin) * int32(dpi) / baseDPI
-	capH := int32(baseCaptionH) * int32(dpi) / baseDPI
+	scale := func(v int32) int32 { return v * int32(dpi) / baseDPI }
+	margin := scale(baseMargin)
+	capH := scale(baseCaptionH)
+	width := rc.right - 2*margin - scale(baseChipW) - scale(baseChipGap)
 	text, _ := syscall.UTF16PtrFromString("Lägg till i lexikon")
 	staticClass, _ := syscall.UTF16PtrFromString("STATIC")
 	h, _, sysErr := procCreateWindowExW.Call(
@@ -385,11 +402,40 @@ func (p *popup) createCaption(hwnd, hInstance uintptr, dpi uint32) (uintptr, err
 		uintptr(unsafe.Pointer(text)),
 		wsChild|wsVisible|ssCenterImage,
 		uintptr(margin), uintptr(margin),
-		uintptr(rc.right-2*margin), uintptr(capH),
+		uintptr(width), uintptr(capH),
 		hwnd, 0, hInstance, 0,
 	)
 	if h == 0 {
 		return 0, fmt.Errorf("create caption: %v", sysErr)
+	}
+	return h, nil
+}
+
+// createChip makes a small "F8" STATIC at the right end of the caption strip,
+// vertically centred and shorter than the strip.
+func (p *popup) createChip(hwnd, hInstance uintptr, dpi uint32) (uintptr, error) {
+	var rc rect
+	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+	scale := func(v int32) int32 { return v * int32(dpi) / baseDPI }
+	margin := scale(baseMargin)
+	capH := scale(baseCaptionH)
+	chipW := scale(baseChipW)
+	chipH := scale(baseChipH)
+	x := rc.right - margin - chipW
+	y := margin + (capH-chipH)/2
+	text, _ := syscall.UTF16PtrFromString("F8")
+	staticClass, _ := syscall.UTF16PtrFromString("STATIC")
+	h, _, sysErr := procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(staticClass)),
+		uintptr(unsafe.Pointer(text)),
+		wsChild|wsVisible|ssCenter|ssCenterImage,
+		uintptr(x), uintptr(y),
+		uintptr(chipW), uintptr(chipH),
+		hwnd, 0, hInstance, 0,
+	)
+	if h == 0 {
+		return 0, fmt.Errorf("create chip: %v", sysErr)
 	}
 	return h, nil
 }
@@ -453,8 +499,14 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		procSetTextColor.Call(wParam, uintptr(inkColor))
 		return p.editBrush
 	case wmCtlColorStatic:
-		// Caption sits on the field tint with teal text. Reuse the field
-		// brush and tealDeep colour — no new GDI objects.
+		// The chip gets a teal background with white text (frame brush);
+		// the caption keeps the field tint with teal text (field brush).
+		// Reuse the existing brushes — no new GDI objects per repaint.
+		if lParam == p.chip {
+			procSetBkColor.Call(wParam, uintptr(tealDeep))
+			procSetTextColor.Call(wParam, uintptr(whiteColor))
+			return p.frameBrush
+		}
 		procSetBkColor.Call(wParam, uintptr(fieldTint))
 		procSetTextColor.Call(wParam, uintptr(tealDeep))
 		return p.editBrush
