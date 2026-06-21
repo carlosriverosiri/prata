@@ -10,6 +10,27 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup field now vertically centers its text.
+  The EDIT gains `ES_MULTILINE` (still used as one line — Enter is caught by the
+  modal loop, so no newline is inserted) so that `EM_SETRECT` actually moves the
+  line; a true single-line EDIT ignores the formatting rect's top/bottom and
+  stays top-pinned. A multiline EDIT drops its window region on `WM_SETFONT`, so
+  the rounded field corners are re-applied (`roundEdit`) after the font is set —
+  the same trap the chip hit.
+- `internal/popup/popup.go` — dropped the F8 popup's `CS_DROPSHADOW`: its
+  rectangular legacy shadow poked a sharp corner past the DWM-rounded window edge
+  (worst at the bottom-right). The popup now relies on the DWM rounded corners and
+  the teal border for definition; a shadow that follows the rounded contour would
+  need the `DwmExtendFrameIntoClientArea` + `WM_NCCALCSIZE` custom-frame approach.
+- `internal/popup/popup.go` — the F8 chip is now a rounded badge with roughly
+  double the padding around the "F8" text (`baseChipW` 26→38, `baseChipH` 14→20,
+  rounded via a `SetWindowRgn` region at `baseChipRadius` 7px @96dpi). The caption
+  strip grows (`baseCaptionH` 18→22) to host the taller chip and the window grows
+  (`baseHeight` 100→104) to keep the field height.
+- `internal/popup/popup.go` — roomier F8 popup spacing (Variant B): the layout
+  constants roughly double (`baseMargin` 8→16, `baseGap` 6→14, `baseHeight`
+  72→100, `baseTextMargin` 8→12, `baseChipGap` 6→12). Constants only — all layout
+  math, brushes, fonts, the DWM border, and region rounding are unchanged.
 - `internal/popup/popup.go` — the F8 popup field now has rounded corners via a
   `CreateRoundRectRgn` clipping region (radius 6px @96dpi, DPI-scaled), no
   square `WS_BORDER`, and inner text padding (`EM_SETMARGINS`) so text clears
@@ -43,12 +64,13 @@ that point.
   the outer `WS_BORDER`; the EDIT control's existing margin exposes the teal as a
   border, which also removes the `WS_BORDER` / rounded-corner clipping artifact.
   Second step of the F8 popup restyle (Variant 1).
-- `internal/popup/popup.go` — the F8 quick-fix popup now casts a system drop
-  shadow (`CS_DROPSHADOW`) and opts into Windows 11 rounded corners via
+- `internal/popup/popup.go` — the F8 quick-fix popup opts into Windows 11
+  rounded corners via
   `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`,
   guarded with `.Find()` so it is a harmless no-op on Windows 10 and earlier.
-  Visibility only: the white background, size, and WS_BORDER are unchanged.
-  First step of the F8 popup restyle (Variant 1).
+  (This step originally also added a `CS_DROPSHADOW` shadow, later dropped — see
+  above — because it clashed with the rounded corners.) First step of the F8
+  popup restyle (Variant 1).
 
 ## v0.3.0 — 2026-06-21
 
