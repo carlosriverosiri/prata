@@ -53,7 +53,7 @@ type Backend struct {
 // (no auth); Berget is the cloud fallback (Bearer-authenticated).
 var (
 	Home   = Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: HomeURL, RequiresKey: false}
-	Work   = Backend{ID: "Jobb", DisplayName: "Rum1 GPU-server", URL: WorkURL, RequiresKey: false}
+	Work   = Backend{ID: "Jobb", DisplayName: "LAN GPU-server", URL: WorkURL, RequiresKey: false}
 	Berget = Backend{ID: "Berget", DisplayName: "Berget Ai", URL: BergetURL, RequiresKey: true}
 )
 

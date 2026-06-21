@@ -81,7 +81,7 @@ func TestTranscribeLocalBackendSendsNoAuth(t *testing.T) {
 }
 
 func TestTranscribeEmptyURLFails(t *testing.T) {
-	c := newTestClient("", Backend{ID: "Jobb", DisplayName: "Rum1 GPU-server", URL: "", RequiresKey: false})
+	c := newTestClient("", Backend{ID: "Jobb", DisplayName: "LAN GPU-server", URL: "", RequiresKey: false})
 	_, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
 	if err == nil {
 		t.Fatal("Transcribe with empty URL: want error, got nil")
