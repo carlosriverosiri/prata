@@ -33,6 +33,10 @@ const (
 	ssCenter      = 0x00000001 // STATIC: horizontal-centre the text
 	ssCenterImage = 0x00000200 // STATIC: vertical-centre the caption text
 
+	emSetMargins  = 0x00D3
+	ecLeftMargin  = 0x0001
+	ecRightMargin = 0x0002
+
 	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
 	csDropShadow = 0x00020000
 
@@ -86,6 +90,8 @@ const (
 	baseChipW        = 26 // chip width @96dpi
 	baseChipH        = 14 // chip height @96dpi (shorter than strip)
 	baseChipGap      = 6  // gap between caption text and chip
+	baseRadius       = 6  // field corner radius @96dpi
+	baseTextMargin   = 8  // inner left/right text padding @96dpi
 	baseOffset       = 16 // popup offset from the cursor
 	fontPointSize    = 11
 	captionPointSize = 10
@@ -190,11 +196,14 @@ var (
 
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 
-	procCreateFontW      = gdi32.NewProc("CreateFontW")
-	procDeleteObject     = gdi32.NewProc("DeleteObject")
-	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
-	procSetBkColor       = gdi32.NewProc("SetBkColor")
-	procSetTextColor     = gdi32.NewProc("SetTextColor")
+	procCreateFontW        = gdi32.NewProc("CreateFontW")
+	procDeleteObject       = gdi32.NewProc("DeleteObject")
+	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procSetBkColor         = gdi32.NewProc("SetBkColor")
+	procSetTextColor       = gdi32.NewProc("SetTextColor")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
+
+	procSetWindowRgn = user32.NewProc("SetWindowRgn")
 
 	// Windows 8.1+; guard with .Find and fall back to 96 DPI.
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
@@ -379,19 +388,39 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 	gap := int32(baseGap) * int32(dpi) / baseDPI
 	top := margin + capH + gap
 
+	w := rc.right - 2*margin
+	h := rc.bottom - top - margin
+
 	editClass, _ := syscall.UTF16PtrFromString("EDIT")
 	edit, _, sysErr := procCreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(editClass)),
 		0,
-		wsChild|wsVisible|wsBorder|esAutoHScroll,
+		wsChild|wsVisible|esAutoHScroll,
 		uintptr(margin), uintptr(top),
-		uintptr(rc.right-2*margin), uintptr(rc.bottom-top-margin),
+		uintptr(w), uintptr(h),
 		hwnd, 1, hInstance, 0,
 	)
 	if edit == 0 {
 		return 0, fmt.Errorf("create edit control: %v", sysErr)
 	}
+
+	// Rounded clipping region. w+1/h+1 because the region's right/bottom are
+	// exclusive. SetWindowRgn takes ownership — do NOT DeleteObject the region;
+	// the system frees it when the window is destroyed.
+	radius := int32(baseRadius) * int32(dpi) / baseDPI
+	rgn, _, _ := procCreateRoundRectRgn.Call(
+		0, 0, uintptr(w+1), uintptr(h+1),
+		uintptr(2*radius), uintptr(2*radius),
+	)
+	procSetWindowRgn.Call(edit, rgn, 1)
+
+	// Inner text padding so text clears the rounded corners.
+	tm := int32(baseTextMargin) * int32(dpi) / baseDPI
+	procSendMessageW.Call(edit, emSetMargins,
+		ecLeftMargin|ecRightMargin,
+		uintptr(tm)|(uintptr(tm)<<16))
+
 	return edit, nil
 }
 
