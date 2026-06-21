@@ -83,13 +83,14 @@ const (
 
 	// Base (96-DPI) layout sizes, scaled up by the monitor DPI.
 	baseWidth        = 360
-	baseHeight       = 100 // Variant B: roomier height
+	baseHeight       = 104 // +4 to absorb taller caption strip, field stays 36
 	baseMargin       = 16  // Variant B: top/sides/bottom padding
-	baseCaptionH     = 18  // caption strip height @96dpi
+	baseCaptionH     = 22  // taller strip to host the roomier chip
 	baseGap          = 14  // Variant B: space between caption and field
-	baseChipW        = 26  // chip width @96dpi
-	baseChipH        = 14  // chip height @96dpi (shorter than strip)
+	baseChipW        = 38  // wider chip -> horizontal padding around "F8"
+	baseChipH        = 20  // taller chip -> vertical padding around "F8"
 	baseChipGap      = 12  // Variant B: space between caption text and chip
+	baseChipRadius   = 7   // chip corner radius @96dpi (rounded badge)
 	baseRadius       = 6   // field corner radius @96dpi
 	baseTextMargin   = 12  // Variant B: inner left/right text padding
 	baseOffset       = 16  // popup offset from the cursor
@@ -476,6 +477,17 @@ func (p *popup) createChip(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 	if h == 0 {
 		return 0, fmt.Errorf("create chip: %v", sysErr)
 	}
+
+	// Rounded badge region. chipW+1/chipH+1 because the region's right/bottom
+	// are exclusive. SetWindowRgn takes ownership — do NOT DeleteObject the
+	// region; the system frees it when the window is destroyed.
+	radius := int32(baseChipRadius) * int32(dpi) / baseDPI
+	rgn, _, _ := procCreateRoundRectRgn.Call(
+		0, 0, uintptr(chipW+1), uintptr(chipH+1),
+		uintptr(2*radius), uintptr(2*radius),
+	)
+	procSetWindowRgn.Call(h, rgn, 1)
+
 	return h, nil
 }
 
