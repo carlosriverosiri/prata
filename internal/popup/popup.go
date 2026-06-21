@@ -83,16 +83,16 @@ const (
 
 	// Base (96-DPI) layout sizes, scaled up by the monitor DPI.
 	baseWidth        = 360
-	baseHeight       = 72 // taller, less compact
-	baseMargin       = 8  // more side padding (air)
-	baseCaptionH     = 18 // caption strip height @96dpi
-	baseGap          = 6  // gap between caption and field
-	baseChipW        = 26 // chip width @96dpi
-	baseChipH        = 14 // chip height @96dpi (shorter than strip)
-	baseChipGap      = 6  // gap between caption text and chip
-	baseRadius       = 6  // field corner radius @96dpi
-	baseTextMargin   = 8  // inner left/right text padding @96dpi
-	baseOffset       = 16 // popup offset from the cursor
+	baseHeight       = 100 // Variant B: roomier height
+	baseMargin       = 16  // Variant B: top/sides/bottom padding
+	baseCaptionH     = 18  // caption strip height @96dpi
+	baseGap          = 14  // Variant B: space between caption and field
+	baseChipW        = 26  // chip width @96dpi
+	baseChipH        = 14  // chip height @96dpi (shorter than strip)
+	baseChipGap      = 12  // Variant B: space between caption text and chip
+	baseRadius       = 6   // field corner radius @96dpi
+	baseTextMargin   = 12  // Variant B: inner left/right text padding
+	baseOffset       = 16  // popup offset from the cursor
 	fontPointSize    = 11
 	captionPointSize = 10
 
