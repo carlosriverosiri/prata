@@ -36,6 +36,8 @@ const (
 	emSetMargins  = 0x00D3
 	ecLeftMargin  = 0x0001
 	ecRightMargin = 0x0002
+	emGetRect     = 0x00B2
+	emSetRectNp   = 0x00B4
 
 	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
 	csDropShadow = 0x00020000
@@ -161,6 +163,31 @@ type guiThreadInfo struct {
 	rcCaret       rect
 }
 
+// textMetric mirrors the Win32 TEXTMETRICW struct for GetTextMetricsW; only
+// tmHeight is read, but the full layout is required for the correct byte size.
+type textMetric struct {
+	tmHeight           int32
+	tmAscent           int32
+	tmDescent          int32
+	tmInternalLeading  int32
+	tmExternalLeading  int32
+	tmAveCharWidth     int32
+	tmMaxCharWidth     int32
+	tmWeight           int32
+	tmOverhang         int32
+	tmDigitizedAspectX int32
+	tmDigitizedAspectY int32
+	tmFirstChar        uint16
+	tmLastChar         uint16
+	tmDefaultChar      uint16
+	tmBreakChar        uint16
+	tmItalic           byte
+	tmUnderlined       byte
+	tmStruckOut        byte
+	tmPitchAndFamily   byte
+	tmCharSet          byte
+}
+
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
@@ -194,6 +221,8 @@ var (
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
 	procGetGUIThreadInfo         = user32.NewProc("GetGUIThreadInfo")
 	procClientToScreen           = user32.NewProc("ClientToScreen")
+	procGetDC                    = user32.NewProc("GetDC")
+	procReleaseDC                = user32.NewProc("ReleaseDC")
 
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 
@@ -203,6 +232,8 @@ var (
 	procSetBkColor         = gdi32.NewProc("SetBkColor")
 	procSetTextColor       = gdi32.NewProc("SetTextColor")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
+	procSelectObject       = gdi32.NewProc("SelectObject")
+	procGetTextMetricsW    = gdi32.NewProc("GetTextMetricsW")
 
 	procSetWindowRgn = user32.NewProc("SetWindowRgn")
 
@@ -341,6 +372,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 		procSendMessageW.Call(edit, wmSetFont, font, 1)
 		defer procDeleteObject.Call(font)
 	}
+	centerEditText(edit, font)
 
 	caption, err := p.createCaption(hwnd, hInstance, dpi)
 	if err != nil {
@@ -427,6 +459,48 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 		uintptr(tm)|(uintptr(tm)<<16))
 
 	return edit, nil
+}
+
+// centerEditText vertically centres a single-line EDIT's text, which the
+// control otherwise top-aligns. It insets the formatting rectangle's top by
+// half the leftover height; the existing left/right margins (EM_SETMARGINS)
+// are preserved by reading them from the current formatting rect. font is the
+// field font (0 = system default), used only to measure the line height.
+func centerEditText(edit, font uintptr) {
+	lineH := textLineHeight(edit, font)
+	if lineH <= 0 {
+		return
+	}
+	var client rect
+	procGetClientRect.Call(edit, uintptr(unsafe.Pointer(&client)))
+	total := client.bottom - client.top
+	if total <= lineH {
+		return
+	}
+	var fmtRc rect
+	procSendMessageW.Call(edit, emGetRect, 0, uintptr(unsafe.Pointer(&fmtRc)))
+	fmtRc.top = (total - lineH) / 2
+	fmtRc.bottom = total
+	procSendMessageW.Call(edit, emSetRectNp, 0, uintptr(unsafe.Pointer(&fmtRc)))
+}
+
+// textLineHeight measures the pixel height of one text line for font in hwnd's
+// device context (tmHeight from GetTextMetricsW). Returns 0 on failure.
+func textLineHeight(hwnd, font uintptr) int32 {
+	dc, _, _ := procGetDC.Call(hwnd)
+	if dc == 0 {
+		return 0
+	}
+	defer procReleaseDC.Call(hwnd, dc)
+	if font != 0 {
+		old, _, _ := procSelectObject.Call(dc, font)
+		defer procSelectObject.Call(dc, old)
+	}
+	var tm textMetric
+	if r, _, _ := procGetTextMetricsW.Call(dc, uintptr(unsafe.Pointer(&tm))); r == 0 {
+		return 0
+	}
+	return tm.tmHeight
 }
 
 // createCaption makes a STATIC label filling the top strip, inset by the frame
