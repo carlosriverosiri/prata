@@ -359,6 +359,10 @@ func (p *popup) run(initial string) (string, bool, error) {
 		defer procDeleteObject.Call(labelFont)
 	}
 
+	// Round the chip AFTER its font is set: a STATIC drops its window region
+	// on WM_SETFONT, so rounding earlier (in createChip) would be undone.
+	p.roundChip(dpi)
+
 	if initial != "" {
 		if text, terr := syscall.UTF16PtrFromString(initial); terr == nil {
 			procSetWindowTextW.Call(edit, uintptr(unsafe.Pointer(text)))
@@ -477,18 +481,27 @@ func (p *popup) createChip(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 	if h == 0 {
 		return 0, fmt.Errorf("create chip: %v", sysErr)
 	}
+	// The rounded region is NOT applied here: a STATIC control drops its
+	// window region when it handles WM_SETFONT (theme subclass), so the
+	// caller must round the chip AFTER setting its font. See roundChip.
+	return h, nil
+}
 
-	// Rounded badge region. chipW+1/chipH+1 because the region's right/bottom
-	// are exclusive. SetWindowRgn takes ownership — do NOT DeleteObject the
-	// region; the system frees it when the window is destroyed.
-	radius := int32(baseChipRadius) * int32(dpi) / baseDPI
+// roundChip clips the F8 chip to a rounded badge. Must be called AFTER the
+// chip's WM_SETFONT, because a STATIC control resets its window region when
+// the font changes. chipW+1/chipH+1 because the region's right/bottom are
+// exclusive. SetWindowRgn takes ownership — do NOT DeleteObject the region;
+// the system frees it when the window is destroyed.
+func (p *popup) roundChip(dpi uint32) {
+	scale := func(v int32) int32 { return v * int32(dpi) / baseDPI }
+	chipW := scale(baseChipW)
+	chipH := scale(baseChipH)
+	radius := scale(baseChipRadius)
 	rgn, _, _ := procCreateRoundRectRgn.Call(
 		0, 0, uintptr(chipW+1), uintptr(chipH+1),
 		uintptr(2*radius), uintptr(2*radius),
 	)
-	procSetWindowRgn.Call(h, rgn, 1)
-
-	return h, nil
+	procSetWindowRgn.Call(p.chip, rgn, 1)
 }
 
 // loop runs the modal message pump. Enter/Esc are queued WM_KEYDOWN
