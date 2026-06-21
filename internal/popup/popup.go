@@ -53,6 +53,9 @@ const (
 	swShow      = 5
 	colorWindow = 5 // hbrBackground = COLOR_WINDOW+1; the window is shown
 
+	// Prata profile teal as a COLORREF (0x00BBGGRR).
+	tealDeep = 0x00566E0F // #0F6E56
+
 	monitorDefaultToNearest = 0x00000002
 	mdtEffectiveDPI         = 0
 
@@ -172,8 +175,9 @@ var (
 
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 
-	procCreateFontW  = gdi32.NewProc("CreateFontW")
-	procDeleteObject = gdi32.NewProc("DeleteObject")
+	procCreateFontW      = gdi32.NewProc("CreateFontW")
+	procDeleteObject     = gdi32.NewProc("DeleteObject")
+	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
 
 	// Windows 8.1+; guard with .Find and fall back to 96 DPI.
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
@@ -216,11 +220,18 @@ func (p *popup) run(initial string) (string, bool, error) {
 		return "", false, fmt.Errorf("class name: %w", err)
 	}
 
+	// Teal window background; the EDIT control's margin lets it show as a
+	// frame. Registering this defer before RegisterClassExW/CreateWindowExW
+	// means (LIFO) it runs after DestroyWindow and UnregisterClassW, so the
+	// window never references a deleted brush.
+	brush, _, _ := procCreateSolidBrush.Call(uintptr(tealDeep))
+	defer procDeleteObject.Call(brush)
+
 	wc := wndClassExW{
 		style:         csDropShadow,
 		lpfnWndProc:   syscall.NewCallback(p.wndProc),
 		hInstance:     hInstance,
-		hbrBackground: colorWindow + 1,
+		hbrBackground: brush,
 		lpszClassName: className,
 	}
 	wc.cbSize = uint32(unsafe.Sizeof(wc))
@@ -266,7 +277,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 		wsExTopmost|wsExToolWindow,
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
-		wsPopup|wsBorder|wsVisible,
+		wsPopup|wsVisible,
 		uintptr(x), uintptr(y), uintptr(width), uintptr(height),
 		0, 0, hInstance, 0,
 	)
