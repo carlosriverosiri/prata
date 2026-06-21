@@ -4,7 +4,7 @@ Push-to-talk Swedish dictation for Windows. Hold **F1**, speak,
 release — your speech is transcribed and typed back into the window that
 was active when you started dictating. Transcription uses KBLab's
 `kb-whisper-large` model against a **selected backend**: a local whisper.cpp
-GPU server over the network (**Rngv GPU-server** at home, **Rum1 GPU-server**
+GPU server over the network (**Rngv GPU-server (Tailscale)** at home, **LAN GPU-server**
 at the clinic) or **[Berget Ai](https://berget.ai)** as the cloud fallback.
 
 Prata is a lightweight background utility: no application window, just a
@@ -19,8 +19,8 @@ inserts the result.
   any foreground application.
 - **Swedish transcription** via `KBLab/kb-whisper-large` — against a local
   GPU server (whisper.cpp over the LAN/Tailscale) or Berget Ai in the cloud.
-- **Backend selector** — right-click the tray icon and pick **Rngv GPU-server**,
-  **Rum1 GPU-server**, or **Berget Ai** (radio items). The active backend is
+- **Backend selector** — right-click the tray icon and pick **Rngv GPU-server (Tailscale)**,
+  **LAN GPU-server**, or **Berget Ai** (radio items). The active backend is
   shown in the tooltip and a balloon on change. The choice is persisted as a
   stable ID (`Hemma` / `Jobb` / `Berget`) in `%LOCALAPPDATA%\Prata\backend.txt`.
   Local GPU backends need no API key; Berget Ai requires one. No silent failover
@@ -170,12 +170,12 @@ Right-click the tray icon and choose one of three backends:
 
 | Display name | Stable ID | Where it points |
 |---|---|---|
-| Rngv GPU-server | `Hemma` | Home GPU server over Tailscale |
-| Rum1 GPU-server | `Jobb` | Clinic GPU server on the LAN |
+| Rngv GPU-server (Tailscale) | `Hemma` | Home GPU server over Tailscale |
+| LAN GPU-server | `Jobb` | Clinic GPU server on the LAN |
 | Berget Ai | `Berget` | Berget Ai cloud API |
 
 The active choice is saved to `%LOCALAPPDATA%\Prata\backend.txt` as the
-stable ID and survives restarts. **Default on first run is Rum1 GPU-server**
+stable ID and survives restarts. **Default on first run is LAN GPU-server**
 (`Jobb`) — the clinic LAN GPU server, which needs no API key. Endpoint URLs
 are hardcoded constants in the binary — see
 [`PRATA-GPU-SERVER.md`](PRATA-GPU-SERVER.md) for server setup and how to
@@ -226,8 +226,8 @@ baseline always loads.
 ## Usage
 
 1. Start Prata (autostarts at login, or run `prata.exe`).
-2. Right-click the tray icon and confirm the active backend (Rngv GPU-server,
-   Rum1 GPU-server, or Berget Ai). Switch if needed.
+2. Right-click the tray icon and confirm the active backend (Rngv GPU-server (Tailscale),
+   LAN GPU-server, or Berget Ai). Switch if needed.
 3. Hold **F1**. You hear the start tone; speak.
 4. Release. You hear the stop tone; a moment later the transcribed text
    is inserted into the window that was active when you pressed F1. If that

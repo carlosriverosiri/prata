@@ -28,7 +28,7 @@ const (
 // from any network the client sits on (cabin, mobile hotspot, home LAN).
 // WorkURL targets the work GPU server on the clinic LAN at its fixed IP
 // (10.64.3.60). It is only reachable from inside the clinic network, so
-// selecting Rum1 GPU-server off-site fails with an error cue rather than falling back
+// selecting LAN GPU-server off-site fails with an error cue rather than falling back
 // silently. Prata follows "edit constant + recompile", no config file — change
 // this and rebuild if the server is re-addressed.
 const (

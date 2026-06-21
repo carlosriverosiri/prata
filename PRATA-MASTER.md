@@ -4,7 +4,7 @@
 
 En minimal Windows-native push-to-talk dikteringsapp för svensk medicinsk diktering med
 `KBLab/kb-whisper-large`. Transkribering sker mot en vald backend: en lokal whisper.cpp-GPU-server
-över nätverket (**Rngv GPU-server** / **Rum1 GPU-server**) eller **Berget Ai** som moln-fallback.
+över nätverket (**Rngv GPU-server (Tailscale)** / **LAN GPU-server**) eller **Berget Ai** som moln-fallback.
 Designad som komplement till Diktell på maskiner utan dedikerad GPU. Backend-uppsättningen
 beskrivs i `PRATA-GPU-SERVER.md`.
 
@@ -14,7 +14,7 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 
 1. Carlos håller `F1` nere
 2. Prata spelar in mikrofon-ljud (16 kHz mono PCM)
-3. När `F1` släpps: skicka ljudet till vald backend (Rngv GPU-server / Rum1 GPU-server / Berget Ai)
+3. När `F1` släpps: skicka ljudet till vald backend (Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai)
 4. Normalisera svaret till löpande prosa (slå ihop Whispers per-segment-rader **utan** separator, som Diktell, så att långa sammansatta ord inte särskrivs) och tillämpa dictionary-korrigeringar på texten
 5. Återställ fönstret som var aktivt när `F1` trycktes ned och skriv texten där via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen). Om fönstret inte kan återställas avbryts injektionen med felton i stället för att text hamnar fel.
 6. Transkribering sker asynkront i en FIFO-worker, så en långsam backend-runda blockerar inte nästa `F1`-inspelning.
@@ -32,7 +32,7 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 - **Hotkey** — global F1 (PTT) och F8 (dictionary quick-fix) via `RegisterHotKey`
 - **Audio capture** — 16 kHz mono PCM via WASAPI (`malgo` Go-binding för miniaudio)
 - **HTTP client** — POST multipart till vald backend; OpenAI-kompatibel form (`file`, `model`, `language`, `response_format`)
-- **Backend-väljare** — Rngv GPU-server / Rum1 GPU-server / Berget Ai som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong. Valet sparas som stabilt ID (`Hemma` / `Jobb` / `Berget`) i `%LOCALAPPDATA%\Prata\backend.txt` — visningsnamnen kan ändras utan att bryta sparade val. **Standard vid första start (saknad eller ogiltig `backend.txt`): Rum1 GPU-server (`Jobb`)** — intern GPU utan API-nyckel. Villkorlig auth (bara Berget Ai skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
+- **Backend-väljare** — Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai som radioknappar i tray-menyn; aktiv backend syns i tooltip + balong. Valet sparas som stabilt ID (`Hemma` / `Jobb` / `Berget`) i `%LOCALAPPDATA%\Prata\backend.txt` — visningsnamnen kan ändras utan att bryta sparade val. **Standard vid första start (saknad eller ogiltig `backend.txt`): LAN GPU-server (`Jobb`)** — intern GPU utan API-nyckel. Villkorlig auth (bara Berget Ai skickar Bearer). Ingen tyst failover. Se `PRATA-GPU-SERVER.md`.
 - **Dictionary** — två lager: (1) **baslinje** inbäddad i binären vid build (`go:embed` av `internal/dict/dictionary-corrections.txt`); (2) **per-användare-override** i `%LOCALAPPDATA%\Prata\dictionary-corrections.txt` (F8 skriver hit). Override läggs ovanpå baslinjen (ersätter per nyckel). Unicode-medvetna word-boundary-ersättningar (literal `strings.Index`, ingen regexp).
 - **Text injection** — klassbaserad routing: Chromium/Electron (klass `Chrome_WidgetWin_1`, inkl. webbjournalen) → `SendInput` Unicode, hela strängen i ett anrop, urklippet rörs aldrig; övriga fönster → urklipps-paste (`CF_UNICODETEXT`, spara/återställ). Se Beslut 6.
 

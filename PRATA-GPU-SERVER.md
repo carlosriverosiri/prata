@@ -53,8 +53,8 @@ nå GPU-servern i rum 1. Använd den som referens vid felsökning på nya maskin
 | Maskin (Tailscale-namn) | LAN-IP | Tailscale-IP | Roll | Nyckelfakta |
 |---|---|---|---|---|
 | **rum-ett** | `10.64.3.60` (statisk) | `100.80.217.12` | Jobb-PC, **GPU — server** | `whisper-server` port 8080, autostart vid boot |
-| **rum4-9700k** | `10.64.3.59` | `100.78.209.16` | Jobb-PC, **utan GPU — klient** | Kör Prata, backend Rum1 GPU-server |
-| **ringvagen** | — | `100.87.6.56` | Hem-PC (Windows 11), GPU — server | Backend Rngv GPU-server, nås via Tailscale |
+| **rum4-9700k** | `10.64.3.59` | `100.78.209.16` | Jobb-PC, **utan GPU — klient** | Kör Prata, backend LAN GPU-server |
+| **ringvagen** | — | `100.87.6.56` | Hem-PC (Windows 11), GPU — server | Backend Rngv GPU-server (Tailscale) |
 | **ringvagen-wsl** | — | `100.115.64.39` | WSL på hem-PC | Cursor SSH, **ej** i transkriberingsvägen |
 
 **Vald produktionsväg i kliniken:** rum4 → rum-ett **direkt över LAN**
@@ -356,7 +356,7 @@ Test-NetConnection 10.64.3.60 -Port 8080
 
 > ✅ *Verifierat 2026-06-16.* Från rum4 (`10.64.3.59`) mot rum-ett (`10.64.3.60`):
 > `TcpTestSucceeded : True` efter brandväggsregeln lagts på servern. Live-diktering
-> mot Rum1 GPU-server fungerar.
+> mot LAN GPU-server fungerar.
 
 ## Steg 4 — Brandväggsregel (inbound)
 
@@ -468,8 +468,8 @@ Prata har en **backend-väljare** med tre alternativ i tray-menyn:
 
 | Plats (infra) | Tray-ID (sparas i `backend.txt`) | Visningsnamn i menyn |
 |---|---|---|
-| Hem-GPU (Tailscale) | `Hemma` | Rngv GPU-server |
-| Jobb-GPU (LAN) | `Jobb` | Rum1 GPU-server |
+| Hem-GPU (Tailscale) | `Hemma` | Rngv GPU-server (Tailscale) |
+| Jobb-GPU (LAN) | `Jobb` | LAN GPU-server |
 | Moln | `Berget` | Berget Ai |
 
 Rngv och Rum1 är lokala whisper.cpp-GPU-servrar (ingen auth); Berget Ai är
@@ -492,7 +492,7 @@ const (
 - **HomeURL** pekar på hem-serverns **Tailscale-IP**, så den fungerar oavsett
   vilket nät klienten sitter på (stuga, mobil-hotspot, hemnät).
 - **WorkURL** pekar på jobb-serverns **fasta LAN-IP** (`10.64.3.60`). Den nås
-  bara inifrån klinikens nät, så att välja Rum1 GPU-server utanför kliniken ger
+  bara inifrån klinikens nät, så att välja LAN GPU-server utanför kliniken ger
   felton — aldrig tyst fallback. Ändras serverns adress: uppdatera konstanten
   och bygg om.
 
@@ -549,17 +549,17 @@ väljs utan nyckel.
 
 ### Välja backend
 
-Högerklicka tray-ikonen → välj **Rngv GPU-server / Rum1 GPU-server / Berget Ai**
+Högerklicka tray-ikonen → välj **Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai**
 (radioknappar, aktivt val är prickat). Aktiv backend visas alltid:
 
-- i tray-tooltipen (`Prata — Rngv GPU-server`), och
-- som en balong när du byter (`Aktiv transkribering: Rngv GPU-server`).
+- i tray-tooltipen (`Prata — Rngv GPU-server (Tailscale)`), och
+- som en balong när du byter (`Aktiv transkribering: Rngv GPU-server (Tailscale)`).
 
 Valet sparas som stabilt ID (`Hemma`, `Jobb` eller `Berget`) i
 `%LOCALAPPDATA%\Prata\backend.txt` och överlever omstart. **Standard vid första
-start** (saknad eller ogiltig `backend.txt`) är **Rum1 GPU-server** (`Jobb`) —
+start** (saknad eller ogiltig `backend.txt`) är **LAN GPU-server** (`Jobb`) —
 den interna GPU-servern på klinik-LAN, som inte kräver API-nyckel. Välj
-**Rngv GPU-server** hemma (Tailscale) eller **Berget Ai** i menyn vid behov.
+**Rngv GPU-server (Tailscale)** hemma eller **Berget Ai** i menyn vid behov.
 
 **Ingen tyst failover:** är vald server nere får du felton vid diktering, inte
 ett tyst byte till en annan backend. Byte sker bara när *du* väljer i menyn.
@@ -571,13 +571,13 @@ ett tyst byte till en annan backend. Byte sker bara när *du* väljer i menyn.
 1. Bekräfta att GPU-servern kör på rum-ett (`Get-Process whisper-server` eller
    att schemaläggningsuppgiften `PrataWhisperServer` är igång).
 2. Från rum4: `Test-NetConnection 10.64.3.60 -Port 8080` → `TcpTestSucceeded : True`.
-3. Kör Prata på rum4. Högerklicka tray-ikonen → **Rum1 GPU-server**.
+3. Kör Prata på rum4. Högerklicka tray-ikonen → **LAN GPU-server**.
 4. Håll **F1**, diktera, släpp — texten transkriberas mot GPU-servern (~1,4 s).
 
 **Hemma (Tailscale):**
 
 1. Starta servern på hem-PC:n (Steg 2-kommandot eller autostart).
-2. Kör Prata. Högerklicka tray-ikonen → **Rngv GPU-server**.
+2. Kör Prata. Högerklicka tray-ikonen → **Rngv GPU-server (Tailscale)**.
 3. Håll **F1**, diktera, släpp.
 
 Snabbtest av nåbarhet utan Prata (t.ex. från MacBook över Tailscale) — se
@@ -585,7 +585,7 @@ Steg 3.
 
 > ✅ *Implementerat och verifierat 2026-06-15:* bygger rent (`go build`,
 > `go vet`), enhetstester för backend-routing och villkorlig auth passerar.
-> ✅ *Live-diktering verifierad 2026-06-16:* rum4 → rum-ett (Rum1 GPU-server,
+> ✅ *Live-diktering verifierad 2026-06-16:* rum4 → rum-ett (LAN GPU-server,
 > LAN, ~1,4 s latens). ⏳ Live-diktering mot Rngv GPU-server (Tailscale) återstår
 > som separat test.
 
@@ -657,7 +657,7 @@ Steg:
    (jobb-serverns fasta IP). Bekräfta att IP:n stämmer; ändra bara om servern
    fått en annan adress. Bygg om Prata (`go build …`). Notera att den ombyggda
    `prata.exe` måste distribueras till de arbetsstationer som ska
-   diktera mot servern. Verifiera att backend Rum1 GPU-server går att välja och dikterar.
+   diktera mot servern. Verifiera att backend LAN GPU-server går att välja och dikterar.
 
 7. SLUTRAPPORT. Uppdatera jobb-statusraderna i PRATA-GPU-SERVER.md och ge mig:
    GPU/arch, modellsökväg, brandväggsregel, autostart-status, verifieringsresultat
@@ -715,7 +715,7 @@ KB-versionen. Verifiera istället på två sätt:
    whisper.cpp:s standardnedladdning är fel modell.
 
 2. **Beteende (klinisk bekräftelse).** Diktera samma svenska mening med medicinska
-   termer mot **Rum1 GPU-server** respektive **Berget Ai** (bekräftad
+   termer mot **LAN GPU-server** respektive **Berget Ai** (bekräftad
    KB-Whisper-Large) och jämför. Identiskt felmönster ⇒ samma modell, och
    `dictionary-corrections.txt` (baslinjen är inbäddad i binären; override-filen
    per användare ligger i `%LOCALAPPDATA%\Prata\`) är rätt kalibrerad.
@@ -758,4 +758,4 @@ KB-versionen. Verifiera istället på två sätt:
 | Steg 3 — Verifiera | ✅ Lokalt + LAN från rum4→rum-ett (2026-06-16); ⏳ Tailscale-test (hemma) kvar |
 | Steg 4 — Brandvägg (hemma/Tailscale) | ✅ Regel aktiv på hem-PC:n (ringvagen) |
 | Steg 4 — Brandvägg (jobbet/LAN) | ✅ Verifierad på rum-ett (2026-06-16); rotorsak vid fel: saknad inbound-regel |
-| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); Rum1 GPU-server produktionsväg; maskinbred `--install` implementerad (smoke-test deferrat) |
+| Steg 5 — Prata-klient | ✅ Live-diktering rum4→rum-ett (~1,4 s); LAN GPU-server produktionsväg; maskinbred `--install` implementerad (smoke-test deferrat) |

@@ -355,7 +355,7 @@ func main() {
 	t.SetOnCheckUpdate(func() {
 		go checkForUpdate(t)
 	})
-	// Backend selector (Rngv GPU-server / Rum1 GPU-server / Berget Ai) as radio
+	// Backend selector (Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai) as radio
 	// items in the tray menu, with the persisted choice pre-selected. The saved
 	// ID (Hemma/Jobb/Berget) is stable; display names can change without breaking
 	// backend.txt. Switching is deliberate and visible: the tray updates the
