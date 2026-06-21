@@ -122,7 +122,7 @@ _Original plan from Phase 0. The actual phases and status — including work aft
 | 5b | Migration of old per-user install (kill instances → retry-copy → legacy binary cleanup) | ✅ Hardware-verified 2026-06-20 |
 | 5c | `--uninstall` (self-elevate → kill instances → remove task + `%ProgramFiles%\Prata`; leaves per-user data) | ✅ Hardware-verified 2026-06-20 |
 | 6 | Update = `--install` re-run from USB (the mechanics already exist; Phase 6 = notice text + docs) | ✅ Verified 2026-06-20 |
-| 7 | Release.yml → one binary + `Installera-Prata.bat`/`Avinstallera-Prata.bat`; legacy `install.ps1`/`prata-setkey`/root dictionary removed; `PRATA_INSTALL_LOG` override | ✅ 2026-06-20 — code + docs done; .bat hardware smoke-tested (launch + å/ö + pause on network drive); release.yml review-verified (full validation on the first `v*` tag) |
+| 7 | Release.yml → one binary + `Installera-Prata.bat`/`Avinstallera-Prata.bat`; legacy `install.ps1`/`prata-setkey`/root dictionary removed; `PRATA_INSTALL_LOG` override | ✅ 2026-06-20 — code + docs done; .bat hardware smoke-tested (launch + å/ö + pause safety net); release.yml review-verified (full validation on the first `v*` tag) |
 
 ## Relationship to Diktell
 
