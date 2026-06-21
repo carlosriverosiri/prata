@@ -37,13 +37,14 @@ const (
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
 
-	wmDestroy  = 0x0002
-	wmActivate = 0x0006
-	wmClose    = 0x0010
-	wmSetFont  = 0x0030
-	wmKeyDown  = 0x0100
-	wmNull     = 0x0000
-	emSetSel   = 0x00B1
+	wmDestroy      = 0x0002
+	wmActivate     = 0x0006
+	wmClose        = 0x0010
+	wmSetFont      = 0x0030
+	wmKeyDown      = 0x0100
+	wmNull         = 0x0000
+	wmCtlColorEdit = 0x0133
+	emSetSel       = 0x00B1
 
 	vkReturn = 0x0D
 	vkEscape = 0x1B
@@ -54,7 +55,9 @@ const (
 	colorWindow = 5 // hbrBackground = COLOR_WINDOW+1; the window is shown
 
 	// Prata profile teal as a COLORREF (0x00BBGGRR).
-	tealDeep = 0x00566E0F // #0F6E56
+	tealDeep  = 0x00566E0F // #0F6E56
+	fieldTint = 0x00F8FBF4 // #F4FBF8 (very light teal), EDIT field interior
+	inkColor  = 0x002E2A1F // #1f2a2e, EDIT text colour
 
 	monitorDefaultToNearest = 0x00000002
 	mdtEffectiveDPI         = 0
@@ -178,6 +181,8 @@ var (
 	procCreateFontW      = gdi32.NewProc("CreateFontW")
 	procDeleteObject     = gdi32.NewProc("DeleteObject")
 	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
+	procSetBkColor       = gdi32.NewProc("SetBkColor")
+	procSetTextColor     = gdi32.NewProc("SetTextColor")
 
 	// Windows 8.1+; guard with .Find and fall back to 96 DPI.
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
@@ -191,6 +196,8 @@ var (
 // so they need no synchronisation.
 type popup struct {
 	hwnd uintptr
+
+	editBrush uintptr // persistent field-tint brush returned from WM_CTLCOLOREDIT
 
 	ok        bool // user confirmed with Enter
 	done      bool // modal loop should exit
@@ -226,6 +233,11 @@ func (p *popup) run(initial string) (string, bool, error) {
 	// window never references a deleted brush.
 	brush, _, _ := procCreateSolidBrush.Call(uintptr(tealDeep))
 	defer procDeleteObject.Call(brush)
+
+	// Persistent field-tint brush returned from WM_CTLCOLOREDIT. Same defer
+	// discipline as the frame brush: freed (LIFO) after the window is gone.
+	p.editBrush, _, _ = procCreateSolidBrush.Call(uintptr(fieldTint))
+	defer procDeleteObject.Call(p.editBrush)
 
 	wc := wndClassExW{
 		style:         csDropShadow,
@@ -395,6 +407,12 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmClose, wmDestroy:
 		p.cancel()
 		return 0
+	case wmCtlColorEdit:
+		// wParam is the EDIT's HDC. Return the persistent brush; never
+		// create one here, which would leak a GDI object on every repaint.
+		procSetBkColor.Call(wParam, uintptr(fieldTint))
+		procSetTextColor.Call(wParam, uintptr(inkColor))
+		return p.editBrush
 	}
 	ret, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
 	return ret
