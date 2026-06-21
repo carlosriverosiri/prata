@@ -186,14 +186,21 @@ func (c *Client) Transcribe(wav io.Reader) (string, error) {
 	return normalizeTranscript(out.Text), nil
 }
 
-// normalizeTranscript collapses the per-segment line breaks the backend puts
-// in the "text" field into single spaces, yielding one flowing prose block
-// per dictation. Whisper (the whisper.cpp server and Berget alike) serializes
-// each timing segment on its own line; those breaks fall on time-window cuts,
-// not sentence boundaries, so passing them through made injected text read
-// like a poem. This mirrors Diktell, which concatenates segments without a
-// separator. The trailing newline that marks the end of a dictation is added
-// later in cmd/prata, so it is intentionally not produced here.
+// normalizeTranscript joins the per-segment lines the backend puts in the
+// "text" field into one flowing prose block, the way Diktell does: by
+// concatenating segments with no separator. Whisper (the whisper.cpp server and
+// Berget alike) serializes each timing segment on its own line. A real word
+// boundary already carries a leading space on the next segment, but a boundary
+// that falls *inside* a word — which whisper does for long Swedish compounds,
+// e.g. "Tyd" + "lighet" or "kärnenergifrå" + "gan" — does not. Replacing the
+// line break with a space (a naive Fields/Join over all whitespace) therefore
+// injects a space inside such a word ("Tyd lighet"); dropping the line break
+// instead preserves "Tydlighet". Remaining runs of spaces/tabs are collapsed
+// and the result is trimmed. The trailing newline that marks the end of a
+// dictation is added later in cmd/prata, so it is intentionally not produced
+// here.
 func normalizeTranscript(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
 	return strings.Join(strings.Fields(s), " ")
 }

@@ -147,6 +147,19 @@ that point.
 
 ### Fixed
 
+- Swedish särskrivningar (mid-word spaces) in dictated text, e.g. "tydlighet" →
+  "tyd lighet" and "kärnenergifrågan" → "kärnenergifrå gan". whisper sometimes
+  places a timing-segment boundary inside a long compound word; the GPU server
+  serializes each segment on its own line in the JSON `text` field
+  (`"Tyd\nlighet"`), and `normalizeTranscript` turned every such newline into a
+  space via `strings.Fields`/`Join(" ")`. It now drops the segment newlines and
+  concatenates with no separator (mirroring Diktell): a real word boundary
+  already carries a leading space on the next segment, a mid-word boundary does
+  not. The root cause is the client-side assembly, not the whisper.cpp version —
+  the same audio reproduces the identical split byte-for-byte on both `v1.8.6`
+  and the later HEAD build (see PRATA-DESIGN-LOG 2026-06-21). Unit-tested on the
+  real captured server output; live-verified in Swedish dictation.
+
 - F8 dictionary quick-fix failed silently on the first tap in Chromium/Webdoc
   because `CopySelection` read the clipboard after a fixed 50 ms sleep — too
   short for async copy handlers. Holding F8 worked only because RegisterHotKey

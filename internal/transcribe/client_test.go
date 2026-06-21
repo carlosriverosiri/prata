@@ -106,8 +106,19 @@ func TestNormalizeTranscript(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"hej", "hej"},
 		{" inledande och avslutande \n", "inledande och avslutande"},
+		// Segment boundaries at real word boundaries: the next segment carries
+		// its own leading space, so the spacing is preserved.
 		{"första raden\n andra raden\n tredje raden\n", "första raden andra raden tredje raden"},
-		{"a\r\nb\tc   d", "a b c d"},
+		// Segment boundary inside a word — the continuation has no leading
+		// space, so the line break must vanish without inserting one.
+		{"Tyd\nlighet", "Tydlighet"},
+		{"a\r\nb\tc   d", "ab c d"},
+		// Real captured server output where whisper split "Tydlighet" across a
+		// segment boundary. Must read "Tydlighet", not "Tyd lighet".
+		{
+			" Nu ska jag testa röstinspelaren med kärnenergifrågan. Tyd\nlighet, små, enligt, akromeoplastik.\n",
+			"Nu ska jag testa röstinspelaren med kärnenergifrågan. Tydlighet, små, enligt, akromeoplastik.",
+		},
 		{"", ""},
 		{"\n\n", ""},
 	}
@@ -134,6 +145,29 @@ func TestTranscribeNormalizesSegmentedText(t *testing.T) {
 		t.Fatalf("Transcribe: %v", err)
 	}
 	want := "Även om jag dikterar ganska långa meningar så går det fort."
+	if got != want {
+		t.Errorf("Transcribe = %q, want %q", got, want)
+	}
+}
+
+// TestTranscribeJoinsMidWordSegmentSplit reproduces the särskrivning symptom:
+// whisper occasionally places a segment boundary inside a long word, so the
+// continuation segment has no leading space ("Tyd" + "lighet"). Transcribe must
+// join them into "Tydlighet", never "Tyd lighet". The \n below is a JSON escape
+// the decoder turns into a real newline, exactly as the GPU server sends it.
+func TestTranscribeJoinsMidWordSegmentSplit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":" med kärnenergifrågan. Tyd\nlighet, små, enligt.\n"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient("", Backend{ID: "Hemma", DisplayName: "Rngv GPU-server", URL: srv.URL, RequiresKey: false})
+	got, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	want := "med kärnenergifrågan. Tydlighet, små, enligt."
 	if got != want {
 		t.Errorf("Transcribe = %q, want %q", got, want)
 	}

@@ -791,3 +791,84 @@ injiceringen, så steg 4 behöver ingen separat Process Explorer-kontroll).
 F1-testet kördes i ett vanligt oförhöjt fönster, inte specifikt Webdoc;
 mekanismen är identisk men en explicit Webdoc-bekräftelse återstår. Kvar att
 verifiera: UAC-avbryt-rutan (steg 6) och en körning på en ren klinikmaskin.
+
+### 2026-06-21: Särskrivningar i diktering — orsaken är klientens segmentihopslagning, inte whisper-versionen
+
+**Status:** Åtgärdat och live-verifierat. Fixen sitter i
+`internal/transcribe/client.go` (`normalizeTranscript`): whisper-segmenten slås
+nu ihop **utan** separator, så som Diktell gör, istället för att vartenda radbyte
+görs om till ett mellanslag. Användaren har live-verifierat (svensk diktering via
+Prata mot **Rngv GPU-server**) att särskrivningarna är borta. `gofmt`, `go vet`
+och `go test` är gröna, inklusive ett nytt enhetstest på den verkliga
+serveroutputen.
+
+**Bakgrund / symptom**
+
+Diktering via Prata gav mellanslag mitt i svenska ord (särskrivningar) — t.ex.
+"tydlighet" → "tyd lighet", "kärnenergifrågan" → "kärnenergifrå gan", "enligt" →
+"en ligt". Korta ord var oftast oskadda; det drabbade långa sammansatta ord. Felet
+sitter i hur Prata bygger ihop transkriptet — inte i modellen och inte i
+whisper-versionen.
+
+**Utredning — förkastad hypotes (whisper-version)**
+
+Första hypotesen var en detokeniserings-regression i whisper.cpp efter taggen
+`v1.8.6` (källan på ringvägen stod på `v1.8.6-80-g0ec08451`, 80 commits efter
+releasen). Servern byggdes om pinnad till `v1.8.6` och kördes skarpt —
+**särskrivningarna kvarstod**. En deterministisk A/B avgjorde saken: samma ljud
+(en inspelad WAV) skickades mot både `v1.8.6` och HEAD+80 med
+`curl … response_format=verbose_json` och gav **byte-identisk** output, inklusive
+exakt samma brytning mitt i ordet. Buggen är alltså versions-oberoende; pinningen
+var ett villospår och behövs inte. Runbookens HEAD-klon (PRATA-GPU-SERVER.md) är
+därför oförändrad.
+
+**Diagnos — verklig orsak**
+
+`verbose_json` på riktig svensk röst visade mekanismen. whisper lägger ibland en
+**segmentgräns mitt i ett långt ord**:
+
+```
+"text": " … kärnenergifrågan. Tyd\nlighet, små, enligt, akromeoplastik.\n"
+segment 0 slutar: "… kärnenergifrågan. Tyd"   (inget avslutande mellanslag)
+segment 1 börjar: "lighet, små, enligt, …"     (inget inledande mellanslag)
+```
+
+Servern serialiserar varje segment på egen rad i `text`-fältet (`"Tyd\nlighet"`).
+Pratas `normalizeTranscript` körde `strings.Join(strings.Fields(s), " ")`, vilket
+behandlar radbytet som vilket blanktecken som helst och gör om det till ett
+mellanslag → "Tyd lighet". Vid en **riktig** ordgräns bär nästa segment sitt eget
+inledande mellanslag (jfk: `"… country can\n do for you …"`), men vid en gräns
+**inuti** ett ord saknas det. Diktell drabbas inte eftersom det konkatenerar
+segmenten utan separator — exakt det `normalizeTranscript` påstod sig göra men
+inte gjorde.
+
+**Beslut**
+
+Ta bort segmentens radbyten utan att ersätta dem med mellanslag (konkatenera, som
+Diktell), och kollapsa sedan kvarvarande blanktecken. En riktig ordgräns har redan
+sitt inledande mellanslag på nästa segment; en gräns mitt i ordet har det inte — så
+att droppa radbytet ger rätt resultat i båda fallen. Ett enhetstest kör den exakt
+inspelade serveroutputen och kräver "Tydlighet", inte "Tyd lighet".
+
+**Alternativ övervägda**
+
+- **Pinna/bygg om whisper.cpp till `v1.8.6`** (ursprungshypotesen). Förkastad:
+  A/B visar att buggen är versions-oberoende, så pinningen ändrar ingenting.
+- **Patcha whisper.cpp-servern** (sluta bryta mitt i ord / sluta infoga radbyte).
+  Förkastad: fork-underhåll, och ihopslagningen hör hemma på klienten — Diktell
+  bevisar att klient-konkatenering är rätt.
+- **Korrigera i Pratas ordlista.** Förkastad: maskerar felet och generaliserar
+  inte (godtyckliga ord drabbas).
+
+**Konsekvenser**
+
+- Fixen är en liten ändring i `normalizeTranscript` + tester; verifierad lokalt och
+  i skarp diktering.
+- whisper.cpp-serverns version är irrelevant för denna bugg; ingen pinning behövs
+  och inget i PRATA-GPU-SERVER.md ändras. Den v1.8.6-ombyggnad som gjordes under
+  utredningen är ofarlig men onödig.
+- Gäller alla backends som serialiserar segment per rad (whisper.cpp-servern och
+  Berget lika).
+- Stavningsvariationen io→eo ("akromeoplastik") är ett ASR-igenkänningsfel från
+  modellen och påverkas inte av denna fix.
+- Kräver en patch-release (1.1.1) och omdistribution via `prata.exe --install`.
