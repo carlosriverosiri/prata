@@ -68,6 +68,7 @@ const (
 
 	// CreateFontW parameters.
 	fwNormal          = 400
+	fwSemibold        = 600
 	defaultCharset    = 1
 	outDefaultPrecis  = 0
 	clipDefaultPrecis = 0
@@ -77,16 +78,17 @@ const (
 	baseDPI = 96
 
 	// Base (96-DPI) layout sizes, scaled up by the monitor DPI.
-	baseWidth     = 360
-	baseHeight    = 62 // room for caption strip + field
-	baseMargin    = 5
-	baseCaptionH  = 18 // caption strip height @96dpi
-	baseGap       = 3  // gap between caption and field
-	baseChipW     = 26 // chip width @96dpi
-	baseChipH     = 14 // chip height @96dpi (shorter than strip)
-	baseChipGap   = 6  // gap between caption text and chip
-	baseOffset    = 16 // popup offset from the cursor
-	fontPointSize = 11
+	baseWidth        = 360
+	baseHeight       = 62 // room for caption strip + field
+	baseMargin       = 5
+	baseCaptionH     = 18 // caption strip height @96dpi
+	baseGap          = 3  // gap between caption and field
+	baseChipW        = 26 // chip width @96dpi
+	baseChipH        = 14 // chip height @96dpi (shorter than strip)
+	baseChipGap      = 6  // gap between caption text and chip
+	baseOffset       = 16 // popup offset from the cursor
+	fontPointSize    = 11
+	captionPointSize = 10
 
 	// DWM window attributes for Windows 11 rounded corners.
 	dwmwaWindowCornerPreference = 33 // DWMWA_WINDOW_CORNER_PREFERENCE
@@ -317,7 +319,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 		return "", false, err
 	}
 
-	font := createFont(dpi)
+	font := createFont(dpi, fontPointSize, fwNormal)
 	if font != 0 {
 		procSendMessageW.Call(edit, wmSetFont, font, 1)
 		defer procDeleteObject.Call(font)
@@ -327,16 +329,17 @@ func (p *popup) run(initial string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if font != 0 {
-		procSendMessageW.Call(caption, wmSetFont, font, 1)
-	}
 
 	p.chip, err = p.createChip(hwnd, hInstance, dpi)
 	if err != nil {
 		return "", false, err
 	}
-	if font != 0 {
-		procSendMessageW.Call(p.chip, wmSetFont, font, 1)
+
+	labelFont := createFont(dpi, captionPointSize, fwSemibold)
+	if labelFont != 0 {
+		procSendMessageW.Call(caption, wmSetFont, labelFont, 1)
+		procSendMessageW.Call(p.chip, wmSetFont, labelFont, 1)
+		defer procDeleteObject.Call(labelFont)
 	}
 
 	if initial != "" {
@@ -610,19 +613,19 @@ func setRoundedCorners(hwnd uintptr) {
 	)
 }
 
-// createFont builds a DPI-scaled Segoe UI font. The caller owns the handle
-// and must DeleteObject it. Returns 0 on failure (caller then keeps the
-// system default font).
-func createFont(dpi uint32) uintptr {
+// createFont builds a DPI-scaled Segoe UI font at the given point size and
+// weight. The caller owns the handle and must DeleteObject it. Returns 0 on
+// failure (caller then keeps the system default font).
+func createFont(dpi uint32, pointSize, weight int32) uintptr {
 	face, err := syscall.UTF16PtrFromString("Segoe UI")
 	if err != nil {
 		return 0
 	}
-	height := -(fontPointSize * int32(dpi) / 72)
+	height := -(pointSize * int32(dpi) / 72)
 	h, _, _ := procCreateFontW.Call(
 		uintptr(height),
 		0, 0, 0,
-		fwNormal,
+		uintptr(weight),
 		0, 0, 0,
 		defaultCharset,
 		outDefaultPrecis,
