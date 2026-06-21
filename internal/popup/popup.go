@@ -462,8 +462,9 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 }
 
 // centerEditText vertically centres a single-line EDIT's text, which the
-// control otherwise top-aligns. It insets the formatting rectangle's top by
-// half the leftover height; the existing left/right margins (EM_SETMARGINS)
+// control otherwise top-aligns. The formatting rectangle must be exactly one
+// line tall, positioned at the centred y: a rect taller than one line lets the
+// single line drift within it. The existing left/right margins (EM_SETMARGINS)
 // are preserved by reading them from the current formatting rect. font is the
 // field font (0 = system default), used only to measure the line height.
 func centerEditText(edit, font uintptr) {
@@ -480,7 +481,7 @@ func centerEditText(edit, font uintptr) {
 	var fmtRc rect
 	procSendMessageW.Call(edit, emGetRect, 0, uintptr(unsafe.Pointer(&fmtRc)))
 	fmtRc.top = (total - lineH) / 2
-	fmtRc.bottom = total
+	fmtRc.bottom = fmtRc.top + lineH
 	procSendMessageW.Call(edit, emSetRectNp, 0, uintptr(unsafe.Pointer(&fmtRc)))
 }
 
