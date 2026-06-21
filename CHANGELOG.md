@@ -10,6 +10,10 @@ that point.
 
 ### Changed
 
+- `internal/transcribe/client.go` — renamed two tray backend labels (display
+  only; the stable IDs `Hemma`/`Jobb` and existing `backend.txt` are unchanged):
+  "Rngv GPU-server" → "Rngv GPU-server (Tailscale)", and "Rum1 GPU-server" →
+  "LAN GPU-server".
 - `internal/popup/popup.go` — the F8 popup now casts a distinct system drop
   shadow that follows its rounded corners. It is created with `WS_CAPTION` (not a
   bare `WS_POPUP`) so DWM treats it as framed and shadows it, while the visible
@@ -80,6 +84,19 @@ that point.
   (This step originally also added a `CS_DROPSHADOW` shadow, later dropped — see
   above — because it clashed with the rounded corners.) First step of the F8
   popup restyle (Variant 1).
+
+### Fixed
+
+- `internal/transcribe/client.go` — Berget transcriptions dropped the space
+  after a sentence-ending period ("förluster.Ungdomarna", "haft.Vi"). The
+  earlier särskrivning fix dropped segment newlines unconditionally, which is
+  correct for the local whisper.cpp servers (untrimmed segments — the spacing is
+  already in the text) but wrong for Berget, which trims each segment line so the
+  newline is the only sentence separator. `normalizeTranscript` now takes a
+  `trimmedSegments` flag and `Backend.TrimmedSegments` (true only for Berget)
+  turns those newlines into spaces, while local backends still concatenate to
+  keep a mid-word compound split joined ("Tyd"+"lighet"). Regression-tested; see
+  PRATA-DESIGN-LOG (2026-06-21).
 
 ## v0.3.0 — 2026-06-21
 
