@@ -30,6 +30,7 @@ const (
 	wsVisible     = 0x10000000
 	wsChild       = 0x40000000
 	esAutoHScroll = 0x0080
+	ssCenterImage = 0x00000200 // STATIC: vertical-centre the caption text
 
 	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
 	csDropShadow = 0x00020000
@@ -37,14 +38,15 @@ const (
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
 
-	wmDestroy      = 0x0002
-	wmActivate     = 0x0006
-	wmClose        = 0x0010
-	wmSetFont      = 0x0030
-	wmKeyDown      = 0x0100
-	wmNull         = 0x0000
-	wmCtlColorEdit = 0x0133
-	emSetSel       = 0x00B1
+	wmDestroy        = 0x0002
+	wmActivate       = 0x0006
+	wmClose          = 0x0010
+	wmSetFont        = 0x0030
+	wmKeyDown        = 0x0100
+	wmNull           = 0x0000
+	wmCtlColorEdit   = 0x0133
+	wmCtlColorStatic = 0x0138
+	emSetSel         = 0x00B1
 
 	vkReturn = 0x0D
 	vkEscape = 0x1B
@@ -74,8 +76,10 @@ const (
 
 	// Base (96-DPI) layout sizes, scaled up by the monitor DPI.
 	baseWidth     = 360
-	baseHeight    = 40
+	baseHeight    = 62 // room for caption strip + field
 	baseMargin    = 5
+	baseCaptionH  = 18 // caption strip height @96dpi
+	baseGap       = 3  // gap between caption and field
 	baseOffset    = 16 // popup offset from the cursor
 	fontPointSize = 11
 
@@ -312,6 +316,14 @@ func (p *popup) run(initial string) (string, bool, error) {
 		defer procDeleteObject.Call(font)
 	}
 
+	caption, err := p.createCaption(hwnd, hInstance, dpi)
+	if err != nil {
+		return "", false, err
+	}
+	if font != 0 {
+		procSendMessageW.Call(caption, wmSetFont, font, 1)
+	}
+
 	if initial != "" {
 		if text, terr := syscall.UTF16PtrFromString(initial); terr == nil {
 			procSetWindowTextW.Call(edit, uintptr(unsafe.Pointer(text)))
@@ -333,11 +345,14 @@ func (p *popup) run(initial string) (string, bool, error) {
 }
 
 // createEdit makes the child EDIT control filling the client area inside a
-// DPI-scaled margin.
+// DPI-scaled margin, below the caption strip.
 func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error) {
 	var rc rect
 	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 	margin := int32(baseMargin) * int32(dpi) / baseDPI
+	capH := int32(baseCaptionH) * int32(dpi) / baseDPI
+	gap := int32(baseGap) * int32(dpi) / baseDPI
+	top := margin + capH + gap
 
 	editClass, _ := syscall.UTF16PtrFromString("EDIT")
 	edit, _, sysErr := procCreateWindowExW.Call(
@@ -345,14 +360,38 @@ func (p *popup) createEdit(hwnd, hInstance uintptr, dpi uint32) (uintptr, error)
 		uintptr(unsafe.Pointer(editClass)),
 		0,
 		wsChild|wsVisible|wsBorder|esAutoHScroll,
-		uintptr(margin), uintptr(margin),
-		uintptr(rc.right-2*margin), uintptr(rc.bottom-2*margin),
+		uintptr(margin), uintptr(top),
+		uintptr(rc.right-2*margin), uintptr(rc.bottom-top-margin),
 		hwnd, 1, hInstance, 0,
 	)
 	if edit == 0 {
 		return 0, fmt.Errorf("create edit control: %v", sysErr)
 	}
 	return edit, nil
+}
+
+// createCaption makes a STATIC label filling the top strip, inset by the frame
+// margin (mirrors createEdit's layout math).
+func (p *popup) createCaption(hwnd, hInstance uintptr, dpi uint32) (uintptr, error) {
+	var rc rect
+	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+	margin := int32(baseMargin) * int32(dpi) / baseDPI
+	capH := int32(baseCaptionH) * int32(dpi) / baseDPI
+	text, _ := syscall.UTF16PtrFromString("Lägg till i lexikon")
+	staticClass, _ := syscall.UTF16PtrFromString("STATIC")
+	h, _, sysErr := procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(staticClass)),
+		uintptr(unsafe.Pointer(text)),
+		wsChild|wsVisible|ssCenterImage,
+		uintptr(margin), uintptr(margin),
+		uintptr(rc.right-2*margin), uintptr(capH),
+		hwnd, 0, hInstance, 0,
+	)
+	if h == 0 {
+		return 0, fmt.Errorf("create caption: %v", sysErr)
+	}
+	return h, nil
 }
 
 // loop runs the modal message pump. Enter/Esc are queued WM_KEYDOWN
@@ -412,6 +451,12 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		// create one here, which would leak a GDI object on every repaint.
 		procSetBkColor.Call(wParam, uintptr(fieldTint))
 		procSetTextColor.Call(wParam, uintptr(inkColor))
+		return p.editBrush
+	case wmCtlColorStatic:
+		// Caption sits on the field tint with teal text. Reuse the field
+		// brush and tealDeep colour — no new GDI objects.
+		procSetBkColor.Call(wParam, uintptr(fieldTint))
+		procSetTextColor.Call(wParam, uintptr(tealDeep))
 		return p.editBrush
 	}
 	ret, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
