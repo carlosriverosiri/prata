@@ -31,6 +31,9 @@ const (
 	wsChild       = 0x40000000
 	esAutoHScroll = 0x0080
 
+	// CS_DROPSHADOW class style: system drop shadow for small top-level windows.
+	csDropShadow = 0x00020000
+
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
 
@@ -69,6 +72,10 @@ const (
 	baseMargin    = 5
 	baseOffset    = 16 // popup offset from the cursor
 	fontPointSize = 11
+
+	// DWM window attributes for Windows 11 rounded corners.
+	dwmwaWindowCornerPreference = 33 // DWMWA_WINDOW_CORNER_PREFERENCE
+	dwmwcpRound                 = 2  // DWMWCP_ROUND
 )
 
 // msg mirrors the Win32 MSG struct for GetMessageW / DispatchMessageW.
@@ -134,6 +141,7 @@ var (
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 	gdi32    = syscall.NewLazyDLL("gdi32.dll")
 	shcore   = syscall.NewLazyDLL("shcore.dll")
+	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
 
 	procRegisterClassExW     = user32.NewProc("RegisterClassExW")
 	procUnregisterClassW     = user32.NewProc("UnregisterClassW")
@@ -169,6 +177,9 @@ var (
 
 	// Windows 8.1+; guard with .Find and fall back to 96 DPI.
 	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor")
+
+	// Windows 11 (build 22000)+; guard with .Find, no-op on older Windows.
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
 // popup holds the per-call window state. Its fields are touched only on
@@ -206,6 +217,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 
 	wc := wndClassExW{
+		style:         csDropShadow,
 		lpfnWndProc:   syscall.NewCallback(p.wndProc),
 		hInstance:     hInstance,
 		hbrBackground: colorWindow + 1,
@@ -263,6 +275,8 @@ func (p *popup) run(initial string) (string, bool, error) {
 	}
 	p.hwnd = hwnd
 	defer procDestroyWindow.Call(hwnd)
+
+	setRoundedCorners(hwnd)
 
 	edit, err := p.createEdit(hwnd, hInstance, dpi)
 	if err != nil {
@@ -451,6 +465,23 @@ func monitorMetrics(pt point) (dpi uint32, work rect) {
 // expects it by value: x in the low 32 bits, y in the high 32 bits.
 func packPoint(pt point) uintptr {
 	return uintptr(uint32(pt.x)) | uintptr(uint32(pt.y))<<32
+}
+
+// setRoundedCorners opts the popup into Windows 11 rounded corners via DWM.
+// On Windows 10 and earlier the attribute is unsupported: the call returns an
+// error and is a harmless no-op. .Find() guards the pre-Vista case where the
+// proc itself is absent. The HRESULT is intentionally ignored.
+func setRoundedCorners(hwnd uintptr) {
+	if procDwmSetWindowAttribute.Find() != nil {
+		return
+	}
+	pref := int32(dwmwcpRound)
+	procDwmSetWindowAttribute.Call(
+		hwnd,
+		uintptr(dwmwaWindowCornerPreference),
+		uintptr(unsafe.Pointer(&pref)),
+		unsafe.Sizeof(pref),
+	)
 }
 
 // createFont builds a DPI-scaled Segoe UI font. The caller owns the handle
