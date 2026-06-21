@@ -8,6 +8,8 @@ that point.
 
 ## [Unreleased]
 
+## v0.3.0 — 2026-06-21
+
 ### Added
 
 - `internal/installer` + `prata --install` — machine-wide, self-elevating
