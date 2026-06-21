@@ -10,6 +10,11 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup now shows a caption label
+  "Lägg till i lexikon" above the field, as a STATIC child on the field tint
+  with teal text (`WM_CTLCOLORSTATIC`, reusing the field brush). The window
+  grew to 62px @96dpi to fit an 18px caption strip; the field height is
+  effectively unchanged. Fourth step of the F8 popup restyle (Variant 1).
 - `internal/popup/popup.go` — the F8 popup's EDIT field is now tinted a soft
   teal (#F4FBF8) with dark ink text, via a `WM_CTLCOLOREDIT` handler that
   returns a persistent owned brush (created once in `run()`, freed on teardown —
