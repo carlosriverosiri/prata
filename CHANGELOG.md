@@ -14,6 +14,11 @@ that point.
   teal (#F4FBF8) with dark ink text, via a `WM_CTLCOLOREDIT` handler that
   returns a persistent owned brush (created once in `run()`, freed on teardown —
   never per-message). Third step of the F8 popup restyle (Variant 1).
+- `internal/popup/popup.go` — the F8 popup now paints a Prata-profile teal
+  frame (#0F6E56) by setting the window background to a solid brush and dropping
+  the outer `WS_BORDER`; the EDIT control's existing margin exposes the teal as a
+  border, which also removes the `WS_BORDER` / rounded-corner clipping artifact.
+  Second step of the F8 popup restyle (Variant 1).
 - `internal/popup/popup.go` — the F8 quick-fix popup now casts a system drop
   shadow (`CS_DROPSHADOW`) and opts into Windows 11 rounded corners via
   `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`,
