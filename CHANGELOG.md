@@ -10,6 +10,15 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup now casts a distinct system drop
+  shadow that follows its rounded corners. It is created with `WS_CAPTION` (not a
+  bare `WS_POPUP`) so DWM treats it as framed and shadows it, while the visible
+  frame is removed by returning 0 from `WM_NCCALCSIZE`. `DwmExtendFrameIntoClientArea`
+  (1px bottom margin) keeps the DWM frame and its shadow alive as the client
+  fills the whole window; `SetWindowPos(SWP_FRAMECHANGED)` forces the recalc, and
+  `WS_VISIBLE` is dropped from creation so `ShowWindow` reveals the reshaped
+  window without a title-bar flash. Replaces the removed `CS_DROPSHADOW`, whose
+  rectangular shadow clashed with the rounded corners.
 - `internal/popup/popup.go` — the F8 popup field now vertically centers its text.
   The EDIT gains `ES_MULTILINE` (still used as one line — Enter is caught by the
   modal loop, so no newline is inserted) so that `EM_SETRECT` actually moves the
