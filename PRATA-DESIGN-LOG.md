@@ -868,9 +868,65 @@ inspelade serveroutputen och kräver "Tydlighet", inte "Tyd lighet".
   och inget i PRATA-GPU-SERVER.md ändras. Den v1.8.6-ombyggnad som gjordes under
   utredningen är ofarlig men onödig.
 - Gäller alla backends som serialiserar segment per rad (whisper.cpp-servern och
-  Berget lika).
+  Berget lika). **Korrigerad senare samma dag — se nedan: Berget trimmar sina
+  segmentrader, så ihopslagningen måste vara backend-specifik.**
 - Stavningsvariationen io→eo ("akromeoplastik") är ett ASR-igenkänningsfel från
   modellen och påverkas inte av denna fix.
+
+### 2026-06-21: Särskrivnings-fixen regredierade Berget — segmentihopslagning är backend-specifik
+
+**Status:** Åtgärdat. `internal/transcribe/client.go`: `normalizeTranscript`
+tar nu en `trimmedSegments`-flagga, och `Backend` har fältet `TrimmedSegments`
+(true endast för Berget). `gofmt`, `go vet`, `go build` och `go test` gröna,
+inklusive ett nytt regressionstest (`TestTranscribeBergetKeepsSentenceSpaces`).
+
+**Symptom**
+
+Samma ljud mot Berget och Rngv GPU. Rngv gav korrekt mellanrum; Berget tog bort
+mellanslag efter punkt vid meningsgränser: "förluster.Ungdomarna", "haft.Vi",
+"sörjer.Både", och även "fåskriva" mitt i en fras.
+
+**Diagnos — orsaken är dagens egen särskrivnings-fix**
+
+Den tidigare fixen (ovan) bytte `normalizeTranscript` från
+`strings.Join(strings.Fields(s), " ")` (radbyte → mellanslag) till att **droppa**
+radbyten utan separator. Det antagandet — att whisper.cpp-servern och Berget
+serialiserar segment likadant — var fel:
+
+- **Lokal whisper.cpp** lämnar segmenttexten **otrimmad**: en äkta ordgräns bär
+  sitt eget inledande mellanslag på nästa segment, och bara en gräns *inuti* ett
+  ord saknar det. Att droppa radbytet är därför rätt (bevarar "Tydlighet").
+- **Berget** **trimmar** varje segmentrad. Då är radbytet det *enda* som skiljer
+  en mening från nästa ("förluster." + "Ungdomarna"). Att droppa det limmar ihop
+  meningarna. Före dagens fix gav `Fields/Join` ett mellanslag här och Berget såg
+  rätt ut — fixen som löste den lokala servern bröt alltså Berget.
+
+De två fallen "Tyd"+"lighet" (ska limmas) och "förluster."+"Ungdomarna" (ska
+separeras) går inte att skilja åt enbart från radbytet, så ingen enda regel
+fungerar för båda servrarna.
+
+**Beslut**
+
+Gör ihopslagningen backend-specifik via `Backend.TrimmedSegments`:
+- `false` (lokala whisper.cpp-servrar): droppa radbyten utan separator —
+  oförändrat beteende, bevarar mid-ord-sammansättningar.
+- `true` (Berget): låt radbytena bli mellanslag (`Fields/Join` räcker, eftersom
+  det redan behandlar radbyte som blanksteg).
+
+**Alternativ övervägda**
+
+- **Punktbaserad heuristik** (mellanslag bara efter skiljetecken). Förkastad:
+  "få"+"skriva" (ska separeras) och "Tyd"+"lighet" (ska limmas) är båda
+  bokstav+bokstav utan mellanslag — omöjliga att skilja åt utan tokendata.
+- **`verbose_json` med ordtidsstämplar.** Förkastad som overkill; Berget trimmar
+  ändå, och den backend-specifika flaggan löser problemet deterministiskt.
+
+**Konsekvenser**
+
+- "fåskriva" försvinner som bieffekt: vid Berget blir varje segmentgräns ett
+  mellanslag, så "få" + "skriva" blir "få skriva" (korrekt — det är två ord).
+- Om en framtida backend läggs till måste dess segmentserialisering verifieras
+  och `TrimmedSegments` sättas därefter.
 
 ### 2026-06-21: F8-popup restyle — Win32-beslut och fällor
 

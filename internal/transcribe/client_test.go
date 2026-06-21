@@ -103,28 +103,39 @@ func TestTranscribeBergetWithoutKeyFails(t *testing.T) {
 }
 
 func TestNormalizeTranscript(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"hej", "hej"},
-		{" inledande och avslutande \n", "inledande och avslutande"},
-		// Segment boundaries at real word boundaries: the next segment carries
-		// its own leading space, so the spacing is preserved.
-		{"första raden\n andra raden\n tredje raden\n", "första raden andra raden tredje raden"},
-		// Segment boundary inside a word — the continuation has no leading
+	cases := []struct {
+		in, want        string
+		trimmedSegments bool
+	}{
+		{in: "hej", want: "hej"},
+		{in: " inledande och avslutande \n", want: "inledande och avslutande"},
+		// Local whisper.cpp (untrimmed segments): boundaries at real word
+		// boundaries carry their own leading space, so the spacing is preserved.
+		{in: "första raden\n andra raden\n tredje raden\n", want: "första raden andra raden tredje raden"},
+		// Local: segment boundary inside a word — the continuation has no leading
 		// space, so the line break must vanish without inserting one.
-		{"Tyd\nlighet", "Tydlighet"},
-		{"a\r\nb\tc   d", "ab c d"},
-		// Real captured server output where whisper split "Tydlighet" across a
-		// segment boundary. Must read "Tydlighet", not "Tyd lighet".
+		{in: "Tyd\nlighet", want: "Tydlighet"},
+		{in: "a\r\nb\tc   d", want: "ab c d"},
+		// Local: real captured server output where whisper split "Tydlighet"
+		// across a segment boundary. Must read "Tydlighet", not "Tyd lighet".
 		{
-			" Nu ska jag testa röstinspelaren med kärnenergifrågan. Tyd\nlighet, små, enligt, akromeoplastik.\n",
-			"Nu ska jag testa röstinspelaren med kärnenergifrågan. Tydlighet, små, enligt, akromeoplastik.",
+			in:   " Nu ska jag testa röstinspelaren med kärnenergifrågan. Tyd\nlighet, små, enligt, akromeoplastik.\n",
+			want: "Nu ska jag testa röstinspelaren med kärnenergifrågan. Tydlighet, små, enligt, akromeoplastik.",
 		},
-		{"", ""},
-		{"\n\n", ""},
+		// Berget (trimmedSegments=true): each sentence is a trimmed line, so the
+		// line break is the only separator and MUST become a space. Without this,
+		// sentences glue together ("förluster.Ungdomarna").
+		{
+			in:              "Vi talar om sorg och förluster.\nUngdomarna kommer få berätta.\nVi inleder med oss vuxna.",
+			want:            "Vi talar om sorg och förluster. Ungdomarna kommer få berätta. Vi inleder med oss vuxna.",
+			trimmedSegments: true,
+		},
+		{in: "", want: ""},
+		{in: "\n\n", want: ""},
 	}
 	for _, c := range cases {
-		if got := normalizeTranscript(c.in); got != c.want {
-			t.Errorf("normalizeTranscript(%q) = %q, want %q", c.in, got, c.want)
+		if got := normalizeTranscript(c.in, c.trimmedSegments); got != c.want {
+			t.Errorf("normalizeTranscript(%q, %v) = %q, want %q", c.in, c.trimmedSegments, got, c.want)
 		}
 	}
 }
@@ -168,6 +179,29 @@ func TestTranscribeJoinsMidWordSegmentSplit(t *testing.T) {
 		t.Fatalf("Transcribe: %v", err)
 	}
 	want := "med kärnenergifrågan. Tydlighet, små, enligt."
+	if got != want {
+		t.Errorf("Transcribe = %q, want %q", got, want)
+	}
+}
+
+// TestTranscribeBergetKeepsSentenceSpaces reproduces the Berget regression:
+// Berget trims each segment line, so a sentence boundary lands as a bare
+// newline with no leading space on the next line ("förluster." + "Ungdomarna").
+// With TrimmedSegments=true, Transcribe must turn that break into a space so
+// sentences do not glue together ("förluster.Ungdomarna").
+func TestTranscribeBergetKeepsSentenceSpaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"Vi talar om sorg och förluster.\nUngdomarna kommer få berätta.\n"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient("secret-key", Backend{ID: "Berget", DisplayName: "Berget Ai", URL: srv.URL, RequiresKey: true, TrimmedSegments: true})
+	got, err := c.Transcribe(bytes.NewReader(EncodePCM([]byte{1, 2, 3, 4})))
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	want := "Vi talar om sorg och förluster. Ungdomarna kommer få berätta."
 	if got != want {
 		t.Errorf("Transcribe = %q, want %q", got, want)
 	}

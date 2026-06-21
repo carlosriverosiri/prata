@@ -47,6 +47,16 @@ type Backend struct {
 	DisplayName string // shown in the tray menu, tooltip, and user-facing messages
 	URL         string // full OpenAI-compatible transcription endpoint
 	RequiresKey bool   // Berget needs a Bearer key; local GPU servers do not
+	// TrimmedSegments is true when the backend strips the surrounding
+	// whitespace from each timing segment before serializing it on its own line
+	// (Berget). The line break is then the ONLY boundary marker, so Prata
+	// rejoins lines with a space. The local whisper.cpp servers leave segment
+	// text untrimmed — the spacing is already in the text and a real boundary
+	// carries its own leading space — so their lines are concatenated with no
+	// separator, which keeps a compound word that whisper split across a segment
+	// joined ("Tyd"+"lighet" -> "Tydlighet"). See normalizeTranscript and
+	// PRATA-DESIGN-LOG (2026-06-21).
+	TrimmedSegments bool
 }
 
 // The selectable backends. Home and Work are local whisper.cpp GPU servers
@@ -54,7 +64,7 @@ type Backend struct {
 var (
 	Home   = Backend{ID: "Hemma", DisplayName: "Rngv GPU-server (Tailscale)", URL: HomeURL, RequiresKey: false}
 	Work   = Backend{ID: "Jobb", DisplayName: "LAN GPU-server", URL: WorkURL, RequiresKey: false}
-	Berget = Backend{ID: "Berget", DisplayName: "Berget Ai", URL: BergetURL, RequiresKey: true}
+	Berget = Backend{ID: "Berget", DisplayName: "Berget Ai", URL: BergetURL, RequiresKey: true, TrimmedSegments: true}
 )
 
 // Backends is the selectable list, in tray-menu order.
@@ -183,24 +193,37 @@ func (c *Client) Transcribe(wav io.Reader) (string, error) {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
-	return normalizeTranscript(out.Text), nil
+	return normalizeTranscript(out.Text, b.TrimmedSegments), nil
 }
 
 // normalizeTranscript joins the per-segment lines the backend puts in the
-// "text" field into one flowing prose block, the way Diktell does: by
-// concatenating segments with no separator. Whisper (the whisper.cpp server and
-// Berget alike) serializes each timing segment on its own line. A real word
-// boundary already carries a leading space on the next segment, but a boundary
-// that falls *inside* a word — which whisper does for long Swedish compounds,
-// e.g. "Tyd" + "lighet" or "kärnenergifrå" + "gan" — does not. Replacing the
-// line break with a space (a naive Fields/Join over all whitespace) therefore
-// injects a space inside such a word ("Tyd lighet"); dropping the line break
-// instead preserves "Tydlighet". Remaining runs of spaces/tabs are collapsed
-// and the result is trimmed. The trailing newline that marks the end of a
-// dictation is added later in cmd/prata, so it is intentionally not produced
-// here.
-func normalizeTranscript(s string) string {
-	s = strings.ReplaceAll(s, "\r", "")
-	s = strings.ReplaceAll(s, "\n", "")
+// "text" field into one flowing prose block, the way Diktell does. Whisper
+// backends serialize each timing segment on its own line, but they differ in
+// whether they trim those lines — so the line break must be handled per
+// backend (trimmedSegments).
+//
+// Local whisper.cpp servers (trimmedSegments=false) leave the segment text
+// untrimmed: a real boundary already carries a leading space on the next
+// segment, while a boundary that falls *inside* a word — which whisper does for
+// long Swedish compounds, e.g. "Tyd" + "lighet" — does not. Dropping the line
+// break (no separator) therefore preserves "Tydlighet"; inserting a space would
+// produce "Tyd lighet".
+//
+// Berget (trimmedSegments=true) strips each segment line, so the line break is
+// the only thing separating one sentence from the next ("förluster." +
+// "Ungdomarna"). Here the break MUST become a space, or sentences glue together
+// ("förluster.Ungdomarna"). strings.Fields already treats the remaining
+// newlines as whitespace, so the join restores single spaces.
+//
+// Remaining runs of spaces/tabs are collapsed and the result is trimmed. The
+// trailing newline that marks the end of a dictation is added later in
+// cmd/prata, so it is intentionally not produced here.
+func normalizeTranscript(s string, trimmedSegments bool) string {
+	if !trimmedSegments {
+		// Drop the redundant segment newlines without a separator; the spacing
+		// is already in the untrimmed segment text.
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+	}
 	return strings.Join(strings.Fields(s), " ")
 }
