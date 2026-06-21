@@ -220,14 +220,14 @@ that point.
   subnet mask `255.255.255.192`, shared DNS) and warns that the `LocalSubnet`
   only covers that small subnet — if dictation workstations sit elsewhere the
   rule must be widened.
-- `internal/transcribe` — `Transcribe` now collapses the per-segment line
-  breaks the backend returns in the `text` field into single spaces, so an
-  injected dictation reads as one flowing prose block instead of a poem.
-  Whisper (whisper.cpp server and Berget alike) serializes each timing segment
-  on its own line; those breaks land on time-window cuts, not sentence
-  boundaries. The new `normalizeTranscript` mirrors Diktell, which concatenates
-  segments without a separator. The end-of-dictation newline (added in
-  `cmd/prata`) is unchanged.
+- `internal/transcribe` — `Transcribe` now joins the per-segment line breaks
+  the backend returns in the `text` field into one flowing prose block instead
+  of a poem. Whisper (whisper.cpp server and Berget alike) serializes each
+  timing segment on its own line; those breaks land on time-window cuts, not
+  sentence boundaries. `normalizeTranscript` mirrors Diktell, concatenating
+  segments without a separator — see the Fixed entry and PRATA-DESIGN-LOG
+  2026-06-21 for why inserting a space instead caused särskrivningar. The
+  end-of-dictation newline (added in `cmd/prata`) is unchanged.
 - `cmd/prata` now loads the Berget API key **best-effort** instead of refusing to
   start without one: the local GPU backends need no key, so a missing key only
   fails the Berget backend (with an error cue) rather than blocking startup. The

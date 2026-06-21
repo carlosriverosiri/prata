@@ -15,7 +15,7 @@ beskrivs i `PRATA-GPU-SERVER.md`.
 1. Carlos håller `F1` nere
 2. Prata spelar in mikrofon-ljud (16 kHz mono PCM)
 3. När `F1` släpps: skicka ljudet till vald backend (Rngv GPU-server / Rum1 GPU-server / Berget Ai)
-4. Normalisera svaret till löpande prosa (kollapsa Whispers per-segment-radbrytningar till mellanslag, som Diktell) och tillämpa dictionary-korrigeringar på texten
+4. Normalisera svaret till löpande prosa (slå ihop Whispers per-segment-rader **utan** separator, som Diktell, så att långa sammansatta ord inte särskrivs) och tillämpa dictionary-korrigeringar på texten
 5. Återställ fönstret som var aktivt när `F1` trycktes ned och skriv texten där via klassbaserad routing (SendInput Unicode i Chromium/Electron-fönster, annars urklipps-paste — se Beslut 6 i designloggen). Om fönstret inte kan återställas avbryts injektionen med felton i stället för att text hamnar fel.
 6. Transkribering sker asynkront i en FIFO-worker, så en långsam backend-runda blockerar inte nästa `F1`-inspelning.
 

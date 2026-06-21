@@ -871,4 +871,4 @@ inspelade serveroutputen och kräver "Tydlighet", inte "Tyd lighet".
   Berget lika).
 - Stavningsvariationen io→eo ("akromeoplastik") är ett ASR-igenkänningsfel från
   modellen och påverkas inte av denna fix.
-- Kräver en patch-release (1.1.1) och omdistribution via `prata.exe --install`.
+- Släppt i **v0.3.0** (omdistribution via `prata.exe --install` / `Installera-Prata.bat`).
