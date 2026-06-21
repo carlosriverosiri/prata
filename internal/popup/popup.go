@@ -79,10 +79,10 @@ const (
 
 	// Base (96-DPI) layout sizes, scaled up by the monitor DPI.
 	baseWidth        = 360
-	baseHeight       = 62 // room for caption strip + field
-	baseMargin       = 5
+	baseHeight       = 72 // taller, less compact
+	baseMargin       = 8  // more side padding (air)
 	baseCaptionH     = 18 // caption strip height @96dpi
-	baseGap          = 3  // gap between caption and field
+	baseGap          = 6  // gap between caption and field
 	baseChipW        = 26 // chip width @96dpi
 	baseChipH        = 14 // chip height @96dpi (shorter than strip)
 	baseChipGap      = 6  // gap between caption text and chip
@@ -93,6 +93,7 @@ const (
 	// DWM window attributes for Windows 11 rounded corners.
 	dwmwaWindowCornerPreference = 33 // DWMWA_WINDOW_CORNER_PREFERENCE
 	dwmwcpRound                 = 2  // DWMWCP_ROUND
+	dwmwaBorderColor            = 34 // DWMWA_BORDER_COLOR (Win11)
 )
 
 // msg mirrors the Win32 MSG struct for GetMessageW / DispatchMessageW.
@@ -208,7 +209,8 @@ var (
 type popup struct {
 	hwnd uintptr
 
-	editBrush  uintptr // persistent field-tint brush returned from WM_CTLCOLOREDIT
+	panelBrush uintptr // persistent tint panel brush (window bg + caption bg)
+	fieldBrush uintptr // persistent white field brush returned from WM_CTLCOLOREDIT
 	frameBrush uintptr // persistent teal frame brush; also the chip background
 	chip       uintptr // "F8" chip STATIC; distinguishes it in WM_CTLCOLORSTATIC
 
@@ -240,23 +242,27 @@ func (p *popup) run(initial string) (string, bool, error) {
 		return "", false, fmt.Errorf("class name: %w", err)
 	}
 
-	// Teal window background; the EDIT control's margin lets it show as a
-	// frame. Registering this defer before RegisterClassExW/CreateWindowExW
-	// means (LIFO) it runs after DestroyWindow and UnregisterClassW, so the
-	// window never references a deleted brush.
+	// Teal frame brush: now used only as the chip background. Registering
+	// this defer before RegisterClassExW/CreateWindowExW means (LIFO) it runs
+	// after DestroyWindow and UnregisterClassW, so the window never references
+	// a deleted brush.
 	p.frameBrush, _, _ = procCreateSolidBrush.Call(uintptr(tealDeep))
 	defer procDeleteObject.Call(p.frameBrush)
 
-	// Persistent field-tint brush returned from WM_CTLCOLOREDIT. Same defer
-	// discipline as the frame brush: freed (LIFO) after the window is gone.
-	p.editBrush, _, _ = procCreateSolidBrush.Call(uintptr(fieldTint))
-	defer procDeleteObject.Call(p.editBrush)
+	// Tint panel brush: the window background and caption background. Same
+	// defer discipline as the frame brush: freed (LIFO) after the window is gone.
+	p.panelBrush, _, _ = procCreateSolidBrush.Call(uintptr(fieldTint))
+	defer procDeleteObject.Call(p.panelBrush)
+
+	// White field brush returned from WM_CTLCOLOREDIT.
+	p.fieldBrush, _, _ = procCreateSolidBrush.Call(uintptr(whiteColor))
+	defer procDeleteObject.Call(p.fieldBrush)
 
 	wc := wndClassExW{
 		style:         csDropShadow,
 		lpfnWndProc:   syscall.NewCallback(p.wndProc),
 		hInstance:     hInstance,
-		hbrBackground: p.frameBrush,
+		hbrBackground: p.panelBrush,
 		lpszClassName: className,
 	}
 	wc.cbSize = uint32(unsafe.Sizeof(wc))
@@ -313,6 +319,7 @@ func (p *popup) run(initial string) (string, bool, error) {
 	defer procDestroyWindow.Call(hwnd)
 
 	setRoundedCorners(hwnd)
+	setBorderColor(hwnd, tealDeep)
 
 	edit, err := p.createEdit(hwnd, hInstance, dpi)
 	if err != nil {
@@ -496,14 +503,14 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		p.cancel()
 		return 0
 	case wmCtlColorEdit:
-		// wParam is the EDIT's HDC. Return the persistent brush; never
-		// create one here, which would leak a GDI object on every repaint.
-		procSetBkColor.Call(wParam, uintptr(fieldTint))
+		// wParam is the EDIT's HDC. Return the persistent white field brush;
+		// never create one here, which would leak a GDI object on every repaint.
+		procSetBkColor.Call(wParam, uintptr(whiteColor))
 		procSetTextColor.Call(wParam, uintptr(inkColor))
-		return p.editBrush
+		return p.fieldBrush
 	case wmCtlColorStatic:
 		// The chip gets a teal background with white text (frame brush);
-		// the caption keeps the field tint with teal text (field brush).
+		// the caption sits on the tint panel with teal text (panel brush).
 		// Reuse the existing brushes — no new GDI objects per repaint.
 		if lParam == p.chip {
 			procSetBkColor.Call(wParam, uintptr(tealDeep))
@@ -512,7 +519,7 @@ func (p *popup) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		}
 		procSetBkColor.Call(wParam, uintptr(fieldTint))
 		procSetTextColor.Call(wParam, uintptr(tealDeep))
-		return p.editBrush
+		return p.panelBrush
 	}
 	ret, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
 	return ret
@@ -610,6 +617,23 @@ func setRoundedCorners(hwnd uintptr) {
 		uintptr(dwmwaWindowCornerPreference),
 		uintptr(unsafe.Pointer(&pref)),
 		unsafe.Sizeof(pref),
+	)
+}
+
+// setBorderColor paints a thin window border via DWM (Windows 11). On Windows
+// 10 and earlier the attribute is unsupported: the call returns E_INVALIDARG
+// and is a harmless no-op. .Find() guards the pre-Vista case where the proc
+// itself is absent. The HRESULT is intentionally ignored.
+func setBorderColor(hwnd, color uintptr) {
+	if procDwmSetWindowAttribute.Find() != nil {
+		return
+	}
+	c := int32(color)
+	procDwmSetWindowAttribute.Call(
+		hwnd,
+		uintptr(dwmwaBorderColor),
+		uintptr(unsafe.Pointer(&c)),
+		unsafe.Sizeof(c),
 	)
 }
 
