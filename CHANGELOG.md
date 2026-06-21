@@ -10,6 +10,11 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup field now has rounded corners via a
+  `CreateRoundRectRgn` clipping region (radius 6px @96dpi, DPI-scaled), no
+  square `WS_BORDER`, and inner text padding (`EM_SETMARGINS`) so text clears
+  the curves. The region is owned by the system after `SetWindowRgn` and is
+  never freed by the app.
 - `internal/popup/popup.go` — the F8 popup now layers like the approved mockup:
   a thin teal edge via `DwmSetWindowAttribute(DWMWA_BORDER_COLOR)` (Win11;
   harmless no-op on Windows 10), a soft-teal tint panel as the window
