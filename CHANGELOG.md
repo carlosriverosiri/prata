@@ -10,6 +10,10 @@ that point.
 
 ### Changed
 
+- `internal/popup/popup.go` — the F8 popup's EDIT field is now tinted a soft
+  teal (#F4FBF8) with dark ink text, via a `WM_CTLCOLOREDIT` handler that
+  returns a persistent owned brush (created once in `run()`, freed on teardown —
+  never per-message). Third step of the F8 popup restyle (Variant 1).
 - `internal/popup/popup.go` — the F8 quick-fix popup now casts a system drop
   shadow (`CS_DROPSHADOW`) and opts into Windows 11 rounded corners via
   `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`,
