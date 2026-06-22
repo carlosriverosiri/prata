@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- IKEA yellow background -->
+  <rect width="32" height="32" rx="7" fill="#FFDA1A"/>
+  <!-- Capsule: w=11 centered → x=10.5, h=16, y=2.5 -->
+  <rect x="10.5" y="2.5" width="11" height="16" rx="5" fill="#003399"/>
+  <!-- Arc: from y=14.5 (inside capsule), down to y=22.5 -->
+  <path d="M6 14.5 Q6 22.5 16 22.5 Q26 22.5 26 14.5" fill="none" stroke="#003399" stroke-width="4" stroke-linecap="round"/>
+  <!-- Pole: w=4 centered → x=14, y=22.5, h=4.5 -->
+  <rect x="14" y="22.5" width="4" height="4.5" fill="#003399"/>
+  <!-- Base: w=12 centered → x=10, y=27, h=2.5 -->
+  <rect x="10" y="27" width="12" height="2.5" rx="1.2" fill="#003399"/>
+</svg>

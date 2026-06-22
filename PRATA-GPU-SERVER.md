@@ -294,6 +294,167 @@ Unregister-ScheduledTask -TaskName PrataWhisperServer -Confirm:$false   # remove
 
 > **Clinic:** the same task applies there, but follow the clinic's IT policy for
 > services/autostart. The difference is the firewall rule (LAN, not Tailscale).
+> For any machine other than the original home PC, use **Step 2c** instead — it
+> supersedes this recipe with a `.bat` launcher, explicit `Start-ScheduledTask`,
+> and a watchdog for crash recovery.
+
+## Step 2c — Autostart and crash recovery, per machine
+
+> **Status:** verified on **rum-ett** (clinic, RTX 5060 Ti) **2026-06-22** — autostart,
+> crash recovery, and cold-boot recovery all verified. See the Status table at the end
+> of this section.
+>
+> This section supersedes the home-only framing of Step 2b for **any machine other
+> than the original home PC**. It was written after diagnosing a real incident on
+> rum-ett and folds in two findings that change the home recipe.
+
+### The incident and root cause
+
+The GPU server was found down on the clinic PC. It was unclear whether a reboot or a
+crash had taken it down.
+
+**Root cause:** the autostart task had been registered on the home PC but **never on
+rum-ett**. Nothing restarted the server there, so it had to be started by hand.
+
+> **Autostart is a per-machine setup — it does not propagate.** Every GPU-server
+> machine must have its own task registered locally. This is easy to miss precisely
+> because the home machine "just works".
+
+**First diagnostic on any "server is down" report** — run on *that* machine:
+
+```powershell
+Get-ScheduledTask -TaskName "PrataWhisperServer" -ErrorAction SilentlyContinue | Select-Object TaskName, State
+```
+
+Empty result = the task was never registered on this machine. That is the most likely
+cause and the first thing to check.
+
+### Two findings that changed the home recipe
+
+**1. Launch via a `.bat` wrapper, not the `.exe` directly.**
+Pointing the task straight at `whisper-server.exe` under SYSTEM / session 0 made the
+process die immediately on rum-ett. Wrapping the launch in a `.bat` that **redirects
+stdout to a file** gives the process a valid output handle, and it then runs correctly.
+Bonus: it produces a startup log for free.
+
+> CUDA itself works fine under SYSTEM in session 0 on rum-ett — the log shows the
+> RTX 5060 Ti found and the KB-Whisper model loaded into VRAM. The earlier uncertainty
+> (verified only on the home 5070 Ti) is now also confirmed on the 5060 Ti. The
+> direct-`.exe` failure was about the missing stdout handle, not CUDA.
+
+**2. Task Scheduler "restart on failure" is unreliable — use a watchdog instead.**
+`RestartCount` / `RestartInterval` on the main task did **not** restart the server when
+the process was killed (verified empirically: after the kill the task went back to
+`Ready`, no process, port 8080 down). A separate **watchdog task** is the real
+crash-recovery mechanism.
+
+**Smaller gotcha:** `Register-ScheduledTask` does **not** reliably auto-start the task.
+Always run `Start-ScheduledTask` explicitly afterwards.
+
+### Setup — the launcher
+
+`C:\Dev\whisper-server-launch.bat`:
+
+```bat
+@echo off
+"C:\Dev\whisper.cpp\build\bin\Release\whisper-server.exe" -m "C:\Dev\whisper-models\ggml-model.bin" --host 0.0.0.0 --port 8080 --inference-path /v1/audio/transcriptions -l sv >> "C:\Dev\whisper-server.log" 2>&1
+```
+
+The redirect is **required** (valid stdout handle under session 0). The log is
+**data-clean**: it contains only request metadata — sample count, audio duration,
+language, task — and **never** the transcribed text. whisper-server returns the
+transcription in the HTTP response, not on stdout. (Confirmed by dictating a test
+phrase and inspecting the log; only `operator (): processing 'audio.wav' (… samples,
+X sec), lang = sv, task = transcribe` lines appear, no transcript.)
+
+### Setup — the main task (boot start)
+
+Run in an **elevated** PowerShell (SYSTEM principal + `RunLevel Highest` require it):
+
+```powershell
+$TaskName  = "PrataWhisperServer"
+$Action    = New-ScheduledTaskAction -Execute "C:\Dev\whisper-server-launch.bat"
+$Trigger   = New-ScheduledTaskTrigger -AtStartup
+$Settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartInterval (New-TimeSpan -Minutes 1) -RestartCount 3
+$Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
+
+# Register does NOT reliably auto-start — start it explicitly:
+Start-ScheduledTask -TaskName $TaskName
+```
+
+`RestartCount 3` is kept as a cheap first attempt, but it proved unreliable on its own
+(see finding 2). The watchdog below is the authoritative recovery mechanism.
+
+### Setup — the watchdog (crash recovery)
+
+`C:\Dev\whisper-watchdog.ps1`:
+
+```powershell
+if (-not (Test-NetConnection localhost -Port 8080 -WarningAction SilentlyContinue -InformationLevel Quiet)) {
+    Start-ScheduledTask -TaskName "PrataWhisperServer"
+}
+```
+
+Register it to run **every minute** via `schtasks`. (PowerShell's repetition objects
+are finicky — `$trigger.Repetition.Interval` is not settable on a plain `-Once` trigger;
+`schtasks /sc minute` is the reliable path.)
+
+```text
+schtasks /create /tn "PrataWhisperWatchdog" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Dev\whisper-watchdog.ps1" /sc minute /mo 1 /ru "SYSTEM" /rl HIGHEST /f
+```
+
+> A **server-side** watchdog does **not** conflict with Prata's "no silent failover"
+> principle. That principle governs the *client's* backend selection (never switch
+> backend silently — a patient-safety concern). Keeping the chosen GPU server alive on
+> its own machine is a different concern entirely.
+
+### Power loss / cold boot (BIOS prerequisite)
+
+For unattended recovery after a power outage, the machine must **power itself back on
+when mains power returns** — otherwise it stays off after the outage, Windows never
+boots, and no `AtStartup` task ever runs.
+
+This is a **firmware** setting, not a Windows one. In BIOS/UEFI setup, set:
+
+> **"Restore on AC Power Loss" → Power On.** The exact name varies by vendor
+> ("After Power Failure", "AC Power Recovery", "State After Power Failure"); choose
+> **Power On**, or **Last State** if the machine should return to whatever it was.
+
+Operational note: after a cold boot the server can take up to ~1 minute to answer. The
+`AtStartup` task may fire before the NVIDIA driver is fully ready, and the ~3 GB model
+load competes with boot I/O. A "port not listening" reading in the first ~minute after
+boot is **not** a failure — the watchdog covers any failed first attempt.
+
+### Verification (2026-06-22, rum-ett)
+
+- Main task launches `whisper-server.exe` as `NT AUTHORITY\SYSTEM`, listening on
+  `0.0.0.0:8080`. ✅
+- A real F1 dictation transcribes against it. ✅
+- **Crash recovery:** killing the server (PID 21748) → the watchdog brought up a new
+  instance (PID 43072, SYSTEM, listening on 8080) within ~2 minutes, unattended. ✅
+- **Cold boot (no login):** after a full reboot, all three tasks (`Prata`,
+  `PrataWhisperServer`, `PrataWhisperWatchdog`) survived; the server process started
+  ~17 s after boot as SYSTEM — before any login — and was listening on 8080 shortly
+  after (the model was still loading for the first few seconds). ✅
+
+### Known limitations
+
+- Recovery latency is up to ~1–2 min (watchdog interval + model load into VRAM).
+- The watchdog checks the **TCP port only**. A server that hangs while still holding
+  the port would not be caught (not observed — the case seen is a clean crash/exit).
+- `whisper-server.log` grows over time (per-request metadata). Log rotation is a
+  follow-up, not yet implemented.
+
+### Status
+
+| Item | Status |
+|---|---|
+| Per-machine autostart (rum-ett) | ✅ Verified 2026-06-22 |
+| Crash recovery via watchdog (rum-ett) | ✅ Verified 2026-06-22 (kill → unattended revival, new PID) |
+| Reboot recovery (`AtStartup`, cold boot, no login) | ✅ Verified 2026-06-22 (server up ~17 s after boot; all tasks survived) |
+| Power-on after AC loss (BIOS) | ✅ Set on rum-ett 2026-06-22 — required for power-outage recovery |
+| Per-machine autostart (ringvagen / home) | ✅ Pre-existing (Step 2b); watchdog not yet added |
 
 ## Step 3 — Verify the server
 
@@ -640,8 +801,7 @@ Steps:
    b. Power mode: `powercfg /change standby-timeout-ac 0` and
       `powercfg /change hibernate-timeout-ac 0` so the machine does not sleep (the screen
       may turn off). If this is governed by GPO -> note it.
-   c. Autostart: register the SYSTEM/boot task EXACTLY as in Step 2b
-      (AtStartup, ServiceAccount/Highest, restart 3x1 min, ExecutionTimeLimit 0).
+   c. Autostart: follow **Step 2c** (`.bat` launcher, SYSTEM/boot task, watchdog).
       If the clinic's IT controls services/autostart centrally -> check with them.
    d. Start the task (Start-ScheduledTask).
 
@@ -754,6 +914,8 @@ the KB version. Instead, verify in two ways:
 | Step 1 — Build whisper.cpp | ✅ Verified on the RTX 5070 Ti (home PC) |
 | Step 2 — Start the server | ✅ Verified — model loaded on the GPU, listening |
 | Step 2b — Autostart (home) | ✅ Runs as SYSTEM at boot — survives reboot/power loss, GPU verified in session 0 |
+| Step 2c — Autostart + watchdog (rum-ett) | ✅ Autostart, crash recovery, and cold-boot recovery verified 2026-06-22 |
+| Step 2c — Watchdog (ringvagen / home) | ⏳ Not yet added |
 | Step 3 — Verify | ✅ Locally + LAN from rum4→rum-ett (2026-06-16); ⏳ Tailscale test (home) remaining |
 | Step 4 — Firewall (home/Tailscale) | ✅ Rule active on the home PC (ringvagen) |
 | Step 4 — Firewall (clinic/LAN) | ✅ Verified on rum-ett (2026-06-16); root cause on failure: missing inbound rule |

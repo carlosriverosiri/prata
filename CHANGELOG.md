@@ -10,6 +10,11 @@ that point.
 
 ### Changed
 
+- `internal/icon/Prata.ico` — replaced the red Prata tray icon with a yellow
+  microphone badge (regenerated from `internal/tray-icon.svg` via ImageMagick).
+- `PRATA-GPU-SERVER.md` — Step 2c documents per-machine GPU-server autostart,
+  `.bat` launcher, port watchdog, BIOS power-on-after-AC-loss, and cold-boot
+  verification on rum-ett (2026-06-22).
 - `internal/transcribe/client.go` — renamed two tray backend labels (display
   only; the stable IDs `Hemma`/`Jobb` and existing `backend.txt` are unchanged):
   "Rngv GPU-server" → "Rngv GPU-server (Tailscale)", and "Rum1 GPU-server" →
