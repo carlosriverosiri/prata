@@ -595,6 +595,19 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 			}
 			if res.targetHwnd == 0 {
 				fmt.Fprintln(os.Stderr, "inject target missing, skipping")
+				daemonlog.Printf("inject skipped: no target window backend=%s elapsed=%.2fs", backendID, elapsed)
+				cue.PlayError()
+				continue
+			}
+			// The target window existed when F1 was pressed but may have been
+			// closed during a slow transcription (e.g. the user moved from
+			// patient A's record to patient B's). Fast-fail here with a
+			// distinct diagnostic instead of letting RestoreForeground discover
+			// the dead HWND via a thread-ID-0 error. RestoreForeground still
+			// guards the same case, so this is a clarity/speed improvement, not
+			// the sole line of defense.
+			if !inject.IsWindow(res.targetHwnd) {
+				fmt.Fprintf(os.Stderr, "inject target window gone, skipping (%.2fs)\n", res.elapsed.Seconds())
 				daemonlog.Printf("inject skipped: target window gone backend=%s elapsed=%.2fs", backendID, elapsed)
 				cue.PlayError()
 				continue

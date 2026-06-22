@@ -25,6 +25,15 @@ that point.
 
 ### Changed
 
+- `internal/inject/inject.go`, `cmd/prata/main.go` — the async injection path
+  now validates the target window with `inject.IsWindow` before attempting focus
+  restoration. If the window that was foreground when `F1` was pressed was closed
+  during a slow transcription (e.g. switching from patient A's record to patient
+  B's), the result is dropped with a distinct "target window gone" diagnostic and
+  error cue, instead of failing implicitly inside `RestoreForeground`. The
+  failure was already safe; this makes it explicit, faster, and clearer in the
+  log. The pre-existing "no target window" case (no foreground window at press
+  time) keeps its own distinct message.
 - `internal/icon/Prata.ico` — replaced the red Prata tray icon with a yellow
   microphone badge (regenerated from `internal/tray-icon.svg` via ImageMagick).
 - `PRATA-GPU-SERVER.md` — Step 2c documents per-machine GPU-server autostart,
