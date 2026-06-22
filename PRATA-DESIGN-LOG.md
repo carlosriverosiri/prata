@@ -999,4 +999,52 @@ themselves on a font change.
   DPI-scaled via `CreateFontW` with a negative `lfHeight` (point size, not px).
 - Layout constants (Variant B): `baseMargin` 16, `baseGap` 14, `baseHeight`
   104, `baseTextMargin` 12, `baseChipGap` 12 — all @ 96 DPI, scaled up.
+
+### 2026-06-22: Daemon log — durable per-dictation record (`internal/daemonlog`)
+
+**Context:**
+
+The daemon writes all diagnostics with `fmt.Fprintf(os.Stderr, …)`, but in
+production it is built `-H windowsgui` and runs with no attached console, so
+every one of those lines is silently discarded. When a dictation misbehaves in
+the field there is no record of what the daemon saw — which backend was active,
+whether the capture was too short, whether transcription failed, whether
+injection landed. The installer already solved the same "no console under
+windowsgui" problem with append-mode file logging (`internal/installer.logf`);
+this ports that pattern to the daemon.
+
+**Decision:**
+
+A new `internal/daemonlog` package, deliberately tiny: `Open`/`Close`/`Printf`,
+a package-level `*os.File` behind a mutex, stdlib only, no levels, no structured
+fields. `Open` is best-effort and returns a no-op closer plus an error on
+failure — a missing log must never be fatal in a patient-facing tool, so the
+caller logs to stderr and continues. `Printf` is a no-op until `Open` succeeds,
+so a stray early call can't panic. The path is
+`%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log` (LOCALAPPDATA read directly,
+like the rest of the codebase), with `PRATA_DAEMON_LOG` as a full-path override
+for test isolation — the same lever as `PRATA_INSTALL_LOG`.
+
+`cmd/prata` now mirrors each per-dictation stderr event to the log (the existing
+stderr lines are kept verbatim), stamped with `client.ActiveBackend().ID` and
+the round's elapsed time. `processEvents` gained the `*transcribe.Client`
+argument purely to read that backend ID at log time.
+
+**Privacy (the load-bearing constraint):**
+
+The log lines carry **metadata only** — backend ID, elapsed seconds, character
+count, sanity ratio, error strings — and **never the transcribed text**. This is
+the opposite of the kept stderr lines (`injected %q`), which do echo the text;
+those are fine because stderr is discarded in production, but a durable file
+beside patient work must not. Per AGENTS.md §11 the `logs/` directory and
+`prata-*.log` are gitignored as a second layer of defense (the file already
+lives outside the repo under `%LOCALAPPDATA%`; the ignore guards against a stray
+`PRATA_DAEMON_LOG` override or manual run).
+
+**Placement trap:**
+
+The processor goroutine (`processEvents`) is launched *before* the tray is built
+in `main`, so `daemonlog.Open` goes immediately before that goroutine starts —
+the binding requirement is "open the log before anything writes to it," and the
+processor is the only writer.
 - Released in **v0.3.0** (redistribution via `prata.exe --install` / `Installera-Prata.bat`).

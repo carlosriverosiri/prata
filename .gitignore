@@ -17,6 +17,12 @@ go.work.sum
 prata-tests.m4a
 prata-tests.wav
 
+# Daemon logs (may contain diagnostics beside patient work — see AGENTS.md §11).
+# The daemon writes these to %LOCALAPPDATA%\Prata\logs; this guards against a
+# stray PRATA_DAEMON_LOG override or manual run dropping one in the repo.
+logs/
+prata-*.log
+
 # IDE / editor
 .vscode/
 .idea/

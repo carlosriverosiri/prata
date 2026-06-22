@@ -111,8 +111,9 @@ Approve the UAC prompt. The installer:
    SendInput into non-elevated apps such as Webdoc).
 3. Starts Prata in the current session when possible (`schtasks /Run`).
 
-Per-user data (`apikey.dat`, `backend.txt`, dictionary overrides) lives under
-`%LOCALAPPDATA%\Prata` — the Program Files copy is read-only.
+Per-user data (`apikey.dat`, `backend.txt`, dictionary overrides, plus a
+per-day diagnostic log under `logs\`) lives under `%LOCALAPPDATA%\Prata` — the
+Program Files copy is read-only.
 
 > **Antivirus / EDR.** Unsigned binaries may be blocked until the install
 > folder is allowlisted (e.g. Webroot). See [Build from source](#build-from-source)
@@ -241,7 +242,10 @@ baseline always loads.
 When run from a terminal, status messages go to stderr (`recording...`,
 `transcribing...`, injected text and latency). Press **Ctrl+C** to quit.
 When Prata runs at login (no console), right-click the tray icon and choose
-**Avsluta** to quit.
+**Avsluta** to quit. In that no-console case stderr is discarded, so the same
+per-dictation diagnostics (backend, elapsed time, char count, errors — never
+the transcribed text) are appended to a per-day file at
+`%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log`, giving a durable record.
 
 ## Build from source
 

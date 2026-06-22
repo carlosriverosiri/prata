@@ -146,8 +146,11 @@ individual subsystems:
 ## Reporting issues
 
 Open a [GitHub issue](https://github.com/carlosriverosiri/prata/issues) with
-reproduction steps, the Windows version, the active backend, and — for install
-problems — the contents of `%TEMP%\prata-install.log`.
+reproduction steps, the Windows version, the active backend, and the relevant
+log: for install problems the contents of `%TEMP%\prata-install.log`, and for
+dictation/runtime problems today's daemon log at
+`%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log` (metadata only — backend,
+timings, char count, sanity ratio, error strings — never the transcribed text).
 
 > **Antivirus / EDR.** A freshly built, unsigned `prata.exe` may be blocked at
 > launch by behavioural security products (e.g. Webroot SecureAnywhere) because
