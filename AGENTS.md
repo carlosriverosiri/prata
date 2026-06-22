@@ -95,6 +95,7 @@ prata/
     ├── audio/      # malgo capture
     ├── auth/       # DPAPI key storage
     ├── cue/        # audio feedback tones
+    ├── daemonlog/  # durable per-dictation file log (%LOCALAPPDATA%\Prata\logs, metadata only)
     ├── dict/       # correction dictionary (embedded baseline + per-user override)
     ├── hotkey/     # global F1/F8
     ├── icon/       # tray icon asset
@@ -159,7 +160,7 @@ go test ./... -count=1
 
 - The Berget Ai API key is **DPAPI-encrypted** at `%LOCALAPPDATA%\Prata\apikey.dat` (user scope) — never commit it, never log it. Local GPU backends need no key.
 - **Patient audio is never written to disk** — buffered in memory and discarded after the transcription round.
-- Logs may contain transcribed text — keep `logs/` gitignored.
+- Logs may contain transcribed text — keep `logs/` gitignored. (The daemon log written by `internal/daemonlog` to `%LOCALAPPDATA%\Prata\logs\` is metadata-only by design — backend, timings, char counts, error strings, never the transcribed text — but treat that as a property to preserve, not a licence to relax this rule for other log sources.)
 - The repository is private. Before any push that would expose it publicly, request explicit confirmation.
 
 ---
