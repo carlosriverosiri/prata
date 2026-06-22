@@ -23,6 +23,11 @@ prata-tests.wav
 logs/
 prata-*.log
 
+# Local run artifacts — redirected stderr captures from launching the daemon
+# manually (e.g. `prata 2> prata-start.err`). Diagnostic only and may contain
+# an internal backend URL; never committed.
+prata-*.err
+
 # IDE / editor
 .vscode/
 .idea/
