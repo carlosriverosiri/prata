@@ -1048,3 +1048,46 @@ in `main`, so `daemonlog.Open` goes immediately before that goroutine starts —
 the binding requirement is "open the log before anything writes to it," and the
 processor is the only writer.
 - Released in **v0.3.0** (redistribution via `prata.exe --install` / `Installera-Prata.bat`).
+
+### 2026-06-22: Explicit stale-HWND validation before injection (`inject.IsWindow`)
+
+**Context:**
+
+Transcription is asynchronous: F1-release queues the capture to a worker that
+can take up to ~24s on a slow Berget round. The foreground HWND at press time is
+captured into `transcribeJob.targetHwnd` and carried to
+`transcribeResult.targetHwnd`; before injection, `processEvents` calls
+`inject.RestoreForeground` to bring that window back.
+
+The patient-safety scenario: a doctor dictates into patient A's record, switches
+to patient B's record while the slow backend is still working, and the result
+arrives targeting A's now-closed window. This already failed *safely* —
+`GetWindowThreadProcessId` inside `RestoreForeground` returns thread-ID 0 for a
+dead HWND, so it returns an error and the result is dropped with an error cue —
+but the failure was implicit and its log line ("inject restore foreground
+failed") did not name the actual cause.
+
+**Decision:**
+
+Add a thin `inject.IsWindow(hwnd) bool` wrapper over the Win32 `IsWindow` and
+fast-fail in `processEvents` *before* `RestoreForeground` when the target HWND no
+longer refers to a live window. This is a clarity/speed improvement, not a new
+line of defense — `RestoreForeground` still guards the same case, so the check is
+deliberately redundant rather than load-bearing.
+
+**Two distinct "no window" cases, two messages:**
+
+The pre-existing `res.targetHwnd == 0` guard and the new `!IsWindow` guard are
+*different* failures and must read differently in the log, or a diagnostic is
+useless:
+
+- `targetHwnd == 0` — no foreground window existed *at press time* (nothing was
+  ever captured). Logged as `inject skipped: no target window`.
+- `!IsWindow(targetHwnd)` — a window was captured but has since been *closed*.
+  Logged as `inject skipped: target window gone`.
+
+The daemon-log line for the `== 0` case was relabeled from the earlier "target
+window gone" to "no target window" as part of this change, so the genuine
+window-closed case owns the "gone" wording. Order matters: the `== 0` check runs
+first, because `IsWindow(0)` is also false and would otherwise swallow the
+distinct "nothing captured" case.

@@ -72,6 +72,7 @@ var (
 	procSendInput                  = user32.NewProc("SendInput")
 	procGetForegroundWindow        = user32.NewProc("GetForegroundWindow")
 	procSetForegroundWindow        = user32.NewProc("SetForegroundWindow")
+	procIsWindow                   = user32.NewProc("IsWindow")
 	procGetWindowThreadProcessId   = user32.NewProc("GetWindowThreadProcessId")
 	procAttachThreadInput          = user32.NewProc("AttachThreadInput")
 	procGetClassNameW              = user32.NewProc("GetClassNameW")
@@ -488,6 +489,14 @@ func ForegroundWindow() (uintptr, bool) {
 		return 0, false
 	}
 	return hwnd, true
+}
+
+// IsWindow reports whether hwnd refers to an existing window. It wraps the
+// Win32 IsWindow call. Use this to fast-fail before RestoreForeground when a
+// stale job HWND may have been closed between capture and injection.
+func IsWindow(hwnd uintptr) bool {
+	ret, _, _ := procIsWindow.Call(hwnd)
+	return ret != 0
 }
 
 // ForegroundWindowClass returns the window-class name of the current
