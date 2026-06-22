@@ -8,6 +8,21 @@ that point.
 
 ## [Unreleased]
 
+### Added
+
+- `internal/daemonlog` — a minimal, append-mode per-day daemon log at
+  `%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log`. Under `-H windowsgui` the
+  daemon has no console, so the existing stderr diagnostics are discarded; this
+  gives a durable record of each dictation. `cmd/prata` now mirrors every
+  per-dictation stderr event (capture start, too-short/queue-full drops,
+  transcribe/empty/degenerate/inject outcomes) to this file, stamped with the
+  active backend ID and elapsed time. Lines carry metadata only — backend,
+  timings, char counts, errors — never the transcribed text, so the file is
+  safe by construction. Best-effort and stdlib-only: a log that cannot be opened
+  or written falls back to stderr and never disrupts dictation. `PRATA_DAEMON_LOG`
+  overrides the full path (test isolation, mirroring `PRATA_INSTALL_LOG`). The
+  `logs/` directory and `prata-*.log` files are gitignored.
+
 ### Changed
 
 - `internal/icon/Prata.ico` — replaced the red Prata tray icon with a yellow

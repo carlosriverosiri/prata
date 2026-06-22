@@ -27,6 +27,7 @@ import (
 	"github.com/carlosriveros/prata/internal/audio"
 	"github.com/carlosriveros/prata/internal/auth"
 	"github.com/carlosriveros/prata/internal/cue"
+	"github.com/carlosriveros/prata/internal/daemonlog"
 	"github.com/carlosriveros/prata/internal/dict"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/icon"
@@ -327,6 +328,16 @@ func main() {
 		}
 	}()
 
+	// Open the per-day daemon log before the processor starts emitting events
+	// to it. Best-effort: under -H windowsgui stderr is discarded, so this file
+	// is the only durable record — but a missing log must never be fatal, so a
+	// failure just falls back to stderr and continues. Closed at shutdown.
+	if closer, err := daemonlog.Open(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemonlog: %v (continuing without file log)\n", err)
+	} else {
+		defer closer.Close()
+	}
+
 	// Processor goroutine: drains events sequentially, owning the
 	// audio.Session lifecycle, and applies + injects finished
 	// transcriptions. Single-goroutine ownership means no mutex is needed on
@@ -334,7 +345,7 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(d, events, dictAdds, jobs, results, stopTranscription)
+		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription)
 	}()
 
 	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
@@ -461,7 +472,10 @@ func main() {
 // release without an active session. With the current state machine in
 // internal/hotkey these can't fire, but the cost of the guard is
 // trivial and protects against future listener-state regressions.
-func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}) {
+//
+// client is read only for the active backend ID stamped into each daemonlog
+// line; the transcription itself still runs on the worker goroutine.
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}) {
 	var session *audio.Session
 	var targetHwnd uintptr
 
@@ -495,6 +509,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				session = s
 				cue.PlayStart()
 				fmt.Fprintln(os.Stderr, "recording...")
+				daemonlog.Printf("recording backend=%s", client.ActiveBackend().ID)
 
 			case evRelease:
 				if session == nil {
@@ -516,6 +531,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				// full 30s HTTP timeout before failing. Skip it instead.
 				if len(pcm) < minCaptureBytes {
 					fmt.Fprintln(os.Stderr, "no audio captured, skipping")
+					daemonlog.Printf("capture too short, skipping")
 					continue
 				}
 
@@ -529,6 +545,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 				default:
 					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
+					daemonlog.Printf("transcription queue full, dropping")
 					cue.PlayError()
 				}
 			}
@@ -542,8 +559,11 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 			// guard against degenerate output, and inject. Production runs
 			// -H windowsgui (no console), so the error cue is the only
 			// failure signal on each discard path below.
+			backendID := client.ActiveBackend().ID
+			elapsed := res.elapsed.Seconds()
 			if res.err != nil {
 				fmt.Fprintf(os.Stderr, "transcribe: %v\n", res.err)
+				daemonlog.Printf("transcribe error backend=%s elapsed=%.2fs err=%v", backendID, elapsed, res.err)
 				cue.PlayError()
 				continue
 			}
@@ -555,6 +575,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 			// no clear speech) would otherwise inject a bare newline.
 			if strings.TrimSpace(text) == "" {
 				fmt.Fprintf(os.Stderr, "empty transcription, skipping (%.2fs)\n", res.elapsed.Seconds())
+				daemonlog.Printf("empty transcription backend=%s elapsed=%.2fs", backendID, elapsed)
 				cue.PlayError()
 				continue
 			}
@@ -565,6 +586,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 			// user can re-dictate.
 			if sanity.IsDegenerate(text) {
 				fmt.Fprintf(os.Stderr, "discarded degenerate transcription (ratio %.1f), skipping: %q\n", sanity.Ratio(text), preview(text, 80))
+				daemonlog.Printf("degenerate ratio=%.1f backend=%s elapsed=%.2fs", sanity.Ratio(text), backendID, elapsed)
 				cue.PlayError()
 				continue
 			}
@@ -573,6 +595,7 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 			}
 			if res.targetHwnd == 0 {
 				fmt.Fprintln(os.Stderr, "inject target missing, skipping")
+				daemonlog.Printf("inject skipped: target window gone backend=%s elapsed=%.2fs", backendID, elapsed)
 				cue.PlayError()
 				continue
 			}
@@ -588,10 +611,12 @@ func processEvents(d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, j
 				} else {
 					fmt.Fprintf(os.Stderr, "inject restore foreground failed (ok=%v): %v\n", restoreOK, injectErr)
 				}
+				daemonlog.Printf("inject error backend=%s elapsed=%.2fs err=%v", backendID, elapsed, injectErr)
 				cue.PlayError()
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "injected %q (%.2fs)\n", text, res.elapsed.Seconds())
+			daemonlog.Printf("injected backend=%s elapsed=%.2fs chars=%d", backendID, elapsed, len([]rune(text)))
 		case da := <-dictAdds:
 			// Only this goroutine touches d, so Save+Reload need no lock.
 			// dict.Save persists the rule even when d is nil (corrections
