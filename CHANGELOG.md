@@ -8,6 +8,8 @@ that point.
 
 ## [Unreleased]
 
+## v0.4.0 — 2026-06-23
+
 ### Added
 
 - `internal/daemonlog` — a minimal, append-mode per-day daemon log at
