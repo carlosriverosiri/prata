@@ -5,8 +5,7 @@
 > to understand the entire app — features, technology, design choices, and open
 > questions — without access to the code or the other documents.
 >
-> **Status.** Snapshot **2026-06-21** (after v0.3.0; a few finishing touches sit
-> in `[Unreleased]`). This document is a *distillation* — the running truth lives
+> **Status.** Snapshot **2026-06-23** (v0.4.0). This document is a *distillation* — the running truth lives
 > in `PRATA-MASTER.md`, `PRATA-DESIGN-LOG.md`, `PRATA-GPU-SERVER.md`, `README.md`,
 > and `CHANGELOG.md`. It is not generated automatically; update it when you want a
 > fresh round of review.
@@ -27,8 +26,10 @@ and typed into the window that was active when you pressed F1. A second operatio
 icon. It is written in **Go** with **a single external dependency** (`malgo` for
 audio); everything else is direct Win32 via `syscall`. It is built to be *installed
 and forgotten* ("see and forget") on ~12 shared clinic computers, and the entire
-design is steeped in **patient confidentiality** (audio never to disk, dictated
-medical-record text never to the clipboard/cloud clipboard).
+design is steeped in **patient confidentiality** (patient audio never to disk,
+dictated medical-record text never to the clipboard/cloud clipboard; only
+metadata — backend, timings, error codes, never the transcribed text — is ever
+written to disk).
 
 Prata is a sibling tool to **Diktell** (the same developer's existing, frozen
 dictation app in Rust with local CUDA Whisper). Diktell requires a dedicated GPU;
@@ -105,9 +106,10 @@ operations cannot interleave with each other.
 - **Audio cues** are synthesized in-process (winmm `PlaySoundW`), no audio files:
   start (high tone), stop (low tone), error (double low pulse on all silent error
   paths).
-- **Tray icon** (small red Prata icon): backend selection, "Sök efter
+- **Tray icon** (small yellow microphone badge): backend selection, "Sök efter
   uppdatering…", "Avsluta". The primary way to exit when the app runs at login
-  without a console.
+  without a console. The tooltip shows the running build version and the active
+  backend — e.g. `Prata v0.4.0 — LAN GPU-server` (`Prata dev` on a local build).
 - **Update check** — notifying, never self-updating (see §9.3).
 - **Single-instance guard** — a named, session-bound mutex (`Local\`) → one
   instance per session on a shared PC.
@@ -133,7 +135,8 @@ started on press and stopped on release = zero idle cost). Transcription runs in
 HTTP client + WAV encoder + normalization), `hotkey` (F1/F8 via RegisterHotKey),
 `inject` (hybrid text injection), `dict` (dictionary: embedded baseline +
 override), `sanity` (degenerate-output guard via gzip ratio), `auth` (DPAPI),
-`single` (mutex guard), `cue` (audio cues), `tray` (icon/menu/balloon/update
+`single` (mutex guard), `cue` (audio cues), `daemonlog` (per-day metadata-only
+file log), `tray` (icon/menu/balloon/update
 check), `icon` (`go:embed` of the icon), `installer` (machine-wide
 `--install`/`--uninstall`), `ui` (`MessageBox` helper), `update` (notifying version
 check), `popup` (the F8 popup, Win32/DWM). `cmd/prata/` is the daemon + the
@@ -247,6 +250,11 @@ This is one of the most safety-sensitive decisions.
   - **Allowlist, not denylist:** untested apps default to the proven paste path.
     Nothing gets SendInput until the class has been verified with realistic,
     multi-line text. **Exact** class matching, not prefix.
+  - **Dead-target fast-fail:** before focus is restored the target HWND is
+    re-validated (`inject.IsWindow`). If the window that was foreground at F1
+    press was closed during a slow transcription (e.g. switching from patient
+    A's record to patient B's), the result is dropped with a distinct "target
+    window gone" diagnostic rather than injected into whatever now holds focus.
 - **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
   then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
   confidentiality: medical-record text should not linger in Win+V or sync to the
@@ -342,6 +350,12 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
 
 - **Patient audio is never written to disk** — buffered in memory, discarded after
   the transcription round.
+- **Durable logging is metadata-only.** The daemon writes a per-day log
+  (`%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log`, via `internal/daemonlog`)
+  carrying backend ID, timings, character counts, and error strings — **never the
+  transcribed text or audio**. It is best-effort: a log that cannot be opened or
+  written falls back to stderr and never disrupts dictation (`PRATA_DAEMON_LOG`
+  overrides the path for tests).
 - **Dictated medical-record text never leaves the clipboard** in Chromium/the
   record (the SendInput path) → neither Win+V nor the cloud clipboard.
 - **The Berget key is DPAPI-encrypted** per user/machine
@@ -453,7 +467,8 @@ ideas are most valuable.
 - **Latency:** ~2.6 s mean against Berget (measured); local GPU faster on repeated
   dictation, ~1.85 s model load on a local cold start.
 - **Per-user paths:** `%LOCALAPPDATA%\Prata\{apikey.dat, backend.txt,
-  dictionary-corrections.txt}`.
+  dictionary-corrections.txt, logs\prata-YYYY-MM-DD.log}` (the daemon log is
+  per-day and metadata-only).
 - **Install path:** `%ProgramFiles%\Prata\prata.exe` (read-only), Task Scheduler
   task `Prata` (medium IL, all users).
 - **Build:** `go build -ldflags="-s -w -H windowsgui -X main.version=<tag>" -o
