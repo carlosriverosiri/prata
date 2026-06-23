@@ -356,7 +356,7 @@ func main() {
 	// the only graceful quit path, since Ctrl+C is never delivered.
 	quit := make(chan struct{})
 	var quitOnce sync.Once
-	t := tray.New(icon.ICO, "Prata", func() {
+	t := tray.New(icon.ICO, "Prata "+version, func() {
 		quitOnce.Do(func() { close(quit) })
 	})
 	// "Sök efter uppdatering…": notify-only update check. Must return fast
