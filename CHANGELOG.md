@@ -25,6 +25,14 @@ that point.
 
 ### Changed
 
+- `cmd/prata/main.go` — the tray tooltip base now carries the build version:
+  `tray.New(icon.ICO, "Prata "+version, …)`. On hover it reads `Prata dev` for a
+  local build or `Prata <tag>` for a release, and `Prata <tag> — <backend>` once
+  a backend is selected (the version slots in ahead of the existing
+  ` — <backend>` suffix from `tooltipText`). This is the same string stamped via
+  `-ldflags "-X main.version=…"` and reported by the "Sök efter uppdatering…"
+  check, so the running release is now visible at a glance without opening that
+  menu item. Display-only; no behaviour change.
 - `internal/inject/inject.go`, `cmd/prata/main.go` — the async injection path
   now validates the target window with `inject.IsWindow` before attempting focus
   restoration. If the window that was foreground when `F1` was pressed was closed

@@ -712,7 +712,7 @@ is selected without a key.
 Right-click the tray icon → choose **Rngv GPU-server (Tailscale) / LAN GPU-server / Berget Ai**
 (radio buttons, the active choice is marked). The active backend is always shown:
 
-- in the tray tooltip (`Prata — Rngv GPU-server (Tailscale)`), and
+- in the tray tooltip (`Prata <version> — Rngv GPU-server (Tailscale)`), and
 - as a balloon when you switch (`Aktiv transkribering: Rngv GPU-server (Tailscale)`).
 
 The choice is saved as a stable ID (`Hemma`, `Jobb`, or `Berget`) in
