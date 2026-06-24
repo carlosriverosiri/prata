@@ -8,6 +8,17 @@ that point.
 
 ## [Unreleased]
 
+### Fixed
+
+- `cmd/prata/rsrc_windows_amd64.syso` (new) — `prata.exe` now carries a Windows
+  icon resource, so Explorer and the taskbar show the Prata icon instead of the
+  generic default. The `//go:embed Prata.ico` in `internal/icon/` only feeds the
+  runtime tray icon; the executable's file icon comes from a linked `.syso`,
+  which the binary lacked. The committed resource is generated from
+  `internal/icon/Prata.ico` with `akavel/rsrc` and `go build` links any `*.syso`
+  in the main package automatically, so the CI release build on `windows-latest`
+  picks it up too. Regeneration is documented in the README build section.
+
 ### Changed
 
 - `.github/workflows/release.yml` — bumped the three GitHub Actions to their
