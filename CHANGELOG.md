@@ -8,6 +8,15 @@ that point.
 
 ## [Unreleased]
 
+### Changed
+
+- `.github/workflows/release.yml` — bumped the three GitHub Actions to their
+  Node 24 runtimes (`actions/checkout@v7`, `actions/setup-go@v6`,
+  `softprops/action-gh-release@v3`), clearing the "Node.js 20 is deprecated"
+  warning GitHub now emits on every release run. Release behaviour is unchanged —
+  the same gofmt/vet/build/test gates run and the same assets (`prata.exe` plus
+  the USB `.bat` wrappers) ship. The pinned major tags were verified to exist.
+
 ## v0.4.0 — 2026-06-23
 
 ### Added
