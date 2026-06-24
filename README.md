@@ -258,6 +258,16 @@ go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/p
 `CGO_ENABLED=1` is required (it is the default when a C compiler is
 present).
 
+The Explorer/taskbar icon of `prata.exe` comes from the committed Windows
+resource object `cmd/prata/rsrc_windows_amd64.syso`, which `go build` links in
+automatically (the `//go:embed Prata.ico` in `internal/icon/` only feeds the
+runtime tray icon, not the executable's file icon). Regenerate the `.syso` if
+`internal/icon/Prata.ico` changes:
+
+```powershell
+go run github.com/akavel/rsrc@latest -ico internal/icon/Prata.ico -arch amd64 -o cmd/prata/rsrc_windows_amd64.syso
+```
+
 > **Antivirus / EDR note.** Behavioural security products (e.g. Webroot
 > SecureAnywhere) may block a freshly built, unsigned `prata.exe` from
 > launching — Prata registers global hotkeys, captures the microphone, and
