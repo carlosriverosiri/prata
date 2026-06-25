@@ -610,21 +610,22 @@ ideas are most valuable.
 14. **Unattended longevity / "see and forget" health (partly addressed).** This is
     the least-defended axis: the tool can **silently stop working** (F1 hotkey
     unavailable, a crash, the Task Scheduler task disabled, a Defender reset) and
-    nobody knows until a clinician notices dictation died weeks later. (*First
-    slice shipped 2026-06-25:* a durable startup log anchor `daemon started …`, and
-    the darkest mode made visible — an F1 `RegisterHotKey` failure now shows a
-    modal box instead of exiting silently. *Second slice, same day:* a Task
-    Scheduler **restart-on-failure** for the crash class — **bounded 3× / PT1M**,
-    so a transient crash self-heals but a permanent failure stays down instead of
-    looping; and a **persistent degraded tray state** (`SetDegraded`/`ClearDegraded`,
-    a tooltip suffix that does not fade like a balloon), driven today by the
-    backend-outage path — `SVARAR INTE` while a local backend is unreachable,
-    cleared on recovery — which also addresses #11.) **Still open** (the developer's
-    decision): whether an F1 failure should **self-heal** (stay alive + re-probe)
-    instead of exit — the one real behaviour change, and the case the degraded
-    tray state is already built to surface (`F1 UPPTAGEN`); plus a low-value
-    startup mic probe. The hard limit stands: a *non-running* daemon cannot report
-    a deleted task or a pre-launch AV block — that needs the OS or an external probe.
+    nobody knows until a clinician notices dictation died weeks later. (*Shipped
+    2026-06-25, three slices:* (1) a durable startup log anchor `daemon started …`;
+    (2) a Task Scheduler **restart-on-failure** for the crash class — **bounded
+    3× / PT1M**, so a transient crash self-heals but a permanent failure stays down
+    instead of looping — and a **persistent degraded tray state**
+    (`SetDegraded`/`ClearDegraded`, a tooltip suffix that does not fade like a
+    balloon), driven by the backend-outage path (`SVARAR INTE`, cleared on recovery;
+    also addresses #11); (3) **F1 self-heal** — an F1 `RegisterHotKey` failure no
+    longer exits the daemon: it stays alive, cues + balloons + shows a persistent
+    `F1 UPPTAGEN` badge, and re-probes every 3 s, re-registering the instant F1
+    frees (typically when the offending program closes) — all without a restart.
+    Windows exposes no way to name the program holding F1, so the balloon says
+    "ett annat program". The first slice's modal box now covers only a genuine
+    message-loop system error.) **Still open:** only a low-value startup mic probe.
+    The hard limit stands: a *non-running* daemon cannot report a deleted task or a
+    pre-launch AV block — that needs the OS or an external probe.
 
 ---
 

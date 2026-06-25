@@ -1487,8 +1487,47 @@ and the mic probe stays deferred as low-value.
   The mechanism is deliberately generic: item 1 will reuse `SetDegraded("F1
   UPPTAGEN")` the moment the self-heal decision lands.
 
-*Still deferred:* **F1 self-heal vs fatal** (the one real behaviour change — needs
-the developer's call) and the **startup mic probe** (low value; the silent-capture
-guard already names a dead mic on the first dictation). The hard limit is
-unchanged: a *non-running* daemon cannot announce a deleted task or a pre-launch
-AV block.
+**Update — third slice shipped: F1 self-heal (the one behaviour change).** After a
+design discussion with the developer, F1 contention no longer exits the daemon; it
+self-heals. The discussion settled three things:
+
+- *Notify, don't just silently fix.* The developer's framing: the program that
+  grabs F1 is almost never one you dictate into (journal systems don't claim F1),
+  so the right thing is to **tell** the user — a cue and a balloon naming the
+  problem and the action ("close that program") — not to fix it invisibly.
+- *But notify-and-give-up strands the user.* If the daemon exits after the notice,
+  then once the user closes the offending program the daemon is **gone** and must
+  be restarted by hand — exactly what a non-technical clinician on a shared PC
+  can't do. So the notice is the "tell me" half and **staying alive + auto-recover**
+  is the "don't make me restart it" half; together they beat either alone. The
+  persistent `F1 UPPTAGEN` badge (slice two) resolves the only objection to staying
+  alive — that an "alive but not working" state could be mistaken for working.
+- *We can't name the program — Windows won't say.* The ideal balloon ("F1 is taken
+  by *X*") isn't reachable: `RegisterHotKey` returns only "already registered", and
+  there is no clean, reliable API to ask which process owns a global hotkey. So the
+  balloon says "ett annat program", not the name. (A heuristic guess — spotting a
+  stray `prata.exe`/Diktell — was considered and left out as unreliable.)
+
+**Mechanics.** The listener (`internal/hotkey`) no longer treats an F1
+`RegisterHotKey` failure as fatal. It stays in its message loop and re-probes F1
+every `f1RetryInterval` (3 s). The retry must run on the loop thread, because
+`RegisterHotKey` is bound to the thread that pumps the queue, so a helper goroutine
+only `PostThreadMessageW`s a private `wmRetryF1` wake; the loop thread does the
+actual re-registration. New `SetOnF1State(unavailable, recovered)` callbacks report
+the transitions; `cmd/prata` routes them through the **processor goroutine** — the
+single owner of the tray health state, where the failover `SVARAR INTE` also lives,
+so the two degraded reasons can't fight (and can't co-occur: no dictation, hence no
+backend failure, happens while F1 is down). F8 was decoupled from F1 (independent
+keys), so the quick-fix still registers even while F1 is contended. The first
+slice's modal box is no longer used for the F1 case (a self-healing condition
+shouldn't block); the box now covers only a genuine message-loop *system* error,
+after which the slice-two restart-on-failure relaunches the daemon.
+
+**Live-tested** (the real listener wired to a tray): with another program holding
+F1, the daemon stayed up, cued, ballooned, and showed `F1 UPPTAGEN`; releasing F1
+let it re-register and clear the badge within ~3 s. Verified through the real code
+path, not a unit mock (the retry is entangled with the Win32 message loop).
+
+*Still deferred:* only the **startup mic probe** (low value; the silent-capture
+guard already names a dead mic on the first dictation). The hard limit is unchanged:
+a *non-running* daemon cannot announce a deleted task or a pre-launch AV block.
