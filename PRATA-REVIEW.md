@@ -113,7 +113,10 @@ operations cannot interleave with each other.
 - **Backend selector** in the tray menu (radio buttons) — see §7.
 - **Audio cues** are synthesized in-process (winmm `PlaySoundW`), no audio files:
   start (high tone), stop (low tone), error (double low pulse on all silent error
-  paths).
+  paths). For the one ambiguous-cue case that is specific and actionable — a
+  muted/disconnected microphone — Prata additionally **speaks** the reason aloud
+  ("Inget ljud. Är mikrofonen påslagen?") via the Windows speech engine
+  (`internal/speak`, SAPI), since the generic cue cannot say *which* failure it is.
 - **Tray icon** (small yellow microphone badge): backend selection, "Sök efter
   uppdatering…", "Avsluta". The primary way to exit when the app runs at login
   without a console. The tooltip shows the running build version and the active
@@ -143,7 +146,8 @@ started on press and stopped on release = zero idle cost). Transcription runs in
 HTTP client + WAV encoder + normalization), `hotkey` (F1/F8 via RegisterHotKey),
 `inject` (hybrid text injection), `dict` (dictionary: embedded baseline +
 override), `sanity` (degenerate-output guard via gzip ratio), `auth` (DPAPI),
-`single` (mutex guard), `cue` (audio cues), `daemonlog` (per-day metadata-only
+`single` (mutex guard), `cue` (synthesized audio cues), `speak` (SAPI
+text-to-speech for a spoken mic-off hint), `daemonlog` (per-day metadata-only
 file log), `tray` (icon/menu/balloon/update
 check), `icon` (`go:embed` of the icon), `installer` (machine-wide
 `--install`/`--uninstall`), `ui` (`MessageBox` helper), `update` (notifying version
@@ -578,11 +582,17 @@ ideas are most valuable.
     app's own copy, and the entry is already in history before we could re-mark it.
     Is there a way to read a selection without an app-driven clipboard write (UI
     Automation `TextPattern`?), or to scrub the resulting Win+V entry?
-11. **Failover-hint discoverability (new, open).** The once-per-streak tray balloon
-    is the only signal of a backend outage. On a shared clinic PC where the
-    clinician may not be watching the tray, is a transient balloon discoverable
-    enough — or should a persistent surface (e.g. a tray-icon state change) be
-    considered, without crossing into auto-switching?
+11. **Failover-hint discoverability (new, partly addressed).** The once-per-streak
+    tray balloon is the only signal of a backend outage. On a shared clinic PC
+    where the clinician may not be watching the tray, is a transient balloon
+    discoverable enough — or should a persistent surface (e.g. a tray-icon state
+    change) be considered, without crossing into auto-switching? (*A first answer,
+    2026-06-25:* for the most actionable failure — a muted/disconnected mic —
+    Prata now **speaks** the reason aloud ("Inget ljud. Är mikrofonen påslagen?",
+    `internal/speak` via SAPI), which is unmissable in a way a balloon is not. The
+    open question is whether to extend spoken hints to other specific failures, or
+    add a persistent visual state, vs. the cost of a voice in a room with a
+    patient.)
 12. **Icon resource drift (new, minor).** The committed `rsrc_windows_amd64.syso`
     (the exe's file icon) is generated from `internal/icon/Prata.ico` via
     `akavel/rsrc` and auto-linked by `go build`. Should CI guard against drift

@@ -37,6 +37,7 @@ import (
 	"github.com/carlosriveros/prata/internal/popup"
 	"github.com/carlosriveros/prata/internal/sanity"
 	"github.com/carlosriveros/prata/internal/single"
+	"github.com/carlosriveros/prata/internal/speak"
 	"github.com/carlosriveros/prata/internal/transcribe"
 	"github.com/carlosriveros/prata/internal/tray"
 	"github.com/carlosriveros/prata/internal/ui"
@@ -619,6 +620,12 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 					fmt.Fprintf(os.Stderr, "silent capture (peak=%d, mic muted?), skipping\n", peak)
 					daemonlog.Printf("silent capture peak=%d, skipping", peak)
 					cue.PlayError()
+					// Spoken hint: unlike the generic error cue (which also means
+					// backend-down, window-gone, …), a muted/disconnected mic is a
+					// specific, actionable failure. Say it out loud so the
+					// clinician hears the reason even while looking at the journal,
+					// not the tray. Best-effort, async (own goroutine), never blocks.
+					go speak.Say("Inget ljud. Är mikrofonen påslagen?")
 					continue
 				}
 

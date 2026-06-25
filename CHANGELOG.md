@@ -23,6 +23,16 @@ or misframed, two were genuinely worth acting on):
   far below real speech, so a genuine quiet dictation is never dropped) the
   capture is treated as silence. Best-effort and conservative; the dropped peak
   is logged so the floor can be retuned if ever needed. `audio.Peak` is unit-tested.
+- `internal/speak` (new) + `cmd/prata` — **spoken hint for the silent-mic case.**
+  On the silent-capture path Prata now also says a short sentence out loud —
+  "Inget ljud. Är mikrofonen påslagen?" — via the Windows built-in speech engine
+  (SAPI 5 / `SpVoice` COM through `syscall`, no new external dependency). The
+  generic error cue is ambiguous (it also means backend-down, window-gone, …); a
+  muted mic is a specific, actionable failure, and a spoken sentence is unmissable
+  where a tray balloon would be missed (the clinician is looking at the journal,
+  not the tray — see PRATA-REVIEW §15 #11). Best-effort and async (its own
+  goroutine, synchronous SAPI lifecycle so playback is never cut off); if SAPI is
+  unavailable it is a silent no-op. `cmd/speaktest` exercises it in isolation.
 
 ### Fixed
 
