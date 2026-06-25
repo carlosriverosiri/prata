@@ -27,6 +27,7 @@ Each document has a distinct job. Know which one to update.
 | `PRATA-GPU-SERVER.md` | Backend & server setup: network topology, Tailscale vs LAN, firewall, deployment. | English |
 | `PRATA-DESIGN-LOG.md` | Design decisions and Win32 traps — the *"how I reasoned"* log (dated entries). | English |
 | `CHANGELOG.md` | Release / work history (Keep a Changelog). | English |
+| `ROADMAP.md` | Curated status + backlog: what is done and the candidate improvements (high-level index; detail lives in `CHANGELOG.md` and `PRATA-REVIEW.md` §15). | English |
 | `AGENTS.md` | This file — process and policy for agents. | English |
 | `CONTRIBUTING.md` | Developer setup and contribution workflow. | English |
 | `PRATA-REVIEW.md` | Self-contained snapshot for soliciting external AI feedback. **Derived, not a source of truth** — regenerated on demand, not kept perfectly in sync. | English |
