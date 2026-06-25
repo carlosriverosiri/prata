@@ -1371,7 +1371,11 @@ goes wrong" family:
 - **Silent-capture guard.** `minCaptureBytes` checked only length, so a muted /
   disconnected / wrong-default microphone produced a long-enough but silent
   capture; Whisper hallucinates a short phrase on silence, which then lands in the
-  journal with no cue. Added `audio.Peak` (loudest sample) and a conservative
+  journal with no cue. A **muted mic is a recurring real case**, not a rare
+  misconfiguration: on a shared clinic PC a nurse mutes her microphone to talk to
+  a doctor who stops by to ask something, then forgets to unmute it — the next
+  dictation captures silence. So the guard (and the named reminder below) pays off
+  in everyday use, which is why it earns its keep. Added `audio.Peak` (loudest sample) and a conservative
   `silencePeakFloor` (512, far below real speech) — a silent capture now drops
   with the error cue. Conservative so a genuine quiet dictation is never dropped;
   the dropped peak is logged so the floor can be retuned. **Plus a named hint:**
