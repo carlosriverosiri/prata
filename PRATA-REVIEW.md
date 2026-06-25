@@ -468,9 +468,10 @@ ideas are most valuable.
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?
-5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is specified but not
-   built. Is manual fold-in ahead of a release right, or should clinic corrections
-   be synchronized in some smarter way across ~12 machines?
+5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is now built (folds
+   per-user override entries into the embedded baseline ahead of a release). Is
+   manual fold-in ahead of a release right, or should clinic corrections be
+   synchronized in some smarter way across ~12 machines?
 6. **Backend robustness.** No silent failover (deliberate). An *explicit*,
    notify-only hint is now implemented (`internal/failover`): after two
    consecutive failures on a local backend the tray suggests a manual switch,
