@@ -80,6 +80,16 @@ var inputMu sync.Mutex
 // so it tracks the sample rate.
 const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcribe.BitsPerSample / 8 / 10
 
+// silencePeakFloor is the loudest 16-bit sample (out of 32767 full scale) a
+// capture may reach and still be treated as silence — a muted, disconnected,
+// or wrong-default microphone. Such a capture is the right length but carries
+// no speech; sending it to Whisper makes it hallucinate a short phrase that
+// then lands in the journal with no cue. 512 (~1.5% of full scale) is far below
+// real speech, which peaks in the thousands, so a genuine (even soft) dictation
+// is never dropped; it is deliberately conservative — raising it would catch
+// more no-speech captures at the risk of dropping a very quiet one.
+const silencePeakFloor = 512
+
 // transcribeJob carries a finished audio capture to the worker. targetHwnd
 // is the foreground window captured when F1 was pressed; the result must
 // return to that same window before injection, because async transcription
@@ -333,7 +343,7 @@ func main() {
 					return
 				}
 				start := time.Now()
-				text, terr := client.Transcribe(bytes.NewReader(transcribe.EncodePCM(job.pcm)))
+				text, terr := transcribeSafely(client, job.pcm)
 				result := transcribeResult{
 					text:       text,
 					elapsed:    time.Since(start),
@@ -387,6 +397,17 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
+		// A panic in the processor would otherwise silently take the whole
+		// daemon down. Recover so the failure is logged and audible rather than a
+		// silent crash on a "see and forget" tool. (The processor stops, but the
+		// process stays alive and the error is recorded — not vanished.)
+		defer func() {
+			if p := recover(); p != nil {
+				daemonlog.Printf("PANIC recovered in processor: %v", p)
+				fmt.Fprintf(os.Stderr, "PANIC recovered in processor: %v\n", p)
+				cue.PlayError()
+			}
+		}()
 		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription, t, failoverNotifier)
 	}()
 	// "Sök efter uppdatering…": notify-only update check. Must return fast
@@ -491,6 +512,23 @@ func main() {
 	}
 }
 
+// transcribeSafely runs one transcription, turning a panic into an ordinary
+// error so a bad capture or a bug in the transcribe path can never crash the
+// daemon. The worker goroutine is the one place that calls out to the network
+// and audio-encoding code; a panic there would otherwise take the whole "see
+// and forget" process down silently. The recovered error flows back as a normal
+// result, so the processor plays the error cue and the user re-dictates.
+func transcribeSafely(client *transcribe.Client, pcm []byte) (text string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("transcription panic: %v", p)
+			daemonlog.Printf("PANIC recovered in transcription worker: %v", p)
+			fmt.Fprintf(os.Stderr, "PANIC recovered in transcription worker: %v\n", p)
+		}
+	}()
+	return client.Transcribe(bytes.NewReader(transcribe.EncodePCM(pcm)))
+}
+
 // processEvents drains the event channel sequentially, managing the
 // audio.Session lifecycle and handing finished captures to the transcription
 // worker over jobs. Transcribed text comes back over results, where the
@@ -567,6 +605,19 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				if len(pcm) < minCaptureBytes {
 					fmt.Fprintln(os.Stderr, "no audio captured, skipping")
 					daemonlog.Printf("capture too short, skipping")
+					cue.PlayError()
+					continue
+				}
+
+				// A long-enough but SILENT capture means a muted / disconnected /
+				// wrong-default microphone: the user spoke but nothing was
+				// recorded. Whisper hallucinates a short phrase on silence, which
+				// would then land in the journal with no cue. Drop it audibly
+				// instead. Best-effort and conservative (silencePeakFloor is far
+				// below real speech), so a genuine quiet dictation is never lost.
+				if peak := audio.Peak(pcm); peak < silencePeakFloor {
+					fmt.Fprintf(os.Stderr, "silent capture (peak=%d, mic muted?), skipping\n", peak)
+					daemonlog.Printf("silent capture peak=%d, skipping", peak)
 					cue.PlayError()
 					continue
 				}
@@ -757,6 +808,16 @@ func preview(s string, n int) string {
 // clears the single-flight guard on return.
 func f8Worker(sourceHwnd uintptr, dictAdds chan<- dictAdd) {
 	defer f8Busy.Store(false)
+	// A panic in the F8 flow (clipboard, popup, paste-back) must not crash the
+	// daemon; recover, log, and cue so dictation keeps working. f8Busy is reset
+	// by the defer above, so a later F8 tap is not blocked.
+	defer func() {
+		if p := recover(); p != nil {
+			daemonlog.Printf("PANIC recovered in f8 worker: %v", p)
+			fmt.Fprintf(os.Stderr, "PANIC recovered in f8 worker: %v\n", p)
+			cue.PlayError()
+		}
+	}()
 
 	inputMu.Lock()
 	defer inputMu.Unlock()

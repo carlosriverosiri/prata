@@ -87,3 +87,29 @@ func (s *Session) Stop() ([]byte, error) {
 	copy(out, s.pcm.Bytes())
 	return out, nil
 }
+
+// Peak returns the largest absolute 16-bit sample value in pcm (S16LE), i.e.
+// the loudest instant of the capture. A muted, disconnected, or wrong-device
+// microphone yields near-silence (a peak close to zero) even when the user
+// spoke; real speech peaks in the thousands. The caller uses this to drop a
+// silent capture instead of sending silence to Whisper, which hallucinates
+// short phrases ("Tack för att ni tittade") on it. A trailing odd byte (which
+// a well-formed S16LE buffer never has) is ignored.
+func Peak(pcm []byte) int16 {
+	var peak int16
+	for i := 0; i+1 < len(pcm); i += 2 {
+		s := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8)
+		// -32768 has no positive counterpart; clamp its magnitude to 32767.
+		mag := s
+		if mag < 0 {
+			if mag == -32768 {
+				return 32767
+			}
+			mag = -mag
+		}
+		if mag > peak {
+			peak = mag
+		}
+	}
+	return peak
+}

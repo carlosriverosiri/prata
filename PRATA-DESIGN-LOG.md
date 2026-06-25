@@ -1346,3 +1346,45 @@ briefly enters Win+V — inherent to reading a selection by synthesizing a copy,
 not removable after the fact. And the events channel (buffer 4) can briefly
 backpressure under rapid dictation during a long injection — it delays, never
 loses.
+
+### 2026-06-25: Multi-model external review (council) — triaged, two fixes acted on
+
+PRATA-REVIEW.md was run through a four-model AI council (Claude Opus, Gemini, GPT,
+Grok) with a deliberation round. The council surfaced ~51 distinct findings; each
+was verified **against the actual v0.5.0 code** (a 57-agent triage), because a
+plausible external finding is worth nothing until checked — the same lesson as the
+Notepad++ marker red-herring. Most findings were already handled in v0.5.0
+(staleness guard, paste race, 30s HTTP timeout — the "net/http has no timeout"
+claim was a model hallucination the council itself flagged, UIPI/medium-IL,
+markers, DPAPI, mutex), misframed, or hallucinated.
+
+The council's headline — **wrong-patient injection** — was set aside as misframed:
+it is inherent to switching windows in any journal system, not specific to Prata,
+and transcription removes the need to type the patient name at all (the journal
+pulls identity from the central population register). Prata should not, and does
+not, manage patient identity; the one Prata-specific sliver (a late async result)
+is already covered by the staleness guard.
+
+Two findings were genuinely worth acting on, both in the "no dictation silently
+goes wrong" family:
+
+- **Silent-capture guard.** `minCaptureBytes` checked only length, so a muted /
+  disconnected / wrong-default microphone produced a long-enough but silent
+  capture; Whisper hallucinates a short phrase on silence, which then lands in the
+  journal with no cue. Added `audio.Peak` (loudest sample) and a conservative
+  `silencePeakFloor` (512, far below real speech) — a silent capture now drops
+  with the error cue. Conservative so a genuine quiet dictation is never dropped;
+  the dropped peak is logged so the floor can be retuned.
+- **Panic recovery.** The long-running goroutines had no `recover()`; a panic in
+  the transcription worker, F8 worker, or processor would silently take the
+  daemon down — the worst outcome for a "see and forget" tool. Worker panics now
+  become ordinary errors (`transcribeSafely`); F8 and the processor recover, log,
+  and cue.
+
+Set aside as documented decisions, not code (see PRATA-REVIEW §15): the LAN GPU's
+plaintext-HTTP + unauthenticated response (real, but a clinic-LAN threat model and
+a GPU-server-side change — the developer's network-trust call); a "see and forget"
+**health/longevity signal** for silent task/hotkey breakage (a larger design
+question, the genuinely under-defended axis); clipboard text stranded on a hard
+kill (a ~400ms window, markers limit the blast radius); and the F8 Win+V leak
+(inherent to reading a selection via synthetic Ctrl+C).

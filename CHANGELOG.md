@@ -8,6 +8,30 @@ that point.
 
 ## [Unreleased]
 
+Hardening from a multi-model external-review triage (the council ran against the
+v0.5.0 doc; each finding was verified against the code — most were already handled
+or misframed, two were genuinely worth acting on):
+
+### Added
+
+- `internal/audio` + `cmd/prata` — **silent-capture guard.** A capture that is
+  long enough but carries no sound (a muted, disconnected, or wrong-default
+  microphone) is now dropped with the error cue instead of sent to Whisper, which
+  hallucinates a short phrase ("Tack för att ni tittade") on silence that would
+  otherwise land in the journal with no feedback. New `audio.Peak` returns the
+  loudest 16-bit sample; below `silencePeakFloor` (512, ~1.5% of full scale —
+  far below real speech, so a genuine quiet dictation is never dropped) the
+  capture is treated as silence. Best-effort and conservative; the dropped peak
+  is logged so the floor can be retuned if ever needed. `audio.Peak` is unit-tested.
+
+### Fixed
+
+- `cmd/prata` — **panic recovery on the long-running goroutines** so a bug can no
+  longer silently kill the "see and forget" daemon. The transcription worker now
+  runs each job through `transcribeSafely`, turning a panic into an ordinary
+  error (error cue + log, worker keeps running); the F8 worker and the processor
+  goroutine recover, log, and cue rather than crashing the process.
+
 ## v0.5.0 — 2026-06-25
 
 ### Added

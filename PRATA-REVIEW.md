@@ -563,6 +563,13 @@ ideas are most valuable.
    keyboards (requires Fn+F1). A better key choice, or is this right?
 9. **General ideas.** What is missing for this to be a robust clinical tool for
    years without supervision? Which failure modes have we not thought of?
+   (*Post-review note 2026-06-25:* a multi-model council pass was run and triaged
+   against the code. Two findings were acted on — a **silent-capture guard** (a
+   muted mic no longer injects Whisper's hallucinated boilerplate; it drops with
+   the error cue) and **panic recovery** on the long-running goroutines (a bug no
+   longer silently kills the daemon). The wrong-patient theme was set aside as
+   misframed — see the design log. The remaining open items it surfaced are #13
+   and #14 below.)
 10. **F8 quick-fix clipboard leak (new, open).** F8's `CopySelection` reads the
     selection by synthesizing **Ctrl+C**, which makes the *app itself* copy the
     selected medical-record text to the clipboard — an unmarked write that enters
@@ -581,6 +588,24 @@ ideas are most valuable.
     `akavel/rsrc` and auto-linked by `go build`. Should CI guard against drift
     between `Prata.ico` and the committed `.syso`, so an icon change cannot silently
     ship a stale file icon?
+13. **Transport security + backend-response authenticity (new, open).** The local
+    GPU backends (`Hemma`/`Jobb`) are reached over **plaintext HTTP** with no auth,
+    and every backend's transcription response is JSON-decoded and typed into the
+    record with **no integrity check**. The current model trusts the clinic LAN
+    perimeter — but an attacker on that LAN (ARP spoof / MITM / a compromised host)
+    could read patient audio in transit *and* inject attacker-chosen text into the
+    journal, with no human review step. Is the LAN-perimeter trust acceptable, or
+    is this worth HTTPS (self-signed + pinned) and/or an HMAC on the response?
+    Note: the fix needs the **GPU-server side** too, not just Prata.
+14. **Unattended longevity / "see and forget" health (new, open).** This is the
+    least-defended axis. If the Task Scheduler task is disabled (an OS feature
+    update, an admin), the `RegisterHotKey(F1)` fails, a Defender exclusion is
+    reset, the GitHub update API changes, or Tailscale auth rotates — the tool can
+    **silently stop working** on an unmanaged PC, and nobody knows until a clinician
+    notices dictation died (possibly weeks later). There is no health signal or
+    telemetry. What is the lightest mechanism (a startup self-check + visible
+    state? a periodic heartbeat to a log someone reads?) that fits the minimalism
+    budget and would surface silent breakage before a clinician hits it?
 
 ---
 
