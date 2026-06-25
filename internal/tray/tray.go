@@ -44,6 +44,11 @@ const (
 	// the icon. Distinct from callbackMsg.
 	balloonMsg = wmUser + 2
 
+	// degradedMsg is the private message SetDegraded posts (from any goroutine)
+	// so the message-loop thread refreshes the tooltip with (or without) the
+	// persistent degraded suffix. Distinct from balloonMsg/callbackMsg.
+	degradedMsg = wmUser + 3
+
 	// AppendMenuW / TrackPopupMenu / CheckMenuRadioItem flags.
 	mfString       = 0x0000
 	mfSeparator    = 0x0800
@@ -204,6 +209,15 @@ type Tray struct {
 	balloonMu    sync.Mutex
 	balloonTitle string
 	balloonText  string
+
+	// degradedReason is a persistent problem suffix shown in the tooltip
+	// (e.g. "SVARAR INTE" or "F1 UPPTAGEN"). Empty means healthy. SetDegraded
+	// (any goroutine) writes it under degradedMu and posts degradedMsg; the
+	// message-loop thread reads it in tooltipText under the same lock. Unlike a
+	// balloon it does not fade, so a failure stays readable on hover until it
+	// is cleared — the "see and forget" health surface.
+	degradedMu     sync.Mutex
+	degradedReason string
 
 	// The fields below are created in Run and then only touched on the
 	// message-loop thread (Run itself and the WndProc it dispatches), so
@@ -422,6 +436,11 @@ func (t *Tray) wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		t.balloonMu.Unlock()
 		t.showBalloon(title, text)
 		return 0
+	case uint32(message) == degradedMsg:
+		// SetDegraded posted this from another goroutine; the new reason is
+		// already stashed, so just rebuild the tooltip on the owning thread.
+		t.updateTooltip()
+		return 0
 	case t.taskbarCreatedMsg != 0 && uint32(message) == t.taskbarCreatedMsg:
 		// The shell (re)started: (re-)add the icon so it appears/reappears.
 		t.addIcon()
@@ -508,6 +527,26 @@ func (t *Tray) Notify(title, text string) {
 	procPostMessageW.Call(t.hwnd.Load(), uintptr(balloonMsg), 0, 0)
 }
 
+// SetDegraded marks a persistent problem on the tray: the tooltip gains an
+// uppercase " — <reason>" suffix that stays until cleared, so a failure is
+// still readable on hover long after a one-shot balloon has faded (the
+// "see and forget" health surface). A balloon says it once; this keeps saying
+// it. Safe to call from any goroutine: like Notify it stashes the reason under
+// a lock and posts a private message to the message-loop thread, which owns the
+// icon and refreshes the tooltip. An empty reason is equivalent to
+// ClearDegraded. Blocks only until Run has reached its start signal.
+func (t *Tray) SetDegraded(reason string) {
+	<-t.started
+	t.degradedMu.Lock()
+	t.degradedReason = reason
+	t.degradedMu.Unlock()
+	procPostMessageW.Call(t.hwnd.Load(), uintptr(degradedMsg), 0, 0)
+}
+
+// ClearDegraded removes the degraded suffix, returning the tooltip to its
+// healthy "Prata <version> — <backend>" form. Safe from any goroutine.
+func (t *Tray) ClearDegraded() { t.SetDegraded("") }
+
 // showBalloon updates the existing icon with balloon info (NIF_INFO) so the
 // shell shows a notification toast. It runs on the message-loop thread, where
 // t.nid is otherwise touched, so the field writes need no lock. uFlags is
@@ -526,13 +565,24 @@ func (t *Tray) showBalloon(title, text string) {
 	t.nid.uFlags = prevFlags
 }
 
-// tooltipText is the base tooltip plus the active backend name when a
-// backend selector is configured, e.g. "Prata — Rngv GPU-server (Tailscale)".
+// tooltipText is the base tooltip plus the active backend name when a backend
+// selector is configured, plus a persistent degraded suffix when one is set,
+// e.g. "Prata — Rngv GPU-server (Tailscale) — SVARAR INTE". Called on the
+// message-loop thread (Run and updateTooltip), where backendNames/activeBackend
+// are owned; only degradedReason crosses goroutines, so just that read is
+// locked.
 func (t *Tray) tooltipText() string {
+	s := t.tooltip
 	if n := len(t.backendNames); n > 0 && t.activeBackend >= 0 && t.activeBackend < n {
-		return t.tooltip + " — " + t.backendNames[t.activeBackend]
+		s += " — " + t.backendNames[t.activeBackend]
 	}
-	return t.tooltip
+	t.degradedMu.Lock()
+	reason := t.degradedReason
+	t.degradedMu.Unlock()
+	if reason != "" {
+		s += " — " + reason
+	}
+	return s
 }
 
 // updateTooltip refreshes the tray tooltip to show the active backend. Runs
