@@ -10,6 +10,18 @@ that point.
 
 ### Added
 
+- `internal/failover` (new) + `cmd/prata` — an explicit, notify-only backend
+  failover hint. When the active local GPU backend fails to respond on two
+  consecutive dictations, the tray shows a one-time balloon ("… svarar inte
+  upprepade gånger. Byt backend i menyn vid behov (t.ex. Berget Ai).") so the
+  user can tell a backend outage from a bad dictation and switch in the menu.
+  Prata still has **no silent failover**: nothing switches automatically and
+  patient audio is never auto-routed to the cloud — the switch stays a
+  deliberate menu action. The hint fires at most once per outage streak and
+  resets on the first successful response. The decision logic lives in the
+  stdlib-only `internal/failover` package (unit-tested); `cmd/prata` wires it to
+  the transcription error path and `tray.Notify`, and records the event in the
+  daemon log.
 - `cmd/dict-foldin` (new) — the build-time tool that folds valuable per-user
   dictionary override entries into the embedded baseline ahead of a release, so
   clinic corrections (domain knowledge, not personal preference) ship to every

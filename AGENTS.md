@@ -98,6 +98,7 @@ prata/
     ├── cue/        # audio feedback tones
     ├── daemonlog/  # durable per-dictation file log (%LOCALAPPDATA%\Prata\logs, metadata only)
     ├── dict/       # correction dictionary (embedded baseline + per-user override)
+    ├── failover/   # notify-only backend-failure hint (never auto-switches)
     ├── hotkey/     # global F1/F8
     ├── icon/       # tray icon asset
     ├── inject/     # SendInput / clipboard text injection

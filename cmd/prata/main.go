@@ -29,6 +29,7 @@ import (
 	"github.com/carlosriveros/prata/internal/cue"
 	"github.com/carlosriveros/prata/internal/daemonlog"
 	"github.com/carlosriveros/prata/internal/dict"
+	"github.com/carlosriveros/prata/internal/failover"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/icon"
 	"github.com/carlosriveros/prata/internal/inject"
@@ -104,6 +105,11 @@ type transcribeResult struct {
 // failure and pile up stale audio; past this depth the processor drops the
 // capture with an error cue so the user re-dictates instead.
 const transcribeQueueDepth = 8
+
+// failoverFailureThreshold is how many consecutive transcription failures on a
+// local backend trigger the one-time "switch backend?" tray hint. Two avoids
+// nagging on a single transient blip while still flagging a real outage fast.
+const failoverFailureThreshold = 2
 
 // loadDict builds the active dictionary: the embedded baseline with the
 // per-user override (PRATA_DICT_PATH or %LOCALAPPDATA%\Prata\...) layered on
@@ -338,6 +344,26 @@ func main() {
 		defer closer.Close()
 	}
 
+	// System-tray icon. Created before the processor goroutine starts so
+	// processEvents can surface a failover balloon through it; the rest of the
+	// tray configuration (backends, callbacks, Run) follows below. Its only
+	// menu item, Avsluta, requests shutdown by closing quit. onQuit runs on the
+	// tray's UI thread, must return fast, and must not call t.Stop() (the tray
+	// posts its own WM_QUIT) — it only nudges the shared shutdown path below.
+	// quitOnce makes repeat Avsluta clicks harmless. In production
+	// (-H windowsgui, no console) Avsluta is the only graceful quit path.
+	quit := make(chan struct{})
+	var quitOnce sync.Once
+	t := tray.New(icon.ICO, "Prata "+version, func() {
+		quitOnce.Do(func() { close(quit) })
+	})
+
+	// failoverNotifier surfaces a one-time tray hint when the active local
+	// backend fails repeatedly, so the user can switch to Berget Ai in the
+	// menu. It never switches automatically — Prata has no silent failover, so
+	// patient audio is never auto-routed to the cloud.
+	failoverNotifier := failover.New(failoverFailureThreshold)
+
 	// Processor goroutine: drains events sequentially, owning the
 	// audio.Session lifecycle, and applies + injects finished
 	// transcriptions. Single-goroutine ownership means no mutex is needed on
@@ -345,20 +371,8 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription)
+		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription, t, failoverNotifier)
 	}()
-
-	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
-	// closing quit. onQuit runs on the tray's UI thread, must return fast,
-	// and must not call t.Stop() (the tray posts its own WM_QUIT) — it only
-	// nudges the shared shutdown path below. quitOnce makes repeat Avsluta
-	// clicks harmless. In production (-H windowsgui, no console) Avsluta is
-	// the only graceful quit path, since Ctrl+C is never delivered.
-	quit := make(chan struct{})
-	var quitOnce sync.Once
-	t := tray.New(icon.ICO, "Prata "+version, func() {
-		quitOnce.Do(func() { close(quit) })
-	})
 	// "Sök efter uppdatering…": notify-only update check. Must return fast
 	// on the tray UI thread, so the network call runs on its own goroutine
 	// and reports back via a tray balloon. Set before t.Run is launched so
@@ -475,7 +489,7 @@ func main() {
 //
 // client is read only for the active backend ID stamped into each daemonlog
 // line; the transcription itself still runs on the worker goroutine.
-func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}) {
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}, t *tray.Tray, fo *failover.Notifier) {
 	var session *audio.Session
 	var targetHwnd uintptr
 
@@ -565,8 +579,22 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				fmt.Fprintf(os.Stderr, "transcribe: %v\n", res.err)
 				daemonlog.Printf("transcribe error backend=%s elapsed=%.2fs err=%v", backendID, elapsed, res.err)
 				cue.PlayError()
+				// Repeated failures on a local/keyless backend mean it is
+				// likely unreachable (LAN down, GPU server off). Hint once per
+				// outage streak that the user can switch to the cloud fallback
+				// in the tray menu. This never switches automatically — the
+				// choice, and any routing of patient audio to the cloud, stays
+				// the user's (see internal/failover).
+				active := client.ActiveBackend()
+				if fo.RecordFailure(!active.RequiresKey) {
+					t.Notify("Prata", fmt.Sprintf("%s svarar inte upprepade gånger. Byt backend i menyn vid behov (t.ex. Berget Ai).", active.DisplayName))
+					daemonlog.Printf("failover hint shown backend=%s", backendID)
+				}
 				continue
 			}
+			// The backend responded (even if the text is later judged empty or
+			// degenerate): it is reachable, so clear any failover streak.
+			fo.RecordSuccess()
 			text := res.text
 			if d != nil {
 				text = d.Apply(text)

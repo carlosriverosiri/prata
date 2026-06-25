@@ -450,10 +450,12 @@ ideas are most valuable.
 5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is specified but not
    built. Is manual fold-in ahead of a release right, or should clinic corrections
    be synchronized in some smarter way across ~12 machines?
-6. **Backend robustness.** No silent failover (deliberate). But would an
-   *explicit*, user-confirmed fallback (e.g. "LAN down — do you want to use
-   Berget?") be worth the complexity? How does it affect the confidentiality
-   model?
+6. **Backend robustness.** No silent failover (deliberate). An *explicit*,
+   notify-only hint is now implemented (`internal/failover`): after two
+   consecutive failures on a local backend the tray suggests a manual switch,
+   but nothing switches on its own and patient audio is never auto-routed. Is
+   the threshold right, and is a balloon the best surface — or should the hint
+   be more (or less) prominent?
 7. **The degenerate-output guard.** A gzip-ratio threshold against whisper
    repetition loops — is that robust, or are there false-positive/negative risks
    for short clinical phrases?

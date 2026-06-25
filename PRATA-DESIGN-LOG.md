@@ -1159,3 +1159,38 @@ Verified to compile and `go vet` for `GOOS=windows` (the package is pure
 syscall, no cgo). The runtime behavior — that the text truly stays out of Win+V
 and the cloud clipboard — still needs hardware verification on a real Windows
 box.
+
+### Explicit, notify-only backend failover hint (claim_004)
+
+"No silent failover" is a deliberate invariant — a dead backend must not
+auto-route patient audio to the cloud. But it left a gap: when the LAN GPU is
+down, the user only hears the error cue and cannot tell a backend outage from a
+bad dictation. Fix: after two consecutive transcription failures on a
+local/keyless backend, the tray shows a one-time balloon suggesting a manual
+switch. It only *suggests*; the switch stays a deliberate menu action, so the
+confidentiality model is untouched.
+
+Decisions:
+
+- **Notify-only, never auto-switch.** The hint points the user at the menu; the
+  app never changes the backend or routes audio itself. That is the whole point
+  of the invariant, so the failover package is named for the feature but does
+  exactly one thing: decide *when to hint*.
+- **Logic in a pure package (`internal/failover`), glue in `cmd/prata`.** The
+  threshold / once-per-streak decision is stdlib-only and unit-tested on any OS;
+  the Windows-only daemon just feeds it failures/successes and calls
+  `tray.Notify`. Keeps the only hard-to-test part (the Win32 tray) thin.
+- **Reset on any response.** A response that yields empty/degenerate text still
+  counts as reachable and clears the streak — the hint is about reachability,
+  not content. Only a true request failure (network/HTTP) advances it.
+- **Suggest only from a local backend.** On Berget itself (`RequiresKey`) we do
+  not hint — there is no more-available fallback to point at.
+- **Tray created before the processor goroutine.** processEvents now needs the
+  tray to raise the balloon, so `tray.New` moved above the processor launch
+  (the rest of the tray configuration and `Run` still follow). `tray.Notify` is
+  goroutine-safe and blocks until Run is ready, and the hint can only fire after
+  the user has dictated twice, so the earlier creation is safe.
+
+`internal/failover` is unit-tested and cross-compiles for windows; the wired
+`cmd/prata` path needs a Windows build (cgo/malgo) to compile-verify and a live
+outage to confirm the balloon end-to-end.
