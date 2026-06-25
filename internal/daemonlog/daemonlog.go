@@ -18,8 +18,27 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	// envOverride replaces the full log path entirely (test isolation,
+	// mirroring PRATA_INSTALL_LOG in the installer).
+	envOverride = "PRATA_DAEMON_LOG"
+
+	logPrefix  = "prata-"
+	logSuffix  = ".log"
+	dateLayout = "2006-01-02"
+
+	// retentionDays bounds how long per-day logs are kept. Prata is a
+	// "see and forget" tool that can run for years; without pruning the
+	// logs/ directory would grow by one small file per active day forever.
+	// Logs older than this are deleted on Open. The window is generous —
+	// long enough to investigate an issue reported days later, short enough
+	// to stay bounded.
+	retentionDays = 30
 )
 
 // mu guards the package-level file handle. A single daemon process calls Open
@@ -52,8 +71,15 @@ func Open() (io.Closer, error) {
 	if path == "" {
 		return noopCloser{}, fmt.Errorf("daemonlog: LOCALAPPDATA not set")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return noopCloser{}, fmt.Errorf("daemonlog: create dir: %w", err)
+	}
+	// Drop logs past the retention window so a years-running daemon never
+	// accumulates one file per active day forever. Skipped when the path is
+	// overridden (tests): retention targets the real dated logs only.
+	if os.Getenv(envOverride) == "" {
+		pruneOldLogs(dir, time.Now(), retentionDays)
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -101,13 +127,55 @@ func Printf(format string, args ...any) {
 // LOCALAPPDATA is unset and no override is given, so Open reports a clean error
 // instead of writing to a bare relative path.
 func logPath() string {
-	if p := os.Getenv("PRATA_DAEMON_LOG"); p != "" {
+	if p := os.Getenv(envOverride); p != "" {
 		return p
 	}
 	local := os.Getenv("LOCALAPPDATA")
 	if local == "" {
 		return ""
 	}
-	name := "prata-" + time.Now().Format("2006-01-02") + ".log"
+	name := logPrefix + time.Now().Format(dateLayout) + logSuffix
 	return filepath.Join(local, "Prata", "logs", name)
+}
+
+// pruneOldLogs deletes prata-YYYY-MM-DD.log files in dir whose date is more
+// than keepDays before now. Best-effort: an unreadable directory or an
+// undeletable file is ignored, and a name that does not match the dated
+// pattern is left untouched, so an unrelated file is never removed. The date
+// is read from the filename, not the modification time, so a copied or
+// touched file is still pruned on its real day.
+func pruneOldLogs(dir string, now time.Time, keepDays int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := now.AddDate(0, 0, -keepDays)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		date, ok := logDate(e.Name())
+		if !ok {
+			continue
+		}
+		if date.Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// logDate extracts the date from a daemon log filename of the form
+// prata-YYYY-MM-DD.log (the inverse of logPath's naming). ok is false when
+// the name does not match that exact pattern, so callers never act on an
+// unrelated file.
+func logDate(name string) (time.Time, bool) {
+	if !strings.HasPrefix(name, logPrefix) || !strings.HasSuffix(name, logSuffix) {
+		return time.Time{}, false
+	}
+	datePart := name[len(logPrefix) : len(name)-len(logSuffix)]
+	t, err := time.Parse(dateLayout, datePart)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }

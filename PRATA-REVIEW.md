@@ -222,10 +222,11 @@ Two layers:
 
 - Matching is case-sensitive with **Unicode-aware word boundaries**
   (`[\p{L}\p{N}_]`), literal indexing (no regex), rules in file order.
-- **Build-time fold-in (designed, implementation phased):** a small CLI
-  (`cmd/dict-foldin`) should be able to fold valuable override entries into the
-  embedded baseline ahead of a release (clinic corrections = domain knowledge, not
-  personal preference). The contract is specified; the tool is not built yet.
+- **Build-time fold-in (implemented):** a small CLI (`cmd/dict-foldin`) folds
+  valuable override entries into the embedded baseline ahead of a release
+  (clinic corrections = domain knowledge, not personal preference). Per key it
+  adds or replaces in place, preserving comments/blank lines/order; baseline
+  rules are never removed; `--dry-run` previews. Run manually by the developer.
 
 ---
 

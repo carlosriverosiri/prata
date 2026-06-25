@@ -8,6 +8,21 @@ that point.
 
 ## [Unreleased]
 
+### Added
+
+- `cmd/dict-foldin` (new) — the build-time tool that folds valuable per-user
+  dictionary override entries into the embedded baseline ahead of a release, so
+  clinic corrections (domain knowledge, not personal preference) ship to every
+  user. `dict-foldin --override <path> [--baseline …] [--dry-run]`: per key it
+  adds a new rule or replaces an existing one in place, preserving the baseline's
+  comments, blank lines, and order; empty/identity rules are skipped and baseline
+  rules are never removed (idempotent). The merge lives in `internal/dict`
+  (`FoldIn`) so it stays identical to the runtime `mergeRules`; the CLI only does
+  file I/O and a short added/replaced/skipped report, edits only the baseline
+  file (never the user's override), and is run manually by the developer — never
+  in the daemon hot path or in CI. Implements the contract specified in
+  PRATA-DESIGN-LOG.
+
 ### Fixed
 
 - `cmd/prata/rsrc_windows_amd64.syso` (new) — `prata.exe` now carries a Windows
@@ -21,6 +36,14 @@ that point.
 
 ### Changed
 
+- `internal/daemonlog` — the daemon now prunes its own logs on startup: per-day
+  `prata-YYYY-MM-DD.log` files older than 30 days are deleted when the log is
+  opened. A "see and forget" daemon that runs for years would otherwise leave one
+  small file per active day forever. Best-effort and stdlib-only: an unreadable
+  directory or undeletable file is ignored, the date is read from the filename
+  (not the mtime), and only files matching the dated pattern are touched, so an
+  unrelated file beside the logs is never removed. Skipped when `PRATA_DAEMON_LOG`
+  overrides the path (tests).
 - `.github/workflows/release.yml` — bumped the three GitHub Actions to their
   Node 24 runtimes (`actions/checkout@v7`, `actions/setup-go@v6`,
   `softprops/action-gh-release@v3`), clearing the "Node.js 20 is deprecated"

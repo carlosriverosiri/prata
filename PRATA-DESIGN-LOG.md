@@ -684,7 +684,7 @@ only becomes relevant when scaling to IT-driven distribution.
   `release.yml`/`install.ps1`; harmless to remove since the runtime never read
   next to the exe. `internal/dict/dictionary-corrections.txt` is the only baseline source.
 
-**Build-time fold-in — INTERFACE designed now, implementation phased (Phase 5/6)**
+**Build-time fold-in — IMPLEMENTED 2026-06-25 (`cmd/dict-foldin`)**
 
 Valuable override entries should be able to be "folded into" the embedded baseline ahead of
 a release, so they ship to all users. The contract:
@@ -707,6 +707,9 @@ a release, so they ship to all users. The contract:
   (added/replaced/skipped). Exit ≠ 0 on a parse error in any file.
 - **Invariant:** the baseline remains the only embedded source; the tool
   edits only that file, never touches the user's override.
+
+Implemented 2026-06-25 exactly to this contract — see the dated entry at the end
+of this log for the one new decision (where the merge logic lives).
 
 ### 2026-06-17: `--install` machine-wide, self-elevating — happy path (Phase 5a implemented)
 
@@ -1091,3 +1094,34 @@ window gone" to "no target window" as part of this change, so the genuine
 window-closed case owns the "gone" wording. Order matters: the `== 0` check runs
 first, because `IsWindow(0)` is also false and would otherwise swallow the
 distinct "nothing captured" case.
+
+## 2026-06-25 — Dictionary fold-in tool + daemon-log retention
+
+Two low-risk hardening items from the AI-council review (run #22) that needed no
+hardware to verify, so both are unit-tested on Linux and covered by CI.
+
+### `cmd/dict-foldin` implemented (the specified fold-in tool)
+
+The build-time fold-in contract (above) is now built. One decision worth
+recording: **the merge logic lives in `internal/dict` (`FoldIn`), not in the
+CLI.** The contract says fold-in semantics must be "identical to the runtime
+`mergeRules`". The only durable way to guarantee that is to share code, so
+`FoldIn` sits beside `mergeRules`/`Save` and reuses the same `parse`. The CLI is
+then a thin shell: read two files, call `dict.FoldIn`, print an
+added/replaced/skipped report, write the baseline back (unless `--dry-run`).
+`FoldIn` operates on the raw baseline *text* (line-preserving, like `Save`)
+rather than on a parsed rule list, because the baseline is a hand-maintained
+file — its comments, blank lines, and order must survive a fold-in. Re-folding
+the same override is idempotent, and baseline rules are never removed.
+
+### Daemon-log retention
+
+`internal/daemonlog` now deletes `prata-YYYY-MM-DD.log` files older than 30 days
+when it opens today's log. A "see and forget" daemon that runs for years would
+otherwise grow the `logs/` directory by one small file per active day forever —
+unbounded, even if tiny. The date is parsed from the *filename*, not the file's
+mtime, so a copied or touched file is still pruned on its real day, and only
+names matching the exact `prata-YYYY-MM-DD.log` pattern are ever removed (an
+unrelated file beside the logs is left alone). Best-effort throughout: any error
+is ignored, because failing to prune a log must never disrupt dictation. Prune
+is skipped when `PRATA_DAEMON_LOG` overrides the path (tests).

@@ -90,6 +90,7 @@ prata/
 ├── .github/workflows/      # ci.yml (fmt+vet+build+test), release.yml
 ├── cmd/
 │   ├── prata/              # The daemon + --install / --uninstall / --set-key
+│   ├── dict-foldin/        # Build-time tool: fold override entries into the baseline
 │   └── *-test/             # Manual test harnesses (f8, hotkey, inject, popup, …)
 └── internal/
     ├── audio/      # malgo capture
@@ -165,4 +166,4 @@ go test ./... -count=1
 
 ---
 
-*Last updated: 2026-06-21.*
+*Last updated: 2026-06-25.*

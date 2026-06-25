@@ -393,3 +393,86 @@ func TestReloadPicksUpSavedRule(t *testing.T) {
 		t.Errorf("after Reload, Apply(%q) = %q, want %q", "baz", got, "qux")
 	}
 }
+
+func TestFoldIn(t *testing.T) {
+	baseline := "# medical terms\n" +
+		"gangliocid = gangliosid\n" +
+		"\n" +
+		"adoption = abduktion\n"
+
+	override := "adoption = adduktion\n" + // replaces the existing line in place
+		"fraktur = fraktyr\n" + // new key, appended at the end
+		"skip = skip\n" + // identity rule -> skipped
+		"empty =\n" // empty replacement -> skipped
+
+	res, err := FoldIn(baseline, override)
+	if err != nil {
+		t.Fatalf("FoldIn: %v", err)
+	}
+
+	// The comment, the blank line, and the original order are preserved; the
+	// existing key is replaced in place; the new key is appended; the baseline
+	// rule (gangliocid) is never removed.
+	want := "# medical terms\n" +
+		"gangliocid = gangliosid\n" +
+		"\n" +
+		"adoption = adduktion\n" +
+		"fraktur = fraktyr\n"
+	if res.Output != want {
+		t.Errorf("Output mismatch:\n got %q\nwant %q", res.Output, want)
+	}
+	if got := strings.Join(res.Replaced, ","); got != "adoption" {
+		t.Errorf("Replaced = %v, want [adoption]", res.Replaced)
+	}
+	if got := strings.Join(res.Added, ","); got != "fraktur" {
+		t.Errorf("Added = %v, want [fraktur]", res.Added)
+	}
+	if got := strings.Join(res.Skipped, ","); got != "skip,empty" {
+		t.Errorf("Skipped = %v, want [skip empty]", res.Skipped)
+	}
+
+	// Idempotent: re-folding the same override into the rewritten baseline
+	// changes nothing.
+	res2, err := FoldIn(res.Output, override)
+	if err != nil {
+		t.Fatalf("FoldIn (2): %v", err)
+	}
+	if res2.Output != res.Output {
+		t.Errorf("not idempotent:\n got %q\nwant %q", res2.Output, res.Output)
+	}
+}
+
+// TestFoldInAppliesFoldedCorrections confirms the rewritten baseline corrects
+// text exactly as the folded-in override rules intend, so the build-time merge
+// matches runtime behavior.
+func TestFoldInAppliesFoldedCorrections(t *testing.T) {
+	res, err := FoldIn("adoption = abduktion\n", "adoption = adduktion\nfraktur = fraktyr\n")
+	if err != nil {
+		t.Fatalf("FoldIn: %v", err)
+	}
+	d := mustLoad(t, res.Output)
+	if got := d.Apply("en adoption och en fraktur"); got != "en adduktion och en fraktyr" {
+		t.Errorf("folded baseline Apply = %q", got)
+	}
+}
+
+// TestFoldInPreservesCRLF verifies a CRLF baseline stays CRLF after folding.
+func TestFoldInPreservesCRLF(t *testing.T) {
+	res, err := FoldIn("adoption = abduktion\r\n", "fraktur = fraktyr\n")
+	if err != nil {
+		t.Fatalf("FoldIn: %v", err)
+	}
+	if !strings.Contains(res.Output, "\r\n") {
+		t.Errorf("CRLF not preserved: %q", res.Output)
+	}
+}
+
+// TestFoldInParseError verifies a malformed line in either input is an error.
+func TestFoldInParseError(t *testing.T) {
+	if _, err := FoldIn("adoption = abduktion\n", "no separator here\n"); err == nil {
+		t.Error("expected a parse error for a malformed override")
+	}
+	if _, err := FoldIn("bad line\n", "adoption = abduktion\n"); err == nil {
+		t.Error("expected a parse error for a malformed baseline")
+	}
+}
