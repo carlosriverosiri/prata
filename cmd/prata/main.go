@@ -542,10 +542,16 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 
 				// An empty / near-empty capture (e.g. an accidental brief
 				// tap) would otherwise be sent to Berget and block for the
-				// full 30s HTTP timeout before failing. Skip it instead.
+				// full 30s HTTP timeout before failing. Skip it instead — but
+				// play the error cue so the drop is audible: a too-short capture
+				// can also be a real dictation clipped by slow device start, and
+				// no dictation should vanish with only the stop cue (the same
+				// silent-loss symptom as the paste race). An accidental tap then
+				// beeps too, which is honest feedback that nothing was recorded.
 				if len(pcm) < minCaptureBytes {
 					fmt.Fprintln(os.Stderr, "no audio captured, skipping")
 					daemonlog.Printf("capture too short, skipping")
+					cue.PlayError()
 					continue
 				}
 
