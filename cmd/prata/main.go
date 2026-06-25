@@ -317,6 +317,29 @@ func main() {
 		go f8Worker(sourceHwnd, dictAdds)
 	})
 
+	// F1 self-heal: if another program already owns F1 the listener no longer
+	// exits — it stays alive, re-probes RegisterHotKey(F1) on a timer, and
+	// reports the state here. The processor goroutine turns these into the cue,
+	// the balloon, and the persistent "F1 UPPTAGEN" tray state (and clears them
+	// on recovery). Buffered + non-blocking send so the listener thread never
+	// blocks; transitions are rare, so it never fills. Wired before
+	// listener.Run for the same happens-before reason as SetOnF8.
+	f1Available := make(chan bool, 4)
+	listener.SetOnF1State(
+		func() {
+			select {
+			case f1Available <- false:
+			default:
+			}
+		}, // F1 unavailable
+		func() {
+			select {
+			case f1Available <- true:
+			default:
+			}
+		}, // F1 recovered
+	)
+
 	// Listener goroutine: pins itself to its OS thread and runs the
 	// Windows message loop until Stop is called.
 	listenerDone := make(chan error, 1)
@@ -414,7 +437,7 @@ func main() {
 				cue.PlayError()
 			}
 		}()
-		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription, t, failoverNotifier)
+		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription, t, failoverNotifier, f1Available)
 	}()
 	// "Sök efter uppdatering…": notify-only update check. Must return fast
 	// on the tray UI thread, so the network call runs on its own goroutine
@@ -499,18 +522,17 @@ func main() {
 				<-trayDone
 			}
 			if err != nil {
-				// The hotkey listener died — almost always RegisterHotKey(F1)
-				// failing because another program already owns F1. Under
-				// -H windowsgui there is no console, so this used to be the
-				// darkest silent failure: the daemon exits and dictation is dead
-				// with no cue, no balloon, nothing the clinician can see. Make it
-				// visible — log it and show a modal box (which blocks, so it is
-				// seen even though we exit right after).
+				// F1 contention is no longer fatal — it self-heals (the listener
+				// stays alive and re-probes; see internal/hotkey). So a non-nil
+				// error here is a genuine message-loop system failure: rare and
+				// unrecoverable in-process. Make it visible (log + modal box) and
+				// exit; the Task Scheduler restart-on-failure then relaunches a
+				// fresh daemon.
 				fmt.Fprintf(os.Stderr, "listener error: %v\n", err)
 				daemonlog.Printf("FATAL listener stopped: %v", err)
 				ui.MessageBox(
-					"Prata kunde inte starta",
-					"Dikteringstangenten F1 kunde inte aktiveras — den används troligen redan av ett annat program. Stäng det programmet (eller starta om datorn) och starta Prata igen.",
+					"Prata",
+					"Ett internt fel gjorde att dikteringen stoppades och Prata måste avslutas. Prata startar om automatiskt; om problemet kvarstår, starta om datorn.",
 					ui.IconError,
 				)
 				os.Exit(1)
@@ -562,7 +584,7 @@ func transcribeSafely(client *transcribe.Client, pcm []byte) (text string, err e
 //
 // client is read only for the active backend ID stamped into each daemonlog
 // line; the transcription itself still runs on the worker goroutine.
-func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}, t *tray.Tray, fo *failover.Notifier) {
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}, t *tray.Tray, fo *failover.Notifier, f1Available <-chan bool) {
 	var session *audio.Session
 	var targetHwnd uintptr
 	// backendDegraded tracks whether we have set a persistent degraded tray
@@ -801,6 +823,21 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				}
 			case saved:
 				fmt.Fprintf(os.Stderr, "dict rule saved (corrections disabled until restart): %q = %q\n", da.wrong, da.correct)
+			}
+
+		case avail := <-f1Available:
+			// F1 self-heal state from the listener. The cue + balloon announce
+			// it once; SetDegraded keeps "F1 UPPTAGEN" on the tray until F1 is
+			// back, so a clinician who missed the toast still sees it on hover.
+			if avail {
+				daemonlog.Printf("F1 recovered; dictation active")
+				t.ClearDegraded()
+				t.Notify("Prata", "Prata är igång igen — F1 fungerar.")
+			} else {
+				daemonlog.Printf("F1 unavailable: another program owns it; retrying")
+				cue.PlayError()
+				t.SetDegraded("F1 UPPTAGEN")
+				t.Notify("Prata", "F1 används av ett annat program. Stäng det programmet så börjar Prata fungera igen automatiskt.")
 			}
 		}
 	}
