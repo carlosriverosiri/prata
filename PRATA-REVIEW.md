@@ -5,10 +5,18 @@
 > to understand the entire app — features, technology, design choices, and open
 > questions — without access to the code or the other documents.
 >
-> **Status.** Snapshot **2026-06-23** (v0.4.0). This document is a *distillation* — the running truth lives
+> **Status.** Snapshot **2026-06-25** (v0.5.0). This document is a *distillation* — the running truth lives
 > in `PRATA-MASTER.md`, `PRATA-DESIGN-LOG.md`, `PRATA-GPU-SERVER.md`, `README.md`,
 > and `CHANGELOG.md`. It is not generated automatically; update it when you want a
 > fresh round of review.
+>
+> **v0.5.0 adds** (see §13 and the resolved threads in §15): a late-injection
+> staleness guard (`maxInjectAge` 8s), an audible too-short-capture guard, Scintilla
+> paste-loss hardening (`pasteSettleDelay` 50 ms → 400 ms) plus Notepad++→SendInput,
+> clipboard history/cloud/monitor exclusion markers on **every** Prata clipboard
+> write, an explicit notify-only backend failover hint (`internal/failover`),
+> a stronger degenerate-output guard (`looksRepeated`), daemon-log 30-day
+> auto-pruning, the `cmd/dict-foldin` build-time tool, and a Windows icon resource.
 >
 > **At the very bottom** there is a section *"Questions for the reviewer"* — feel
 > free to start there if you are an AI being asked to give feedback.
@@ -109,7 +117,7 @@ operations cannot interleave with each other.
 - **Tray icon** (small yellow microphone badge): backend selection, "Sök efter
   uppdatering…", "Avsluta". The primary way to exit when the app runs at login
   without a console. The tooltip shows the running build version and the active
-  backend — e.g. `Prata v0.4.0 — LAN GPU-server` (`Prata dev` on a local build).
+  backend — e.g. `Prata v0.5.0 — LAN GPU-server` (`Prata dev` on a local build).
 - **Update check** — notifying, never self-updating (see §9.3).
 - **Single-instance guard** — a named, session-bound mutex (`Local\`) → one
   instance per session on a shared PC.
@@ -205,7 +213,17 @@ impossible to distinguish without token data.
 
 whisper can get stuck in repetition loops (the same phrase over and over). Prata
 measures the **gzip compression ratio** of the output and discards degenerate
-output before it is typed in. The threshold is calibrated with `cmd/sanity-test`.
+output before it is typed in.
+
+**v0.5.0 adds a second, complementary signal.** The gzip ratio (`> 2.4`) catches
+HIGH-repetition token loops — they score 8–12, while the worst *legitimate*
+repetitive clinical dictation ("ingen X, ingen Y, …"; bilateral findings) tops out
+at ~1.8, a wide safety margin (validated against a clinical corpus, so the
+threshold must **not** be lowered). `looksRepeated` now catches the LOW-repetition
+phrase loops the ratio misses: a multi-word phrase repeated back-to-back **≥4
+times** (a 4× sentence loop compresses to only ~1.9). A phrase repeated only 2–3×,
+and short single-word runs, are deliberately left alone (ambiguous with legitimate
+speech). Both signals are locked in by regression tests. See §15 #7.
 
 ---
 
@@ -222,11 +240,16 @@ Two layers:
 
 - Matching is case-sensitive with **Unicode-aware word boundaries**
   (`[\p{L}\p{N}_]`), literal indexing (no regex), rules in file order.
-- **Build-time fold-in (implemented):** a small CLI (`cmd/dict-foldin`) folds
-  valuable override entries into the embedded baseline ahead of a release
+- **Build-time fold-in (implemented, v0.5.0):** a small CLI (`cmd/dict-foldin`)
+  folds valuable override entries into the embedded baseline ahead of a release
   (clinic corrections = domain knowledge, not personal preference). Per key it
-  adds or replaces in place, preserving comments/blank lines/order; baseline
-  rules are never removed; `--dry-run` previews. Run manually by the developer.
+  adds or replaces in place, preserving comments/blank lines/order; empty/identity
+  rules are skipped and baseline rules are never removed (idempotent); `--dry-run`
+  previews. The merge reuses `internal/dict.FoldIn` — the **same contract** as the
+  runtime `mergeRules`, so the two can never diverge — and the CLI only does file
+  I/O plus an added/replaced/skipped report, edits only the baseline file (never
+  the user's override), and is run manually by the developer, never in the daemon
+  hot path or in CI.
 
 ---
 
@@ -237,16 +260,24 @@ This is one of the most safety-sensitive decisions.
 - **Routing on the foreground window's class**
   (`GetClassNameW(GetForegroundWindow())`):
   - `Chrome_WidgetWin_1` (the whole Chromium/Electron family + the web-based
-    medical record, confirmed to be the same class) and `Notepad++` (its
-    Scintilla editor reads the clipboard too slowly for the paste path's restore
-    timing — see §15 #3) → **SendInput Unicode**, the whole string in *one* call.
-    The clipboard is never touched.
+    medical record, confirmed to be the same class) and `Notepad++` → **SendInput
+    Unicode**, the whole string in *one* call. The clipboard is never touched.
+    Notepad++ (Scintilla) was added in v0.5.0 after it **silently lost dictation**
+    on the paste path: Scintilla reads the clipboard slower than the old 50 ms
+    paste-settle delay allowed, so the clipboard restore's `EmptyClipboard` wiped
+    the dictated text before Scintilla finished reading it — no text and no error
+    cue. Root cause was clipboard-read *timing*, **not** the exclusion markers
+    (exonerated: manual Ctrl+V of marked text pastes fine there). Fixed two ways:
+    `pasteSettleDelay` raised 50 ms → **400 ms** for *all* clipboard-paste targets,
+    and Notepad++ additionally routed to SendInput (clipboard-free, race-immune).
   - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
     previous clipboard). Every clipboard write Prata makes — the dictated text
-    and the restore of the user's prior clipboard alike — is marked to stay out
-    of clipboard history (Win+V), the cloud clipboard, and clipboard monitors, so
-    Prata never adds an entry (not even a duplicate of the user's own copy) to
-    their Win+V.
+    (`setDictatedClipboardText`) and the restore of the user's prior clipboard
+    (`setClipboardText`) alike — sets three exclusion formats in the same clipboard
+    session: `CanIncludeInClipboardHistory` (DWORD 0), `CanUploadToCloudClipboard`
+    (DWORD 0), and `ExcludeClipboardContentFromMonitorProcessing` (presence only).
+    So Prata never adds an entry to Win+V — not even a duplicate of the user's own
+    copy. Markers are best-effort: a marker failure never fails the paste.
 - **Invariants (patient safety — must not change):**
   - **Safe default:** all uncertainty (no foreground window, a failed class read,
     an unknown class) → clipboard paste.
@@ -264,12 +295,14 @@ This is one of the most safety-sensitive decisions.
     now holds focus. (Note: this catches window *closure* only, not an in-app
     content change such as a Webdoc patient/tab switch — those share the HWND and
     title; see the staleness guard below and the §9 review in PRATA-DESIGN-LOG.)
-  - **Staleness guard:** injection is async, so a result can return long after
-    the user finished dictating (a Berget hiccup / queue backlog, up to ~30s). A
-    result older than `maxInjectAge` (8s) is dropped with an error cue + tray hint
-    rather than injected — by then the user has likely started typing by hand, and
-    a late injection would land mid-sentence. Normal dictation (≤~2.7s) is
-    unaffected.
+  - **Staleness guard (v0.5.0):** injection is async, so a result can return long
+    after the user finished dictating (a Berget hiccup / queue backlog, up to
+    ~30s). A result older than `maxInjectAge` (8s, measured from F1 release) is
+    dropped with an error cue + tray hint ("Dikteringen tog för lång tid …") rather
+    than injected — by then the user has likely given up waiting and started typing
+    by hand, and a late injection would land mid-sentence in their patient note, a
+    silent patient-safety hazard. The backend still counts as reachable (the
+    failover streak is cleared first). Normal dictation (≤~2.7s) is unaffected.
 - **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
   then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
   confidentiality: medical-record text should not linger in Win+V or sync to the
@@ -370,7 +403,10 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   carrying backend ID, timings, character counts, and error strings — **never the
   transcribed text or audio**. It is best-effort: a log that cannot be opened or
   written falls back to stderr and never disrupts dictation (`PRATA_DAEMON_LOG`
-  overrides the path for tests).
+  overrides the path for tests). (v0.5.0) Per-day logs older than **30 days** are
+  auto-pruned on open, with the age parsed from the filename (not mtime), so a
+  copied or touched file is still pruned by calendar age; pruning is skipped when
+  `PRATA_DAEMON_LOG` is set.
 - **Dictated medical-record text never leaves the clipboard** in Chromium/the
   record (the SendInput path) → neither Win+V nor the cloud clipboard. On the
   paste path (other windows) the dictated text is placed with the
@@ -425,6 +461,19 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
 - **Win+V hygiene verified (2026-06-25):** dictated text never enters clipboard
   history, and the paste path no longer leaves a duplicate of the user's own copy
   there.
+- **Late-injection staleness guard verified (2026-06-25):** a result returning
+  after `maxInjectAge` (8s) is dropped with an error cue + tray hint ("Dikteringen
+  tog för lång tid …") instead of injected mid-sentence; with the bound temporarily
+  at 1 ms every result dropped (logged `stale result dropped age=…`, no text), the
+  `age` matching the transcription time. Normal dictation is unaffected.
+- **Too-short-capture guard (v0.5.0):** a capture under `minCaptureBytes` (~0.1 s
+  of 16 kHz mono audio) now plays the error cue instead of vanishing with only the
+  stop cue — an accidental F1 tap, or a real dictation clipped by a slow device
+  start, gets honest feedback.
+- **Degenerate guard, dict-foldin, daemon-log pruning, icon resource (v0.5.0):**
+  `looksRepeated` added for low-repetition phrase loops (regression-tested);
+  `cmd/dict-foldin` and daemon-log 30-day auto-pruning landed; the binary now
+  carries a Windows icon resource so Explorer/taskbar show the Prata icon.
 - **Machine-wide install/uninstall/update hardware-verified (2026-06-20):**
   overwrite-while-running (kill the old daemon → retry-copy → re-registration →
   restart), medium-IL injection into a non-elevated window, user data preserved.
@@ -458,40 +507,47 @@ ideas are most valuable.
    Azure Trusted Signing, an internal cert in the EDR) gives the best
    benefit/cost before IT-driven scaling? Is there a way to reduce the AV friction
    *without* a cert?
-2. **Injection coverage.** Class-based allowlist with exact
-   `Chrome_WidgetWin_1`. Which realistic window classes (Win32-native records,
-   Java/Qt apps, RDP/Citrix sessions, virtual desktops) risk ending up on the
-   safe-but-clipboard-leaking paste path, and how would you verify new classes
-   safely? Is "no execution fallback" right even when SendInput *guaranteed* did
-   not manage to send anything?
-3. **Patient confidentiality on the paste path.** On non-Chromium windows the
-   clipboard is used (save/restore). The dictated text is now marked with the
-   clipboard-history / cloud / monitor exclusion formats so it stays out of Win+V
-   and the cloud clipboard; a short window where the text sits in the clipboard
-   still exists (for the paste itself). Is this the right approach, and is the
-   residual window a concern? (Verified live 2026-06-25: text stays out of Win+V.
-   Newly found risk — the paste can fail **silently** (no text, no error cue) if
-   the target reads the clipboard slower than `pasteSettleDelay`, which then wipes
-   the text on restore: Notepad++'s Scintilla did exactly this. Mitigated by
-   raising the delay 50 ms → 400 ms, but a fixed delay is a guess — high-latency
-   targets (RDP/Citrix clipboard redirection) could still lose the race. Should
-   the paste path *confirm* the insert landed rather than trusting
-   `SetClipboardData` + Ctrl+V success? Win32 has no clean signal short of
-   delayed-rendering — an open design question.)
+2. **Injection coverage.** Class-based allowlist (exact match) is now
+   `Chrome_WidgetWin_1` + `Notepad++`; the silent paste-loss race is fixed for the
+   tested set (Word, Notepad, PowerPoint, Chrome, Cursor, Notepad++). **Still
+   open:** which untested classes (Win32-native records, Java/Qt apps, RDP/Citrix
+   sessions, virtual desktops) risk the clipboard-paste path, and how would you
+   verify new classes safely? Is "no execution fallback" right even when SendInput
+   is *guaranteed* to have sent nothing? (Generic detection that a paste landed —
+   the high-latency RDP/Citrix case — is tracked in #3.) Note: Qt window classes
+   encode the version (e.g. `Qt6102QWindowIcon`), so exact-match allowlisting would
+   break on a Qt upgrade — a reason to prefer making the *paste path itself* safe.
+3. **Patient confidentiality on the paste path.** **✅ RESOLVED v0.5.0**
+   (confidentiality + the silent-loss race); **the generic paste-landing
+   confirmation question is still open.** Resolution: both the dictated text and
+   the restored prior clipboard carry the three exclusion markers, so no Prata
+   entry ever lands in Win+V/cloud (verified live 2026-06-25); and the silent
+   paste-loss race is fixed by `pasteSettleDelay` 50 ms → 400 ms plus
+   Notepad++→SendInput (root cause was a slow clipboard *read*, markers exonerated).
+   **Still open:** a fixed `pasteSettleDelay` is a guess — high-latency targets
+   (RDP/Citrix clipboard redirection) could still lose the race, and Win32 has no
+   clean signal short of delayed-rendering to *confirm* the insert actually landed.
+   Should the paste path verify the insert (and beep on failure) rather than trust
+   `SetClipboardData` + Ctrl+V success? (This generalizes the RDP/Citrix angle in
+   #2.)
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?
-5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is now built (folds
-   per-user override entries into the embedded baseline ahead of a release). Is
-   manual fold-in ahead of a release right, or should clinic corrections be
-   synchronized in some smarter way across ~12 machines?
-6. **Backend robustness.** No silent failover (deliberate). An *explicit*,
-   notify-only hint is now implemented (`internal/failover`): after two
-   consecutive failures on a local backend the tray suggests a manual switch,
-   but nothing switches on its own and patient audio is never auto-routed. Is
-   the threshold right, and is a balloon the best surface — or should the hint
-   be more (or less) prominent?
-7. **The degenerate-output guard.** *Resolved 2026-06-25.* Two complementary
+5. **Dictionary fold-in.** **✅ RESOLVED v0.5.0** — `cmd/dict-foldin` is
+   implemented and shipped (reuses `internal/dict.FoldIn`, the same contract as the
+   runtime merge; idempotent; edits only the baseline; manual, never in CI/hot
+   path). **Open only as a process question:** is manual fold-in ahead of a release
+   the right cadence, or should clinic corrections be synchronized more smartly
+   across ~12 machines?
+6. **Backend robustness.** **✅ RESOLVED v0.5.0** — `internal/failover` is
+   implemented and verified end-to-end. After 2 consecutive failures on the active
+   keyless backend the tray shows one balloon per outage streak suggesting a manual
+   switch; `RecordSuccess` resets the streak on any response (even empty/degenerate
+   text); nothing switches on its own and patient audio is never auto-routed.
+   **Open only as ergonomics:** is the threshold (2) right, and is a balloon the
+   best surface — or should the hint be more (or less) prominent on a shared PC
+   where the clinician may not be watching the tray? (See also #11.)
+7. **The degenerate-output guard.** **✅ RESOLVED v0.5.0.** Two complementary
    signals now. The gzip ratio (2.4) catches HIGH-repetition token loops —
    analyzed against a corpus of realistic Swedish clinical phrases: token loops
    score 8–12, while the worst *legitimate* repetitive dictation ("ingen X, ingen
@@ -507,6 +563,24 @@ ideas are most valuable.
    keyboards (requires Fn+F1). A better key choice, or is this right?
 9. **General ideas.** What is missing for this to be a robust clinical tool for
    years without supervision? Which failure modes have we not thought of?
+10. **F8 quick-fix clipboard leak (new, open).** F8's `CopySelection` reads the
+    selection by synthesizing **Ctrl+C**, which makes the *app itself* copy the
+    selected medical-record text to the clipboard — an unmarked write that enters
+    Win+V before Prata reads and restores. So the F8 path can leave patient text in
+    clipboard history even though the F1 paste path does not. Prata cannot mark the
+    app's own copy, and the entry is already in history before we could re-mark it.
+    Is there a way to read a selection without an app-driven clipboard write (UI
+    Automation `TextPattern`?), or to scrub the resulting Win+V entry?
+11. **Failover-hint discoverability (new, open).** The once-per-streak tray balloon
+    is the only signal of a backend outage. On a shared clinic PC where the
+    clinician may not be watching the tray, is a transient balloon discoverable
+    enough — or should a persistent surface (e.g. a tray-icon state change) be
+    considered, without crossing into auto-switching?
+12. **Icon resource drift (new, minor).** The committed `rsrc_windows_amd64.syso`
+    (the exe's file icon) is generated from `internal/icon/Prata.ico` via
+    `akavel/rsrc` and auto-linked by `go build`. Should CI guard against drift
+    between `Prata.ico` and the committed `.syso`, so an icon change cannot silently
+    ship a stale file icon?
 
 ---
 

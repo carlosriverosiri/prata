@@ -41,12 +41,13 @@ inserts the result.
   F1 capture. Dictations are transcribed by one FIFO worker and injected
   back into the window that was active when each capture started.
 - **Hybrid text injection** — routed on the foreground window's class.
-  Chromium/Electron apps and the web-based journal receive the text via
-  SendInput Unicode, leaving the clipboard untouched (so a copied
+  Chromium/Electron apps and the web-based journal (plus Notepad++, whose
+  Scintilla editor proved unreliable on the clipboard-paste path) receive the
+  text via SendInput Unicode, leaving the clipboard untouched (so a copied
   screenshot survives and dictated text stays out of Win+V / cloud
   clipboard); every other window uses clipboard paste with the previous
-  clipboard content preserved and restored. Anything uncertain defaults to
-  clipboard paste.
+  clipboard content preserved and restored (and kept out of Win+V). Anything
+  uncertain defaults to clipboard paste.
 - **Encrypted API key** at rest via Windows DPAPI (per-user, per-machine).
   Required only for the Berget Ai backend; local GPU servers take no auth.
 - **Single-instance guard** — a named mutex prevents two copies from

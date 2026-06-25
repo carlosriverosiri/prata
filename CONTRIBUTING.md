@@ -2,10 +2,10 @@
 
 Prata is a push-to-talk Swedish dictation utility for Windows: hold **F1**,
 speak, release, and the transcription is typed into the active window. It is a
-bilingual project — developer artifacts (code, comments, commits, `README.md`,
-`CHANGELOG.md`, `AGENTS.md`) are in English; product strings (tray menu,
-tooltips, dialogs, the correction dictionary) and the design docs
-(`PRATA-MASTER.md`, `PRATA-GPU-SERVER.md`, `PRATA-DESIGN-LOG.md`) are in Swedish.
+bilingual project — developer artifacts and **all documentation** (code, comments,
+commits, and every `.md` file, including the design docs `PRATA-MASTER.md`,
+`PRATA-GPU-SERVER.md`, and `PRATA-DESIGN-LOG.md`) are in English; only product
+strings (tray menu, tooltips, dialogs, the correction dictionary) are in Swedish.
 See [AGENTS.md §6](AGENTS.md#6-language-policy) for the full policy.
 
 ---
@@ -150,7 +150,8 @@ reproduction steps, the Windows version, the active backend, and the relevant
 log: for install problems the contents of `%TEMP%\prata-install.log`, and for
 dictation/runtime problems today's daemon log at
 `%LOCALAPPDATA%\Prata\logs\prata-YYYY-MM-DD.log` (metadata only — backend,
-timings, char count, sanity ratio, error strings — never the transcribed text).
+timings, char counts, error strings — never the transcribed text or internal
+ratios; per-day logs older than 30 days are auto-pruned on open).
 
 > **Antivirus / EDR.** A freshly built, unsigned `prata.exe` may be blocked at
 > launch by behavioural security products (e.g. Webroot SecureAnywhere) because
