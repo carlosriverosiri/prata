@@ -114,9 +114,10 @@ operations cannot interleave with each other.
 - **Audio cues** are synthesized in-process (winmm `PlaySoundW`), no audio files:
   start (high tone), stop (low tone), error (double low pulse on all silent error
   paths). For the one ambiguous-cue case that is specific and actionable — a
-  muted/disconnected microphone — Prata additionally **speaks** the reason aloud
-  ("Inget ljud. Är mikrofonen påslagen?") via the Windows speech engine
-  (`internal/speak`, SAPI), since the generic cue cannot say *which* failure it is.
+  muted/disconnected microphone — Prata additionally shows a tray balloon
+  **"INGET LJUD — KONTROLLERA MIKROFONEN"**, since the generic cue cannot say
+  *which* failure it is. (A spoken-TTS version was tried but the Swedish SAPI
+  voice was too unclear; the written balloon won.)
 - **Tray icon** (small yellow microphone badge): backend selection, "Sök efter
   uppdatering…", "Avsluta". The primary way to exit when the app runs at login
   without a console. The tooltip shows the running build version and the active
@@ -146,8 +147,7 @@ started on press and stopped on release = zero idle cost). Transcription runs in
 HTTP client + WAV encoder + normalization), `hotkey` (F1/F8 via RegisterHotKey),
 `inject` (hybrid text injection), `dict` (dictionary: embedded baseline +
 override), `sanity` (degenerate-output guard via gzip ratio), `auth` (DPAPI),
-`single` (mutex guard), `cue` (synthesized audio cues), `speak` (SAPI
-text-to-speech for a spoken mic-off hint), `daemonlog` (per-day metadata-only
+`single` (mutex guard), `cue` (synthesized audio cues), `daemonlog` (per-day metadata-only
 file log), `tray` (icon/menu/balloon/update
 check), `icon` (`go:embed` of the icon), `installer` (machine-wide
 `--install`/`--uninstall`), `ui` (`MessageBox` helper), `update` (notifying version
@@ -588,11 +588,11 @@ ideas are most valuable.
     discoverable enough — or should a persistent surface (e.g. a tray-icon state
     change) be considered, without crossing into auto-switching? (*A first answer,
     2026-06-25:* for the most actionable failure — a muted/disconnected mic —
-    Prata now **speaks** the reason aloud ("Inget ljud. Är mikrofonen påslagen?",
-    `internal/speak` via SAPI), which is unmissable in a way a balloon is not. The
-    open question is whether to extend spoken hints to other specific failures, or
-    add a persistent visual state, vs. the cost of a voice in a room with a
-    patient.)
+    Prata now names it in a tray balloon "INGET LJUD — KONTROLLERA MIKROFONEN".
+    Spoken TTS was tried for unmissability but the Swedish SAPI voice was too
+    unclear, so a written balloon was kept. The open question stands: a balloon
+    can still be missed — is a persistent visual state (a tray-icon change) worth
+    it, and should other specific failures get their own named balloon?)
 12. **Icon resource drift (new, minor).** The committed `rsrc_windows_amd64.syso`
     (the exe's file icon) is generated from `internal/icon/Prata.ico` via
     `akavel/rsrc` and auto-linked by `go build`. Should CI guard against drift

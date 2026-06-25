@@ -1374,14 +1374,15 @@ goes wrong" family:
   journal with no cue. Added `audio.Peak` (loudest sample) and a conservative
   `silencePeakFloor` (512, far below real speech) — a silent capture now drops
   with the error cue. Conservative so a genuine quiet dictation is never dropped;
-  the dropped peak is logged so the floor can be retuned. **Plus a spoken hint**
-  (the developer's idea): on this path Prata also *says* "Inget ljud. Är
-  mikrofonen påslagen?" via the Windows speech engine (`internal/speak`, SAPI 5 /
-  `SpVoice` COM through syscall — no new dependency). Reasoning: the error cue is
-  ambiguous across five failure paths, and this one is specific and actionable; a
-  spoken sentence is unmissable where a tray balloon shares the exact
-  discoverability gap flagged in §15 #11 (the clinician is looking at the journal,
-  not the tray). Best-effort and async; a silent no-op if SAPI is absent.
+  the dropped peak is logged so the floor can be retuned. **Plus a named hint:**
+  the error cue is the same double-pulse for five failure paths, and this one is
+  specific and actionable, so the silent-mic path also shows a tray balloon
+  "INGET LJUD — KONTROLLERA MIKROFONEN" (uppercase, readable at a glance). The
+  developer's first idea was to *speak* it (a brief SAPI TTS sentence, since a
+  balloon shares the §15 #11 discoverability gap) — built and tried, but the
+  default Swedish SAPI voice was hard to understand, so it was dropped in favour
+  of the written balloon. Lesson: a clear written message beat an unclear spoken
+  one; the discoverability trade-off (balloon may be missed) was the lesser evil.
 - **Panic recovery.** The long-running goroutines had no `recover()`; a panic in
   the transcription worker, F8 worker, or processor would silently take the
   daemon down — the worst outcome for a "see and forget" tool. Worker panics now
