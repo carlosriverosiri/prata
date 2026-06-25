@@ -237,12 +237,15 @@ This is one of the most safety-sensitive decisions.
 - **Routing on the foreground window's class**
   (`GetClassNameW(GetForegroundWindow())`):
   - `Chrome_WidgetWin_1` (the whole Chromium/Electron family + the web-based
-    medical record, confirmed to be the same class) → **SendInput Unicode**, the
-    whole string in *one* call. The clipboard is never touched.
+    medical record, confirmed to be the same class) and `Notepad++` (its
+    Scintilla editor silently rejects the clipboard markers below) → **SendInput
+    Unicode**, the whole string in *one* call. The clipboard is never touched.
   - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
-    previous clipboard). The dictated text is marked to stay out of clipboard
-    history (Win+V), the cloud clipboard, and clipboard monitors; the restore of
-    the user's prior clipboard is left unmarked.
+    previous clipboard). Every clipboard write Prata makes — the dictated text
+    and the restore of the user's prior clipboard alike — is marked to stay out
+    of clipboard history (Win+V), the cloud clipboard, and clipboard monitors, so
+    Prata never adds an entry (not even a duplicate of the user's own copy) to
+    their Win+V.
 - **Invariants (patient safety — must not change):**
   - **Safe default:** all uncertainty (no foreground window, a failed class read,
     an unknown class) → clipboard paste.
@@ -363,8 +366,11 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   record (the SendInput path) → neither Win+V nor the cloud clipboard. On the
   paste path (other windows) the dictated text is placed with the
   history/cloud/monitor exclusion markers, so it is kept out of Win+V and the
-  cloud clipboard there too; only the brief save/restore window remains, and the
-  restore of the user's own prior clipboard is unmarked.
+  cloud clipboard there too. The restore of the user's own prior clipboard is
+  marked the same way, so Prata never adds an entry to their Win+V — not even a
+  duplicate of their own copy. (Verified live 2026-06-25; the markers do break
+  the paste *silently* in Notepad++'s Scintilla editor, which is therefore routed
+  via SendInput instead — Word and classic Notepad tolerate them.)
 - **The Berget key is DPAPI-encrypted** per user/machine
   (`%LOCALAPPDATA%\Prata\apikey.dat`) — unreadable for other accounts/machines.
   *No* machine-scope DPAPI (it would expose the key to everyone on a shared PC).
@@ -399,6 +405,16 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   round-trip).
 - **Hybrid injection** verified clean in Chrome, Cursor, Claude Desktop (multi-line
   text) and in the medical-record system via `cmd/inject-test` (class confirmed).
+  Paste path verified live in **Word (`OpusApp`)** and **classic Notepad
+  (`Notepad`)**; **Notepad++ (`Notepad++`)** was routed to SendInput after its
+  Scintilla editor silently rejected the clipboard exclusion markers (2026-06-25).
+- **Backend failover hint (`internal/failover`) verified end-to-end (2026-06-25):**
+  with the active keyless GPU made unreachable, two consecutive dictation failures
+  raised the one-time tray balloon and logged `failover hint shown`; a third
+  failure raised none (once-per-streak).
+- **Win+V hygiene verified (2026-06-25):** dictated text never enters clipboard
+  history, and the paste path no longer leaves a duplicate of the user's own copy
+  there.
 - **Machine-wide install/uninstall/update hardware-verified (2026-06-20):**
   overwrite-while-running (kill the old daemon → retry-copy → re-registration →
   restart), medium-IL injection into a non-elevated window, user data preserved.
@@ -443,7 +459,12 @@ ideas are most valuable.
    clipboard-history / cloud / monitor exclusion formats so it stays out of Win+V
    and the cloud clipboard; a short window where the text sits in the clipboard
    still exists (for the paste itself). Is this the right approach, and is the
-   residual window a concern? (Marker behavior pending hardware verification.)
+   residual window a concern? (Verified live 2026-06-25: text stays out of Win+V.
+   Newly found risk — the markers can break the paste **silently** in some
+   editors: Notepad++'s Scintilla rejected them with no text and no error cue, so
+   it is now routed via SendInput. How many other paste-path apps share this, and
+   should the paste path confirm the insert landed rather than trusting
+   `SetClipboardData` + Ctrl+V success?)
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?

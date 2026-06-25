@@ -119,6 +119,10 @@ Follow-up:
 - Extend the allowlist: verify the new class with realistic, multi-line text before adding it.
 - The production path does not log the chosen route; route logging is available in cmd/inject-test -mode auto.
 
+Update (2026-06-25): `Notepad++` joined the allowlist — not for an autorepeat
+bug, but because its Scintilla editor silently rejected the claim_009 clipboard
+exclusion markers on the paste path. See the 2026-06-25 entry below.
+
 ## Reuse from Diktell
 
 Directly reusable:
@@ -1140,25 +1144,33 @@ via a new `setDictatedClipboardText`.
 
 Three decisions worth recording:
 
-- **Only the dictated text is marked, never the restore.** `setClipboardText` is
-  now a thin wrapper over `writeClipboardText(_, false)` and restores the user's
-  prior clipboard *unmarked* — marking the user's own content would wrongly strip
-  it from their Win+V. Exclusion is `setDictatedClipboardText`
-  (`writeClipboardText(_, true)`), reached only from `Type`'s dictated write, and
-  never from the SendInput path, which does not touch the clipboard at all.
+- **Every Prata clipboard write is marked — the dictated text and the restore
+  alike** (revised 2026-06-25). `writeClipboardText` now *always* sets the
+  markers; both `setDictatedClipboardText` (the dictated write) and
+  `setClipboardText` (restoring the user's prior clipboard after a paste or
+  selection read) go through it. The SendInput path never touches the clipboard
+  at all. Originally only the dictated text was marked and the restore was left
+  unmarked to put the clipboard back "exactly as it was" — but that re-added a
+  duplicate of the user's *own* prior copy to Win+V on every paste-path
+  dictation, which a heavy clipboard-history user (copying radiology reports into
+  the journal) sees as noise. Marking the restore too means Prata contributes
+  nothing to Win+V; the user's original copy stays (it was an ordinary, unmarked
+  Ctrl+C), so nothing of theirs is lost.
 - **Best-effort, never fatal.** A failed `RegisterClipboardFormatW` /
   `SetClipboardData` for a marker is ignored: the text is already on the
   clipboard, and the worst case is the prior behavior (text in history), never a
   failed paste or a worse leak. This mirrors the package's existing best-effort
   clipboard posture.
-- **Markers do not persist.** They live only for the brief paste window; the
-  subsequent restore (or clear) calls `EmptyClipboard`, dropping all formats
-  including the markers.
+- **The dictated text never lingers.** The dictated entry exists only for the
+  brief paste window; the restore's `EmptyClipboard` drops it and its markers.
+  The restore then re-marks the user's *own* content so it stays out of Win+V as
+  a new entry too, while their original copy remains.
 
-Verified to compile and `go vet` for `GOOS=windows` (the package is pure
-syscall, no cgo). The runtime behavior — that the text truly stays out of Win+V
-and the cloud clipboard — still needs hardware verification on a real Windows
-box.
+Verified live on Windows (2026-06-25): dictated text stays out of Win+V, and the
+paste path no longer duplicates the user's own copy. **Caveat found in the same
+session:** the markers break the paste *silently* in Notepad++ (Scintilla) —
+see the 2026-06-25 entry below. Word (`OpusApp`) and classic Notepad (`Notepad`)
+tolerate them, so the incompatibility is editor-specific, not general.
 
 ### Explicit, notify-only backend failover hint (claim_004)
 
@@ -1191,6 +1203,50 @@ Decisions:
   goroutine-safe and blocks until Run is ready, and the hint can only fire after
   the user has dictated twice, so the earlier creation is safe.
 
-`internal/failover` is unit-tested and cross-compiles for windows; the wired
-`cmd/prata` path needs a Windows build (cgo/malgo) to compile-verify and a live
-outage to confirm the balloon end-to-end.
+`internal/failover` is unit-tested and cross-compiles for windows. Verified
+end-to-end on Windows (2026-06-25): with the active backend pointed at a
+genuinely unreachable keyless GPU (Tailscale taken down), two consecutive
+dictations produced two `transcribe error` log lines, then one
+`failover hint shown` line and the tray balloon; a third failure produced no new
+hint, confirming the once-per-streak guard.
+
+### 2026-06-25: Notepad++ silently drops paste — the clipboard markers are the cause; route it through SendInput
+
+During live testing of the claim_009 clipboard markers, dictation into
+**Notepad++** failed in the most dangerous way: the start/stop cues played, but
+no text appeared and **no error cue sounded** — the dictation just vanished. The
+daemon log even recorded `injected ... chars=N`, because the clipboard-paste
+path (`Type`) reports success once `SetClipboardData` + the synthesized Ctrl+V
+return; it never confirms the target actually accepted the paste.
+
+Diagnosis path (worth recording, because the symptom is so quiet):
+
+- The symptom — start+stop cue, **no** error cue, no text — matches exactly one
+  code path other than a working paste: `len(pcm) < minCaptureBytes` (a too-short
+  capture, which also skips silently). The daemon log ruled that out (0
+  occurrences), and showed `injected` lines instead, so the capture and
+  transcription were fine — the text was leaving the app.
+- The mic was fine (Diktell worked), and the text appeared correctly in **Word,
+  classic Notepad, and Chrome**. Only **Notepad++** failed. Word and Notepad use
+  the *same* clipboard-paste path and work, so the path itself is sound — the
+  difference is Notepad++'s Scintilla editor choking on the
+  `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` /
+  `ExcludeClipboardContentFromMonitorProcessing` marker formats added in
+  claim_009.
+
+Fix: add `Notepad++` (the verified window class) to `sendInputSafeClasses`, so
+it routes through `SendInput` (`TypeUnicode`) like the Chromium family. SendInput
+never touches the clipboard, so the markers are irrelevant there — and as a
+bonus the dictated text is clipboard-free in Notepad++ too. Verified live with
+multi-line text and digit strings; no autorepeat (Scintilla accepts the single
+batched Unicode SendInput call, as the original Decision 6 bet predicted for
+non-Chromium engines that take batched input).
+
+Lesson for the allowlist (extends Decision 6): the clipboard-paste fallback can
+fail **silently** in an editor that rejects the exclusion markers. There is
+deliberately no execution fallback (it would risk a double-inject in a medical
+record), so a silent paste failure means lost dictation with no cue. If the user
+reports "I dictate and nothing happens" in some app, the cause is likely this,
+and the fix is to add that window's class to the SendInput allowlist after
+verifying it. Get the class timing-independently from the process's
+`MainWindowHandle` + `GetClassName`, not a timed foreground probe.

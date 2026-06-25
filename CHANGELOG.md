@@ -37,6 +37,16 @@ that point.
 
 ### Fixed
 
+- `internal/inject` — dictation into **Notepad++** (window class `Notepad++`)
+  silently dropped the text: it shares the clipboard-paste path with classic
+  Notepad but chokes on the history/cloud/monitor exclusion markers, so the
+  paste inserted nothing and — because the paste path reports no error — there
+  was no error cue either. Notepad++ now routes through `SendInput`
+  (`TypeUnicode`) like the Chromium family, sidestepping the clipboard and its
+  markers entirely. Verified live on Windows with multi-line text and digit
+  strings (no autorepeat). Classic Notepad (`Notepad`) and Word (`OpusApp`) keep
+  the clipboard path, which works for them — the incompatibility is specific to
+  Notepad++'s Scintilla editor.
 - `cmd/prata/rsrc_windows_amd64.syso` (new) — `prata.exe` now carries a Windows
   icon resource, so Explorer and the taskbar show the Prata icon instead of the
   generic default. The `//go:embed Prata.ico` in `internal/icon/` only feeds the
@@ -53,12 +63,13 @@ that point.
   placing the text it sets the `CanIncludeInClipboardHistory`,
   `CanUploadToCloudClipboard`, and `ExcludeClipboardContentFromMonitorProcessing`
   marker formats in the same clipboard session (new `setDictatedClipboardText`).
-  Only the dictated text is marked — restoring the user's prior clipboard stays
-  unmarked, putting it back exactly as it was — and the markers are best-effort,
-  so a failure reverts to the prior behavior and never fails the paste. Closes
-  the paste-path confidentiality gap (SendInput targets never had it). Compiles
-  and vets for windows; the Win+V / cloud-exclusion behavior is pending hardware
-  verification.
+  Every clipboard write Prata makes is marked the same way — the dictated text
+  and the restore of the user's prior clipboard alike — so Prata never adds an
+  entry to the user's clipboard history, not even a duplicate of the user's own
+  earlier copy when a paste restores it; the user sees only what they copied
+  themselves. The markers are best-effort, so a failure reverts to the prior
+  behavior and never fails the paste. Closes the paste-path confidentiality gap
+  (SendInput targets never had it). Win+V exclusion verified live on Windows.
 - `internal/daemonlog` — the daemon now prunes its own logs on startup: per-day
   `prata-YYYY-MM-DD.log` files older than 30 days are deleted when the log is
   opened. A "see and forget" daemon that runs for years would otherwise leave one
