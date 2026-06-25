@@ -37,16 +37,20 @@ that point.
 
 ### Fixed
 
-- `internal/inject` — dictation into **Notepad++** (window class `Notepad++`)
-  silently dropped the text: it shares the clipboard-paste path with classic
-  Notepad but chokes on the history/cloud/monitor exclusion markers, so the
-  paste inserted nothing and — because the paste path reports no error — there
-  was no error cue either. Notepad++ now routes through `SendInput`
-  (`TypeUnicode`) like the Chromium family, sidestepping the clipboard and its
-  markers entirely. Verified live on Windows with multi-line text and digit
-  strings (no autorepeat). Classic Notepad (`Notepad`) and Word (`OpusApp`) keep
-  the clipboard path, which works for them — the incompatibility is specific to
-  Notepad++'s Scintilla editor.
+- `internal/inject` — **silent paste loss on slow clipboard targets** (found via
+  Notepad++). Dictation into Notepad++ produced no text and *no error cue* — the
+  dictation just vanished. Root cause: the paste path waited only 50 ms after
+  Ctrl+V before restoring the user's clipboard (which calls `EmptyClipboard`).
+  Notepad++'s Scintilla editor reads the clipboard slower than that, so the
+  dictated text was wiped before it landed. (The history/cloud exclusion markers
+  were initially suspected but exonerated: manual Ctrl+V of marked text pastes
+  fine in Notepad++.) Fix: `pasteSettleDelay` 50 ms → **400 ms**, deliberately
+  generous because silent dictation loss in a patient journal is far worse than
+  an imperceptible restore delay — this hardens the whole clipboard-paste path,
+  not just Notepad++. Notepad++ is additionally routed through `SendInput`
+  (clipboard-free, race-immune; verified live with multi-line text and digit
+  strings). Classic Notepad (`Notepad`), Word (`OpusApp`), and PowerPoint read
+  fast enough that the old 50 ms already worked.
 - `cmd/prata/rsrc_windows_amd64.syso` (new) — `prata.exe` now carries a Windows
   icon resource, so Explorer and the taskbar show the Prata icon instead of the
   generic default. The `//go:embed Prata.ico` in `internal/icon/` only feeds the

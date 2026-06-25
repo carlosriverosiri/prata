@@ -238,8 +238,9 @@ This is one of the most safety-sensitive decisions.
   (`GetClassNameW(GetForegroundWindow())`):
   - `Chrome_WidgetWin_1` (the whole Chromium/Electron family + the web-based
     medical record, confirmed to be the same class) and `Notepad++` (its
-    Scintilla editor silently rejects the clipboard markers below) → **SendInput
-    Unicode**, the whole string in *one* call. The clipboard is never touched.
+    Scintilla editor reads the clipboard too slowly for the paste path's restore
+    timing — see §15 #3) → **SendInput Unicode**, the whole string in *one* call.
+    The clipboard is never touched.
   - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
     previous clipboard). Every clipboard write Prata makes — the dictated text
     and the restore of the user's prior clipboard alike — is marked to stay out
@@ -368,9 +369,8 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   history/cloud/monitor exclusion markers, so it is kept out of Win+V and the
   cloud clipboard there too. The restore of the user's own prior clipboard is
   marked the same way, so Prata never adds an entry to their Win+V — not even a
-  duplicate of their own copy. (Verified live 2026-06-25; the markers do break
-  the paste *silently* in Notepad++'s Scintilla editor, which is therefore routed
-  via SendInput instead — Word and classic Notepad tolerate them.)
+  duplicate of their own copy. (Verified live 2026-06-25. The markers do NOT
+  break the paste — a slow clipboard *read* did: see §15 #3 and the design log.)
 - **The Berget key is DPAPI-encrypted** per user/machine
   (`%LOCALAPPDATA%\Prata\apikey.dat`) — unreadable for other accounts/machines.
   *No* machine-scope DPAPI (it would expose the key to everyone on a shared PC).
@@ -405,9 +405,11 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   round-trip).
 - **Hybrid injection** verified clean in Chrome, Cursor, Claude Desktop (multi-line
   text) and in the medical-record system via `cmd/inject-test` (class confirmed).
-  Paste path verified live in **Word (`OpusApp`)** and **classic Notepad
-  (`Notepad`)**; **Notepad++ (`Notepad++`)** was routed to SendInput after its
-  Scintilla editor silently rejected the clipboard exclusion markers (2026-06-25).
+  Paste path verified live in **Word (`OpusApp`)**, **PowerPoint**, and **classic
+  Notepad (`Notepad`)**. **Notepad++ (`Notepad++`)** lost dictation silently on
+  the paste path — root cause was the clipboard restore race (`pasteSettleDelay`
+  too short), now fixed (50 ms → 400 ms); Notepad++ also routed to SendInput as
+  the race-immune path (2026-06-25).
 - **Backend failover hint (`internal/failover`) verified end-to-end (2026-06-25):**
   with the active keyless GPU made unreachable, two consecutive dictation failures
   raised the one-time tray balloon and logged `failover hint shown`; a third
@@ -460,11 +462,14 @@ ideas are most valuable.
    and the cloud clipboard; a short window where the text sits in the clipboard
    still exists (for the paste itself). Is this the right approach, and is the
    residual window a concern? (Verified live 2026-06-25: text stays out of Win+V.
-   Newly found risk — the markers can break the paste **silently** in some
-   editors: Notepad++'s Scintilla rejected them with no text and no error cue, so
-   it is now routed via SendInput. How many other paste-path apps share this, and
-   should the paste path confirm the insert landed rather than trusting
-   `SetClipboardData` + Ctrl+V success?)
+   Newly found risk — the paste can fail **silently** (no text, no error cue) if
+   the target reads the clipboard slower than `pasteSettleDelay`, which then wipes
+   the text on restore: Notepad++'s Scintilla did exactly this. Mitigated by
+   raising the delay 50 ms → 400 ms, but a fixed delay is a guess — high-latency
+   targets (RDP/Citrix clipboard redirection) could still lose the race. Should
+   the paste path *confirm* the insert landed rather than trusting
+   `SetClipboardData` + Ctrl+V success? Win32 has no clean signal short of
+   delayed-rendering — an open design question.)
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?

@@ -1167,10 +1167,11 @@ Three decisions worth recording:
   a new entry too, while their original copy remains.
 
 Verified live on Windows (2026-06-25): dictated text stays out of Win+V, and the
-paste path no longer duplicates the user's own copy. **Caveat found in the same
-session:** the markers break the paste *silently* in Notepad++ (Scintilla) —
-see the 2026-06-25 entry below. Word (`OpusApp`) and classic Notepad (`Notepad`)
-tolerate them, so the incompatibility is editor-specific, not general.
+paste path no longer duplicates the user's own copy. **Note:** the markers were
+briefly suspected of breaking the paste in Notepad++ that same session, but were
+exonerated — manual Ctrl+V of marked text pastes fine there. The real cause was a
+clipboard restore race (the paste path's `pasteSettleDelay` was too short); see
+the 2026-06-25 entry below.
 
 ### Explicit, notify-only backend failover hint (claim_004)
 
@@ -1210,7 +1211,7 @@ dictations produced two `transcribe error` log lines, then one
 `failover hint shown` line and the tray balloon; a third failure produced no new
 hint, confirming the once-per-streak guard.
 
-### 2026-06-25: Notepad++ silently drops paste — the clipboard markers are the cause; route it through SendInput
+### 2026-06-25: Notepad++ silently drops paste — the real cause is the clipboard restore race, not the markers
 
 During live testing of the claim_009 clipboard markers, dictation into
 **Notepad++** failed in the most dangerous way: the start/stop cues played, but
@@ -1219,34 +1220,53 @@ daemon log even recorded `injected ... chars=N`, because the clipboard-paste
 path (`Type`) reports success once `SetClipboardData` + the synthesized Ctrl+V
 return; it never confirms the target actually accepted the paste.
 
-Diagnosis path (worth recording, because the symptom is so quiet):
+Diagnosis path (worth recording, because the symptom is so quiet and the first
+hypothesis was wrong):
 
 - The symptom — start+stop cue, **no** error cue, no text — matches exactly one
   code path other than a working paste: `len(pcm) < minCaptureBytes` (a too-short
   capture, which also skips silently). The daemon log ruled that out (0
-  occurrences), and showed `injected` lines instead, so the capture and
-  transcription were fine — the text was leaving the app.
-- The mic was fine (Diktell worked), and the text appeared correctly in **Word,
-  classic Notepad, and Chrome**. Only **Notepad++** failed. Word and Notepad use
-  the *same* clipboard-paste path and work, so the path itself is sound — the
-  difference is Notepad++'s Scintilla editor choking on the
-  `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` /
-  `ExcludeClipboardContentFromMonitorProcessing` marker formats added in
-  claim_009.
+  occurrences) and showed `injected` lines instead — capture and transcription
+  were fine, the text was leaving the app.
+- The mic was fine (Diktell worked), and the text appeared correctly in **Word
+  (`OpusApp`), classic Notepad (`Notepad`), PowerPoint, and Chrome**. Only
+  **Notepad++** failed. Word/Notepad/PPT use the *same* clipboard-paste path and
+  work, so the path itself is sound.
+- **First hypothesis (WRONG): the claim_009 exclusion markers.** Plausible — only
+  the clipboard path carries them, and Notepad++ is Scintilla. Disproved with a
+  throwaway tool (`cmd/cliptest`) that puts CF_UNICODETEXT + a chosen subset of
+  markers on the clipboard: **manual Ctrl+V of all-three-markers text pastes fine
+  in Notepad++.** So the markers do not break the paste — something in Prata's
+  *automated* paste sequence did.
+- **Real cause: the restore race.** `Type` waits `pasteSettleDelay` after Ctrl+V,
+  then restores the user's clipboard via `EmptyClipboard` + re-set. At 50 ms,
+  Scintilla had not yet read the clipboard, so the restore wiped the dictated
+  text before it landed. Confirmed by putting Notepad++ back on the clipboard
+  path and bumping `pasteSettleDelay` to 400 ms — dictation then worked. Notepad/
+  Word/PPT read the clipboard faster than 50 ms, which is why they never failed.
 
-Fix: add `Notepad++` (the verified window class) to `sendInputSafeClasses`, so
-it routes through `SendInput` (`TypeUnicode`) like the Chromium family. SendInput
-never touches the clipboard, so the markers are irrelevant there — and as a
-bonus the dictated text is clipboard-free in Notepad++ too. Verified live with
-multi-line text and digit strings; no autorepeat (Scintilla accepts the single
-batched Unicode SendInput call, as the original Decision 6 bet predicted for
-non-Chromium engines that take batched input).
+Fix (two parts):
 
-Lesson for the allowlist (extends Decision 6): the clipboard-paste fallback can
-fail **silently** in an editor that rejects the exclusion markers. There is
-deliberately no execution fallback (it would risk a double-inject in a medical
-record), so a silent paste failure means lost dictation with no cue. If the user
-reports "I dictate and nothing happens" in some app, the cause is likely this,
-and the fix is to add that window's class to the SendInput allowlist after
-verifying it. Get the class timing-independently from the process's
-`MainWindowHandle` + `GetClassName`, not a timed foreground probe.
+- **General:** `pasteSettleDelay` 50 ms → 400 ms. This hardens the *whole*
+  clipboard-paste path against slow readers, which is the true §2/§3 silent-loss
+  risk — not Notepad++ alone. 400 ms is deliberately generous: silent dictation
+  loss in a journal is far worse than an imperceptible restore delay.
+- **Notepad++ specifically:** kept on `sendInputSafeClasses` (added the same day).
+  SendInput is clipboard-free and so race-immune; it is the most robust path for
+  an editor the user actively uses. The class is stable (unlike Qt classes such
+  as `Qt6102QWindowIcon`, which encode the version and would break exact-match
+  allowlisting on upgrade).
+
+Lessons:
+
+- The clipboard-paste path can fail **silently**: there is deliberately no
+  execution fallback (it would risk a double-inject in a medical record), and the
+  path never confirms the insert landed. The residual gap — *generic* detection
+  that a paste was consumed — is unsolved here (Win32 has no clean signal short of
+  delayed-rendering, a larger architectural change). The delay bump mitigates the
+  known mechanism; the detection question is logged as open (PRATA-REVIEW §15 #3).
+- Get a window class timing-independently from the process's `MainWindowHandle` +
+  `GetClassName`, not a timed foreground probe (focus timing is unreliable).
+- Don't stop at the first plausible cause: isolate it. The marker hypothesis was
+  reasonable but a five-minute manual-paste test (`cmd/cliptest`) saved shipping
+  the wrong mental model.

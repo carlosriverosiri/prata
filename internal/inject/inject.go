@@ -27,11 +27,21 @@ const (
 	vkV              = 0x56
 	vkC              = 0x43
 
-	cfUnicodeText    = 13
-	gmemMoveable     = 0x0002
-	gmemZeroInit     = 0x0040
-	interEventDelay  = 2 * time.Millisecond
-	pasteSettleDelay = 50 * time.Millisecond
+	cfUnicodeText   = 13
+	gmemMoveable    = 0x0002
+	gmemZeroInit    = 0x0040
+	interEventDelay = 2 * time.Millisecond
+	// pasteSettleDelay is how long Type waits after issuing Ctrl+V before it
+	// restores the user's prior clipboard. The restore calls EmptyClipboard, so
+	// if the target reads the clipboard slower than this the dictated text is
+	// gone before it lands — a SILENT empty paste (no error, no text). Notepad++
+	// (Scintilla) reads it slower than the old 50ms allowed and lost dictation
+	// this way; Notepad/Word/PowerPoint read fast enough. 400ms is deliberately
+	// generous: silent dictation loss in a patient journal is far worse than an
+	// imperceptible delay before the user's own clipboard is restored. The
+	// markers on the dictated text are NOT the cause — manual Ctrl+V of marked
+	// text pastes fine in Notepad++ (verified 2026-06-25). See PRATA-DESIGN-LOG.
+	pasteSettleDelay = 400 * time.Millisecond
 
 	// copySettleTimeout is how long CopySelection waits for the clipboard
 	// sequence number to change after Ctrl+C. Chromium/Webdoc often needs
@@ -192,14 +202,15 @@ func TypeUnicode(text string) error {
 // dependent failure.
 var sendInputSafeClasses = map[string]struct{}{
 	"Chrome_WidgetWin_1": {},
-	// "Notepad++" (the Scintilla-based editor) reports class "Notepad++". Its
-	// clipboard-paste path fails to insert the dictated text — unlike classic
-	// Notepad (class "Notepad"), which shares that path and works — so route it
-	// through SendInput instead, which sidesteps the clipboard (and its history
-	// exclusion markers) entirely. Scintilla accepts the single batched Unicode
-	// SendInput call, the same way Chromium does. Pending verification with
-	// realistic multi-line text and digit strings before this is treated as
-	// settled.
+	// "Notepad++" (the Scintilla-based editor, class "Notepad++") is kept on
+	// SendInput as the most robust path for it. Its clipboard-paste failure was
+	// NOT the exclusion markers — manual Ctrl+V of marked text pastes fine there
+	// (verified 2026-06-25) — but the restore race: Scintilla reads the clipboard
+	// slower than the old 50ms pasteSettleDelay, so the restore's EmptyClipboard
+	// wiped the dictated text before it landed. That race is now fixed generally
+	// (larger pasteSettleDelay), so the clipboard path works here too; but
+	// SendInput is clipboard-free and immune to the race, so Notepad++ stays on
+	// it. Verified live with multi-line text and digit strings.
 	"Notepad++": {},
 }
 
