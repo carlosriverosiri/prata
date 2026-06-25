@@ -1302,3 +1302,47 @@ alone (ambiguous with a spoken read-back, short, visible to the user). Both
 signals are locked in by regression tests so a future threshold tweak can't
 silently regress the legitimate cases. The whole guard remains best-effort and
 discard-only: on any doubt it keeps the text, because there is no fallback.
+
+### 2026-06-25: Failure-mode review (§9) — a staleness guard for late injection; why a wrong-patient guard can't be window-based
+
+A systematic sweep of the dictation pipeline (capture → queue → transcribe →
+inject → F8/failover) for silent text loss, misdirected injection, and leaks. Two
+fixes shipped; the headline risk turned out narrower than first feared.
+
+**Async injection into a stale context.** `targetHwnd` is captured at F1 press,
+but transcription is async (up to 30s on a Berget hiccup or queue backlog). The
+existing guard only aborts if the target window was *closed* (`inject.IsWindow`),
+not if its content changed — its comment even claims to handle "the user moved
+from patient A's record to patient B's", which it does not. First framed as a
+cross-patient hazard. Investigation killed the obvious guard: the journal
+(Webdoc) is a hash-route SPA (`webdoc.atlan.se/#`) whose **window title is static
+across patients** (the patient is in the page body), and the user keeps patients
+in **tabs that share one Chrome HWND**. Prata operates at the window level, so it
+**cannot** see an in-app patient switch — title and HWND are identical. A
+title/HWND fingerprint is therefore ineffective for that case.
+
+Recalibrated with the user's actual workflow: they finish one patient before the
+next, so bouncing between patients is unlikely. The real, likely harm of a *very
+late* result is that it lands mid-sentence in text the user has since started
+typing **by hand**. Fix: a **staleness guard** (`maxInjectAge`, 8s). The backend
+still counts as reachable (the failover streak is cleared first), but a result
+older than the bound is dropped with an error cue + tray hint instead of injected.
+Normal transcription is sub-second to ~2.7s; only an abnormal tail exceeds 8s.
+Verified live: normal dictation injects; with the bound temporarily at 1ms every
+result is dropped (`stale result dropped age=…` logged, no text, error cue, the
+`age` matching the transcription time — proving the capture-time wiring). Residual
+gap (a fast in-window tab switch under 8s) is undetectable by Prata and left to
+operational discipline; separate Chrome *windows* per patient would make a future
+HWND check effective if ever needed.
+
+**Too-short capture dropped silently.** The `len(pcm) < minCaptureBytes` path
+skipped with only the stop cue — a real dictation clipped by a slow device start
+would vanish like the paste race. Now plays the error cue too, so no drop is
+silent. An accidental F1 tap then beeps, which is honest feedback.
+
+Lower-severity items, left as documented notes rather than code: F8's synthetic
+Ctrl+C makes the *app* copy the selected text to the clipboard, so the selection
+briefly enters Win+V — inherent to reading a selection by synthesizing a copy, and
+not removable after the fact. And the events channel (buffer 4) can briefly
+backpressure under rapid dictation during a long injection — it delays, never
+loses.

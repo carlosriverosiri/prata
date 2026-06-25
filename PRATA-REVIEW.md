@@ -259,9 +259,17 @@ This is one of the most safety-sensitive decisions.
     multi-line text. **Exact** class matching, not prefix.
   - **Dead-target fast-fail:** before focus is restored the target HWND is
     re-validated (`inject.IsWindow`). If the window that was foreground at F1
-    press was closed during a slow transcription (e.g. switching from patient
-    A's record to patient B's), the result is dropped with a distinct "target
-    window gone" diagnostic rather than injected into whatever now holds focus.
+    press was *closed* during a slow transcription, the result is dropped with a
+    distinct "target window gone" diagnostic rather than injected into whatever
+    now holds focus. (Note: this catches window *closure* only, not an in-app
+    content change such as a Webdoc patient/tab switch — those share the HWND and
+    title; see the staleness guard below and the §9 review in PRATA-DESIGN-LOG.)
+  - **Staleness guard:** injection is async, so a result can return long after
+    the user finished dictating (a Berget hiccup / queue backlog, up to ~30s). A
+    result older than `maxInjectAge` (8s) is dropped with an error cue + tray hint
+    rather than injected — by then the user has likely started typing by hand, and
+    a late injection would land mid-sentence. Normal dictation (≤~2.7s) is
+    unaffected.
 - **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
   then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
   confidentiality: medical-record text should not linger in Win+V or sync to the

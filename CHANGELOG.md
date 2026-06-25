@@ -37,6 +37,22 @@ that point.
 
 ### Fixed
 
+- `cmd/prata` — **a very late transcription no longer injects into whatever the
+  user is now doing.** Found in the §9 failure-mode review: injection is async (a
+  Berget hiccup or queue backlog can delay a result up to 30s), and a result that
+  returns long after the user finished dictating would land mid-sentence in text
+  they have since started typing by hand. New `maxInjectAge` (8s): past it, the
+  result is dropped with an error cue + tray hint ("Dikteringen tog för lång tid
+  …") instead of injected. The backend still counts as reachable. Normal
+  dictation (sub-second to ~2.7s) is unaffected. (The related cross-patient
+  framing was investigated and set aside: Webdoc's window title is static across
+  patients and patients share one browser HWND, so Prata cannot detect an in-app
+  patient switch; the user's workflow makes it unlikely. See PRATA-DESIGN-LOG.)
+- `cmd/prata` — a **too-short capture** (`len(pcm) < minCaptureBytes`) now plays
+  the error cue instead of skipping with only the stop cue. A real dictation
+  clipped by a slow device start would otherwise vanish silently (the same
+  symptom as the paste race). An accidental F1 tap now beeps too — honest
+  feedback that nothing was recorded.
 - `internal/inject` — **silent paste loss on slow clipboard targets** (found via
   Notepad++). Dictation into Notepad++ produced no text and *no error cue* — the
   dictation just vanished. Root cause: the paste path waited only 50 ms after

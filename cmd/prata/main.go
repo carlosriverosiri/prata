@@ -87,6 +87,10 @@ const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcr
 type transcribeJob struct {
 	pcm        []byte
 	targetHwnd uintptr
+	// created is when the capture finished (F1 release). Used to drop a result
+	// that comes back so late the user has likely moved on or started typing by
+	// hand — see maxInjectAge.
+	created time.Time
 }
 
 // transcribeResult carries a finished transcription from the worker
@@ -97,6 +101,7 @@ type transcribeResult struct {
 	elapsed    time.Duration
 	err        error
 	targetHwnd uintptr
+	created    time.Time // capture finish time, carried from the job (see maxInjectAge)
 }
 
 // transcribeQueueDepth bounds how many finished captures can wait for
@@ -110,6 +115,16 @@ const transcribeQueueDepth = 8
 // local backend trigger the one-time "switch backend?" tray hint. Two avoids
 // nagging on a single transient blip while still flagging a real outage fast.
 const failoverFailureThreshold = 2
+
+// maxInjectAge bounds how long after the user finished dictating (F1 release) a
+// transcription may still be auto-injected. Past this, the result is dropped
+// (error cue + tray hint) instead: by then the user has likely given up waiting
+// and started typing by hand, so a late injection would land mid-sentence in
+// whatever they are now writing — a real hazard in a patient journal. Normal
+// transcription is sub-second to ~2.7s (Berget); only an abnormal tail (a Berget
+// hiccup ~24s, or queue backlog) exceeds this. Tunable: lowering it interrupts
+// hand-typing less often but re-dictates a slow-but-valid result more often.
+const maxInjectAge = 8 * time.Second
 
 // loadDict builds the active dictionary: the embedded baseline with the
 // per-user override (PRATA_DICT_PATH or %LOCALAPPDATA%\Prata\...) layered on
@@ -324,6 +339,7 @@ func main() {
 					elapsed:    time.Since(start),
 					err:        terr,
 					targetHwnd: job.targetHwnd,
+					created:    job.created,
 				}
 				select {
 				case results <- result:
@@ -561,7 +577,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				// full (sustained outage) drop with an error cue rather than
 				// stalling capture or piling up stale audio.
 				select {
-				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd}:
+				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd, created: time.Now()}:
 					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 				default:
 					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
@@ -601,6 +617,18 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 			// The backend responded (even if the text is later judged empty or
 			// degenerate): it is reachable, so clear any failover streak.
 			fo.RecordSuccess()
+			// Staleness guard: a result that returns long after F1 release is
+			// dangerous to inject — by now the user has likely given up and is
+			// typing by hand, and the late text would land mid-sentence in their
+			// patient note. Drop it audibly instead (the backend was reachable,
+			// so the failover streak is already cleared above). See maxInjectAge.
+			if age := time.Since(res.created); age > maxInjectAge {
+				fmt.Fprintf(os.Stderr, "stale transcription dropped (%.1fs old)\n", age.Seconds())
+				daemonlog.Printf("stale result dropped age=%.1fs backend=%s elapsed=%.2fs", age.Seconds(), backendID, elapsed)
+				cue.PlayError()
+				t.Notify("Prata", "Dikteringen tog för lång tid och infogades inte. Diktera om.")
+				continue
+			}
 			text := res.text
 			if d != nil {
 				text = d.Apply(text)
