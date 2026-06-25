@@ -369,6 +369,12 @@ func main() {
 	} else {
 		defer closer.Close()
 	}
+	// Durable "I started" anchor: on a "see and forget" tool the daemon log is
+	// the only record someone can read to tell whether — and when — Prata last
+	// came up. A run that keeps restarting, or that has not started in days,
+	// shows here. (The darkest startup failure, F1 unavailable, is surfaced
+	// visibly below; this is the always-on heartbeat.)
+	daemonlog.Printf("daemon started version=%s backend=%s", version, active.ID)
 
 	// System-tray icon. Created before the processor goroutine starts so
 	// processEvents can surface a failover balloon through it; the rest of the
@@ -493,7 +499,20 @@ func main() {
 				<-trayDone
 			}
 			if err != nil {
+				// The hotkey listener died — almost always RegisterHotKey(F1)
+				// failing because another program already owns F1. Under
+				// -H windowsgui there is no console, so this used to be the
+				// darkest silent failure: the daemon exits and dictation is dead
+				// with no cue, no balloon, nothing the clinician can see. Make it
+				// visible — log it and show a modal box (which blocks, so it is
+				// seen even though we exit right after).
 				fmt.Fprintf(os.Stderr, "listener error: %v\n", err)
+				daemonlog.Printf("FATAL listener stopped: %v", err)
+				ui.MessageBox(
+					"Prata kunde inte starta",
+					"Dikteringstangenten F1 kunde inte aktiveras — den används troligen redan av ett annat program. Stäng det programmet (eller starta om datorn) och starta Prata igen.",
+					ui.IconError,
+				)
 				os.Exit(1)
 			}
 			return

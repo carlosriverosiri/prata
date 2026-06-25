@@ -14,6 +14,21 @@ or misframed, two were genuinely worth acting on):
 
 ### Added
 
+- `cmd/prata` — **"see and forget" health signal, first slice** (PRATA-REVIEW
+  §15 #14). Two things a freshly-started daemon does that used to be invisible
+  under `-H windowsgui`: (1) a durable **startup log anchor** —
+  `daemon started version=… backend=…` — so the daemon log shows whether, and
+  when, Prata last came up (a tool that keeps restarting or has not started in
+  days now shows it); (2) the **darkest silent failure made visible** — if the F1
+  push-to-talk hotkey cannot be registered (almost always another program already
+  owns F1), the daemon used to exit with no cue, no balloon, nothing; it now logs
+  `FATAL listener stopped` and shows a modal box ("Prata kunde inte starta —
+  dikteringstangenten F1 …") so the clinician sees why dictation is dead. The
+  rest of the designed health signal (a startup mic probe, a Task Scheduler
+  restart-on-failure for the crash class, and possibly a persistent degraded tray
+  state / F1 self-healing) is scoped as a follow-up pending a few decisions — see
+  PRATA-DESIGN-LOG and §15 #14.
+
 - `internal/audio` + `cmd/prata` — **silent-capture guard.** A capture that is
   long enough but carries no sound (a muted, disconnected, or wrong-default
   microphone) is now dropped with the error cue instead of sent to Whisper, which

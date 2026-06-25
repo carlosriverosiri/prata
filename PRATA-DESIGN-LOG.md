@@ -1400,3 +1400,47 @@ a GPU-server-side change — the developer's network-trust call); a "see and for
 question, the genuinely under-defended axis); clipboard text stranded on a hard
 kill (a ~400ms window, markers limit the blast radius); and the F8 Win+V leak
 (inherent to reading a selection via synthetic Ctrl+C).
+
+### 2026-06-25: "See and forget" health signal — design, and the first slice shipped
+
+The under-defended axis: on an unmanaged clinic PC the daemon can stop working
+silently (F1 hotkey unavailable, a crash, the Task Scheduler task disabled, a
+Defender exclusion reset) and nobody knows until a clinician notices dictation
+died, possibly weeks later. A design pass (an 8-agent orchestration: map the
+silent-failure modes from the code, weigh five surfacing approaches against the
+minimalism budget, synthesize) mapped ~14 silent modes and recommended:
+
+- A **startup self-check** — probe F1 availability (register + unregister) and a
+  mic, one log line per start, a balloon only on failure, **no** backend probe
+  (its timeout harms startup and it duplicates the failover hint).
+- **Task Scheduler restart-on-failure** for the crash class — the one thing a
+  *non-running* daemon cannot report about itself.
+
+Honest boundary: a non-running daemon cannot announce a deleted task, an AV reset
+before it starts, or hotkey theft after launch — those need the OS (the task's
+own restart policy) or an external probe, not the daemon.
+
+**Shipped now (the highest-value, lowest-risk slice, no install-path change):**
+
+- **Startup log anchor** (`daemon started version=… backend=…`) — a durable
+  "I came up" record so the log shows whether/when Prata last started.
+- **The darkest mode made visible.** F1's `RegisterHotKey` failure was the worst
+  silent failure: it happens before the tray exists and, under `-H windowsgui`,
+  exits with no console, no cue, no balloon — the tool simply appears dead. The
+  listener-error path now logs `FATAL listener stopped` and shows a **modal
+  message box** (which blocks, so it is seen even though we exit right after).
+  A modal box is justified here despite "never interrupt": this is a fatal
+  *can't-start* error, not a steady-state interruption.
+
+**Deferred, pending the developer's decisions** (so the install path and a
+behaviour change are not touched unilaterally):
+
+- *Restart-on-failure* in the Task Scheduler task — bounded (e.g. 3×) vs unbounded
+  (crash-loop risk); and it needs a real non-zero exit to trigger on.
+- *F1 failure: stay fatal (current) or keep the daemon alive and self-heal* when
+  the offending app closes — the latter is nicer for "forget" but adds a re-probe
+  loop and a "alive but F1 dead" degraded state.
+- *Surface:* a one-shot balloon (cheap, can be missed) vs a persistent degraded
+  tray state (seen on Monday).
+- A *startup mic probe* (earlier warning than the first failed dictation, which
+  the silent-capture guard already covers).

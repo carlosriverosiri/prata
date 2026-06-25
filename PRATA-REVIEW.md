@@ -607,15 +607,19 @@ ideas are most valuable.
     journal, with no human review step. Is the LAN-perimeter trust acceptable, or
     is this worth HTTPS (self-signed + pinned) and/or an HMAC on the response?
     Note: the fix needs the **GPU-server side** too, not just Prata.
-14. **Unattended longevity / "see and forget" health (new, open).** This is the
-    least-defended axis. If the Task Scheduler task is disabled (an OS feature
-    update, an admin), the `RegisterHotKey(F1)` fails, a Defender exclusion is
-    reset, the GitHub update API changes, or Tailscale auth rotates — the tool can
-    **silently stop working** on an unmanaged PC, and nobody knows until a clinician
-    notices dictation died (possibly weeks later). There is no health signal or
-    telemetry. What is the lightest mechanism (a startup self-check + visible
-    state? a periodic heartbeat to a log someone reads?) that fits the minimalism
-    budget and would surface silent breakage before a clinician hits it?
+14. **Unattended longevity / "see and forget" health (partly addressed).** This is
+    the least-defended axis: the tool can **silently stop working** (F1 hotkey
+    unavailable, a crash, the Task Scheduler task disabled, a Defender reset) and
+    nobody knows until a clinician notices dictation died weeks later. (*First
+    slice shipped 2026-06-25:* a durable startup log anchor `daemon started …`, and
+    the darkest mode made visible — an F1 `RegisterHotKey` failure now shows a
+    modal box instead of exiting silently.) **Still open** (the developer's
+    decisions): a Task Scheduler **restart-on-failure** for the crash class
+    (bounded vs unbounded), whether an F1 failure should **self-heal** (stay alive
+    + re-probe) instead of exit, a one-shot balloon vs a **persistent degraded
+    tray state**, and a startup mic probe. The hard limit stands: a *non-running*
+    daemon cannot report a deleted task or a pre-launch AV block — that needs the
+    OS or an external probe.
 
 ---
 

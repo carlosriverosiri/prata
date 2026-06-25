@@ -69,12 +69,14 @@ Prioritised. Each cross-references `PRATA-REVIEW.md` §15 where there is a detai
 discussion. None of these are committed work — they are candidates.
 
 ### Higher value
-1. **"See and forget" health signal** (§15 #14). The least-defended axis: a disabled
-   Task Scheduler task, a failed `RegisterHotKey(F1)`, a reset Defender exclusion, a
-   GitHub-API change, or a Tailscale auth rotation can **silently** stop the tool, and
-   nobody knows until a clinician notices dictation died (possibly weeks later). →
-   A lightweight startup self-check + a visible state, or a heartbeat line someone
-   reads. *Medium effort; design question.*
+1. **"See and forget" health signal** (§15 #14). *🟡 First slice shipped
+   2026-06-25:* a durable startup log anchor (`daemon started …`) and the darkest
+   silent mode made visible (an F1 `RegisterHotKey` failure now shows a modal box
+   instead of exiting silently). **Remaining** (pending decisions): a Task
+   Scheduler restart-on-failure for the crash class (bounded vs unbounded), F1
+   self-healing vs fatal, a persistent degraded tray state vs one-shot balloon, a
+   startup mic probe. The hard limit: a *non-running* daemon can't report a deleted
+   task / pre-launch AV block — needs the OS or an external probe.
 2. **Transport security + backend-response authenticity** (§15 #13). The LAN GPU is
    reached over **plaintext HTTP** with no auth, and the response is injected with no
    integrity check → a LAN attacker (ARP spoof / MITM) could read patient audio *and*
