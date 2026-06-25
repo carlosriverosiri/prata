@@ -222,10 +222,11 @@ Two layers:
 
 - Matching is case-sensitive with **Unicode-aware word boundaries**
   (`[\p{L}\p{N}_]`), literal indexing (no regex), rules in file order.
-- **Build-time fold-in (designed, implementation phased):** a small CLI
-  (`cmd/dict-foldin`) should be able to fold valuable override entries into the
-  embedded baseline ahead of a release (clinic corrections = domain knowledge, not
-  personal preference). The contract is specified; the tool is not built yet.
+- **Build-time fold-in (implemented):** a small CLI (`cmd/dict-foldin`) folds
+  valuable override entries into the embedded baseline ahead of a release
+  (clinic corrections = domain knowledge, not personal preference). Per key it
+  adds or replaces in place, preserving comments/blank lines/order; baseline
+  rules are never removed; `--dry-run` previews. Run manually by the developer.
 
 ---
 
@@ -236,10 +237,16 @@ This is one of the most safety-sensitive decisions.
 - **Routing on the foreground window's class**
   (`GetClassNameW(GetForegroundWindow())`):
   - `Chrome_WidgetWin_1` (the whole Chromium/Electron family + the web-based
-    medical record, confirmed to be the same class) → **SendInput Unicode**, the
-    whole string in *one* call. The clipboard is never touched.
+    medical record, confirmed to be the same class) and `Notepad++` (its
+    Scintilla editor reads the clipboard too slowly for the paste path's restore
+    timing — see §15 #3) → **SendInput Unicode**, the whole string in *one* call.
+    The clipboard is never touched.
   - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
-    previous clipboard).
+    previous clipboard). Every clipboard write Prata makes — the dictated text
+    and the restore of the user's prior clipboard alike — is marked to stay out
+    of clipboard history (Win+V), the cloud clipboard, and clipboard monitors, so
+    Prata never adds an entry (not even a duplicate of the user's own copy) to
+    their Win+V.
 - **Invariants (patient safety — must not change):**
   - **Safe default:** all uncertainty (no foreground window, a failed class read,
     an unknown class) → clipboard paste.
@@ -252,9 +259,17 @@ This is one of the most safety-sensitive decisions.
     multi-line text. **Exact** class matching, not prefix.
   - **Dead-target fast-fail:** before focus is restored the target HWND is
     re-validated (`inject.IsWindow`). If the window that was foreground at F1
-    press was closed during a slow transcription (e.g. switching from patient
-    A's record to patient B's), the result is dropped with a distinct "target
-    window gone" diagnostic rather than injected into whatever now holds focus.
+    press was *closed* during a slow transcription, the result is dropped with a
+    distinct "target window gone" diagnostic rather than injected into whatever
+    now holds focus. (Note: this catches window *closure* only, not an in-app
+    content change such as a Webdoc patient/tab switch — those share the HWND and
+    title; see the staleness guard below and the §9 review in PRATA-DESIGN-LOG.)
+  - **Staleness guard:** injection is async, so a result can return long after
+    the user finished dictating (a Berget hiccup / queue backlog, up to ~30s). A
+    result older than `maxInjectAge` (8s) is dropped with an error cue + tray hint
+    rather than injected — by then the user has likely started typing by hand, and
+    a late injection would land mid-sentence. Normal dictation (≤~2.7s) is
+    unaffected.
 - **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
   then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
   confidentiality: medical-record text should not linger in Win+V or sync to the
@@ -357,7 +372,13 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   written falls back to stderr and never disrupts dictation (`PRATA_DAEMON_LOG`
   overrides the path for tests).
 - **Dictated medical-record text never leaves the clipboard** in Chromium/the
-  record (the SendInput path) → neither Win+V nor the cloud clipboard.
+  record (the SendInput path) → neither Win+V nor the cloud clipboard. On the
+  paste path (other windows) the dictated text is placed with the
+  history/cloud/monitor exclusion markers, so it is kept out of Win+V and the
+  cloud clipboard there too. The restore of the user's own prior clipboard is
+  marked the same way, so Prata never adds an entry to their Win+V — not even a
+  duplicate of their own copy. (Verified live 2026-06-25. The markers do NOT
+  break the paste — a slow clipboard *read* did: see §15 #3 and the design log.)
 - **The Berget key is DPAPI-encrypted** per user/machine
   (`%LOCALAPPDATA%\Prata\apikey.dat`) — unreadable for other accounts/machines.
   *No* machine-scope DPAPI (it would expose the key to everyone on a shared PC).
@@ -392,6 +413,18 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   round-trip).
 - **Hybrid injection** verified clean in Chrome, Cursor, Claude Desktop (multi-line
   text) and in the medical-record system via `cmd/inject-test` (class confirmed).
+  Paste path verified live in **Word (`OpusApp`)**, **PowerPoint**, and **classic
+  Notepad (`Notepad`)**. **Notepad++ (`Notepad++`)** lost dictation silently on
+  the paste path — root cause was the clipboard restore race (`pasteSettleDelay`
+  too short), now fixed (50 ms → 400 ms); Notepad++ also routed to SendInput as
+  the race-immune path (2026-06-25).
+- **Backend failover hint (`internal/failover`) verified end-to-end (2026-06-25):**
+  with the active keyless GPU made unreachable, two consecutive dictation failures
+  raised the one-time tray balloon and logged `failover hint shown`; a third
+  failure raised none (once-per-streak).
+- **Win+V hygiene verified (2026-06-25):** dictated text never enters clipboard
+  history, and the paste path no longer leaves a duplicate of the user's own copy
+  there.
 - **Machine-wide install/uninstall/update hardware-verified (2026-06-20):**
   overwrite-while-running (kill the old daemon → retry-copy → re-registration →
   restart), medium-IL injection into a non-elevated window, user data preserved.
@@ -432,22 +465,44 @@ ideas are most valuable.
    safely? Is "no execution fallback" right even when SendInput *guaranteed* did
    not manage to send anything?
 3. **Patient confidentiality on the paste path.** On non-Chromium windows the
-   clipboard is used (save/restore). There is a short time window where
-   medical-record text sits in the clipboard. How serious is that, and is there a
-   better path that does not break the one-file/stdlib-only principle?
+   clipboard is used (save/restore). The dictated text is now marked with the
+   clipboard-history / cloud / monitor exclusion formats so it stays out of Win+V
+   and the cloud clipboard; a short window where the text sits in the clipboard
+   still exists (for the paste itself). Is this the right approach, and is the
+   residual window a concern? (Verified live 2026-06-25: text stays out of Win+V.
+   Newly found risk — the paste can fail **silently** (no text, no error cue) if
+   the target reads the clipboard slower than `pasteSettleDelay`, which then wipes
+   the text on restore: Notepad++'s Scintilla did exactly this. Mitigated by
+   raising the delay 50 ms → 400 ms, but a fixed delay is a guess — high-latency
+   targets (RDP/Citrix clipboard redirection) could still lose the race. Should
+   the paste path *confirm* the insert landed rather than trusting
+   `SetClipboardData` + Ctrl+V success? Win32 has no clean signal short of
+   delayed-rendering — an open design question.)
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?
-5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is specified but not
-   built. Is manual fold-in ahead of a release right, or should clinic corrections
-   be synchronized in some smarter way across ~12 machines?
-6. **Backend robustness.** No silent failover (deliberate). But would an
-   *explicit*, user-confirmed fallback (e.g. "LAN down — do you want to use
-   Berget?") be worth the complexity? How does it affect the confidentiality
-   model?
-7. **The degenerate-output guard.** A gzip-ratio threshold against whisper
-   repetition loops — is that robust, or are there false-positive/negative risks
-   for short clinical phrases?
+5. **Dictionary fold-in.** The interface (`cmd/dict-foldin`) is now built (folds
+   per-user override entries into the embedded baseline ahead of a release). Is
+   manual fold-in ahead of a release right, or should clinic corrections be
+   synchronized in some smarter way across ~12 machines?
+6. **Backend robustness.** No silent failover (deliberate). An *explicit*,
+   notify-only hint is now implemented (`internal/failover`): after two
+   consecutive failures on a local backend the tray suggests a manual switch,
+   but nothing switches on its own and patient audio is never auto-routed. Is
+   the threshold right, and is a balloon the best surface — or should the hint
+   be more (or less) prominent?
+7. **The degenerate-output guard.** *Resolved 2026-06-25.* Two complementary
+   signals now. The gzip ratio (2.4) catches HIGH-repetition token loops —
+   analyzed against a corpus of realistic Swedish clinical phrases: token loops
+   score 8–12, while the worst *legitimate* repetitive dictation ("ingen X, ingen
+   Y, ..."; bilateral findings) tops out at ~1.8, so there are no false positives
+   and the threshold must NOT be lowered. `looksRepeated` now catches the
+   LOW-repetition phrase loops the ratio missed (a sentence repeated ≥4x): it
+   flags a multi-word phrase repeated back-to-back, which legitimate repetition
+   never does (it repeats a *word* across *varied* content). Both backed by
+   regression tests. Remaining accepted gaps: a phrase repeated only 2–3x and
+   short single-word runs are left alone — ambiguous with legitimate speech,
+   short, and visible to the user, so not worth risking a false positive.
 8. **Ergonomics.** F1 (PTT) + F8 (quick-fix). Risk of an Fn layer on mini-PC
    keyboards (requires Fn+F1). A better key choice, or is this right?
 9. **General ideas.** What is missing for this to be a robust clinical tool for

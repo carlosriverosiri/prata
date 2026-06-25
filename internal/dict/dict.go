@@ -360,6 +360,110 @@ func Save(wrong, correct string) (bool, error) {
 	return true, nil
 }
 
+// FoldInResult reports the effect of FoldIn: the override keys appended as new
+// baseline rules, those that replaced an existing baseline line, and those
+// skipped as empty/identity rules. Output is the rewritten baseline text.
+type FoldInResult struct {
+	Added    []string
+	Replaced []string
+	Skipped  []string
+	Output   string
+}
+
+// FoldIn merges the override rules parsed from overrideText into the baseline
+// text and returns the rewritten baseline plus a report. It is the build-time
+// counterpart to the runtime mergeRules, but operates on the raw baseline
+// file: comments, blank lines, and rule order are preserved, an existing key's
+// line is replaced in place, and a new key is appended at the end. Empty or
+// identity override rules are skipped (like Save). Baseline rules are never
+// removed. Re-folding the same override is idempotent. FoldIn writes nothing —
+// the caller owns persistence — so the user's override file is never touched.
+// A malformed line in either input is reported as an error.
+func FoldIn(baselineText, overrideText string) (FoldInResult, error) {
+	if _, err := parse(strings.NewReader(baselineText)); err != nil {
+		return FoldInResult{}, fmt.Errorf("parse baseline: %w", err)
+	}
+	override, err := parse(strings.NewReader(overrideText))
+	if err != nil {
+		return FoldInResult{}, fmt.Errorf("parse override: %w", err)
+	}
+
+	// Preserve the baseline's newline style; default to "\n" (matches Save).
+	newline := "\n"
+	if strings.Contains(baselineText, "\r\n") {
+		newline = "\r\n"
+	}
+	var lines []string
+	if baselineText != "" {
+		norm := strings.ReplaceAll(baselineText, "\r\n", "\n")
+		norm = strings.TrimSuffix(norm, "\n")
+		lines = strings.Split(norm, "\n")
+	}
+
+	// Index each baseline key to its first (and only firing) line.
+	keyIdx := make(map[string]int)
+	for i, line := range lines {
+		if key, ok := ruleKey(line); ok {
+			if _, seen := keyIdx[key]; !seen {
+				keyIdx[key] = i
+			}
+		}
+	}
+
+	// Collapse the override to one final replacement per key (last wins, like
+	// mergeRules), preserving first-seen order for a stable report.
+	var order []string
+	final := make(map[string]string)
+	for _, r := range override {
+		if _, seen := final[r.key]; !seen {
+			order = append(order, r.key)
+		}
+		final[r.key] = r.replacement
+	}
+
+	var res FoldInResult
+	for _, key := range order {
+		repl := final[key]
+		if repl == "" || key == repl {
+			res.Skipped = append(res.Skipped, key)
+			continue
+		}
+		line := key + " = " + repl
+		if i, ok := keyIdx[key]; ok {
+			lines[i] = line
+			res.Replaced = append(res.Replaced, key)
+		} else {
+			lines = append(lines, line)
+			keyIdx[key] = len(lines) - 1
+			res.Added = append(res.Added, key)
+		}
+	}
+
+	if len(lines) > 0 {
+		res.Output = strings.Join(lines, newline) + newline
+	}
+	return res, nil
+}
+
+// ruleKey returns the key of a single dictionary line, or ok=false when the
+// line is blank, a comment, or has no '=' separator. It matches parse's view
+// of a line so FoldIn indexes baseline keys exactly as the runtime reads them.
+func ruleKey(line string) (string, bool) {
+	t := strings.TrimSpace(line)
+	if t == "" || strings.HasPrefix(t, "#") {
+		return "", false
+	}
+	idx := strings.Index(t, "=")
+	if idx < 0 {
+		return "", false
+	}
+	key := strings.TrimSpace(t[:idx])
+	if key == "" {
+		return "", false
+	}
+	return key, true
+}
+
 // resolvePath returns the per-user override file location, in priority order:
 //
 //  1. PRATA_DICT_PATH (env) — highest priority, for development.

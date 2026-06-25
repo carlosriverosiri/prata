@@ -8,8 +8,65 @@ that point.
 
 ## [Unreleased]
 
+### Added
+
+- `internal/failover` (new) + `cmd/prata` — an explicit, notify-only backend
+  failover hint. When the active local GPU backend fails to respond on two
+  consecutive dictations, the tray shows a one-time balloon ("… svarar inte
+  upprepade gånger. Byt backend i menyn vid behov (t.ex. Berget Ai).") so the
+  user can tell a backend outage from a bad dictation and switch in the menu.
+  Prata still has **no silent failover**: nothing switches automatically and
+  patient audio is never auto-routed to the cloud — the switch stays a
+  deliberate menu action. The hint fires at most once per outage streak and
+  resets on the first successful response. The decision logic lives in the
+  stdlib-only `internal/failover` package (unit-tested); `cmd/prata` wires it to
+  the transcription error path and `tray.Notify`, and records the event in the
+  daemon log.
+- `cmd/dict-foldin` (new) — the build-time tool that folds valuable per-user
+  dictionary override entries into the embedded baseline ahead of a release, so
+  clinic corrections (domain knowledge, not personal preference) ship to every
+  user. `dict-foldin --override <path> [--baseline …] [--dry-run]`: per key it
+  adds a new rule or replaces an existing one in place, preserving the baseline's
+  comments, blank lines, and order; empty/identity rules are skipped and baseline
+  rules are never removed (idempotent). The merge lives in `internal/dict`
+  (`FoldIn`) so it stays identical to the runtime `mergeRules`; the CLI only does
+  file I/O and a short added/replaced/skipped report, edits only the baseline
+  file (never the user's override), and is run manually by the developer — never
+  in the daemon hot path or in CI. Implements the contract specified in
+  PRATA-DESIGN-LOG.
+
 ### Fixed
 
+- `cmd/prata` — **a very late transcription no longer injects into whatever the
+  user is now doing.** Found in the §9 failure-mode review: injection is async (a
+  Berget hiccup or queue backlog can delay a result up to 30s), and a result that
+  returns long after the user finished dictating would land mid-sentence in text
+  they have since started typing by hand. New `maxInjectAge` (8s): past it, the
+  result is dropped with an error cue + tray hint ("Dikteringen tog för lång tid
+  …") instead of injected. The backend still counts as reachable. Normal
+  dictation (sub-second to ~2.7s) is unaffected. (The related cross-patient
+  framing was investigated and set aside: Webdoc's window title is static across
+  patients and patients share one browser HWND, so Prata cannot detect an in-app
+  patient switch; the user's workflow makes it unlikely. See PRATA-DESIGN-LOG.)
+- `cmd/prata` — a **too-short capture** (`len(pcm) < minCaptureBytes`) now plays
+  the error cue instead of skipping with only the stop cue. A real dictation
+  clipped by a slow device start would otherwise vanish silently (the same
+  symptom as the paste race). An accidental F1 tap now beeps too — honest
+  feedback that nothing was recorded.
+- `internal/inject` — **silent paste loss on slow clipboard targets** (found via
+  Notepad++). Dictation into Notepad++ produced no text and *no error cue* — the
+  dictation just vanished. Root cause: the paste path waited only 50 ms after
+  Ctrl+V before restoring the user's clipboard (which calls `EmptyClipboard`).
+  Notepad++'s Scintilla editor reads the clipboard slower than that, so the
+  dictated text was wiped before it landed. (The history/cloud exclusion markers
+  were initially suspected but exonerated: manual Ctrl+V of marked text pastes
+  fine in Notepad++.) Fix: `pasteSettleDelay` 50 ms → **400 ms**, deliberately
+  generous because silent dictation loss in a patient journal is far worse than
+  an imperceptible restore delay — this hardens the whole clipboard-paste path,
+  not just Notepad++. Notepad++ is additionally routed through `SendInput`
+  (clipboard-free, race-immune; verified live with multi-line text and digit
+  strings). Classic Notepad (`Notepad`), Word (`OpusApp`), and PowerPoint read
+  fast enough that the old 50 ms already worked.
 - `cmd/prata/rsrc_windows_amd64.syso` (new) — `prata.exe` now carries a Windows
   icon resource, so Explorer and the taskbar show the Prata icon instead of the
   generic default. The `//go:embed Prata.ico` in `internal/icon/` only feeds the
@@ -21,6 +78,39 @@ that point.
 
 ### Changed
 
+- `internal/sanity` — strengthened the degenerate-output guard with a second,
+  complementary signal (PRATA-REVIEW §15 #7). The gzip ratio only catches
+  HIGH-repetition token loops; a sentence repeated ~4x compresses to ~1.9 and
+  slipped through. New `looksRepeated` flags a multi-word phrase repeated
+  back-to-back ≥4 times (anywhere in the text, so an end-of-output loop after
+  real dictation is caught too). It is false-positive-safe by construction: four
+  identical 2+-word phrases in a row never occur in real clinical dictation,
+  whereas legitimate repetition repeats a *word* across *varied* content ("ingen
+  X, ingen Y, ...") and so never matches. Analysis backing the gzip threshold
+  (token loops score 8–12; the worst legitimate repetitive dictation tops out at
+  ~1.8, so the threshold must not be lowered) is locked in by regression tests.
+  Accepted gaps: a phrase repeated only 2–3x, and short single-word runs, are
+  left alone — ambiguous with legitimate speech, short, and visible to the user.
+- `internal/inject` — the clipboard paste path now keeps dictated text out of
+  clipboard history (Win+V), the cloud clipboard, and clipboard monitors. After
+  placing the text it sets the `CanIncludeInClipboardHistory`,
+  `CanUploadToCloudClipboard`, and `ExcludeClipboardContentFromMonitorProcessing`
+  marker formats in the same clipboard session (new `setDictatedClipboardText`).
+  Every clipboard write Prata makes is marked the same way — the dictated text
+  and the restore of the user's prior clipboard alike — so Prata never adds an
+  entry to the user's clipboard history, not even a duplicate of the user's own
+  earlier copy when a paste restores it; the user sees only what they copied
+  themselves. The markers are best-effort, so a failure reverts to the prior
+  behavior and never fails the paste. Closes the paste-path confidentiality gap
+  (SendInput targets never had it). Win+V exclusion verified live on Windows.
+- `internal/daemonlog` — the daemon now prunes its own logs on startup: per-day
+  `prata-YYYY-MM-DD.log` files older than 30 days are deleted when the log is
+  opened. A "see and forget" daemon that runs for years would otherwise leave one
+  small file per active day forever. Best-effort and stdlib-only: an unreadable
+  directory or undeletable file is ignored, the date is read from the filename
+  (not the mtime), and only files matching the dated pattern are touched, so an
+  unrelated file beside the logs is never removed. Skipped when `PRATA_DAEMON_LOG`
+  overrides the path (tests).
 - `.github/workflows/release.yml` — bumped the three GitHub Actions to their
   Node 24 runtimes (`actions/checkout@v7`, `actions/setup-go@v6`,
   `softprops/action-gh-release@v3`), clearing the "Node.js 20 is deprecated"

@@ -29,6 +29,7 @@ import (
 	"github.com/carlosriveros/prata/internal/cue"
 	"github.com/carlosriveros/prata/internal/daemonlog"
 	"github.com/carlosriveros/prata/internal/dict"
+	"github.com/carlosriveros/prata/internal/failover"
 	"github.com/carlosriveros/prata/internal/hotkey"
 	"github.com/carlosriveros/prata/internal/icon"
 	"github.com/carlosriveros/prata/internal/inject"
@@ -86,6 +87,10 @@ const minCaptureBytes = transcribe.SampleRate * transcribe.NumChannels * transcr
 type transcribeJob struct {
 	pcm        []byte
 	targetHwnd uintptr
+	// created is when the capture finished (F1 release). Used to drop a result
+	// that comes back so late the user has likely moved on or started typing by
+	// hand — see maxInjectAge.
+	created time.Time
 }
 
 // transcribeResult carries a finished transcription from the worker
@@ -96,6 +101,7 @@ type transcribeResult struct {
 	elapsed    time.Duration
 	err        error
 	targetHwnd uintptr
+	created    time.Time // capture finish time, carried from the job (see maxInjectAge)
 }
 
 // transcribeQueueDepth bounds how many finished captures can wait for
@@ -104,6 +110,21 @@ type transcribeResult struct {
 // failure and pile up stale audio; past this depth the processor drops the
 // capture with an error cue so the user re-dictates instead.
 const transcribeQueueDepth = 8
+
+// failoverFailureThreshold is how many consecutive transcription failures on a
+// local backend trigger the one-time "switch backend?" tray hint. Two avoids
+// nagging on a single transient blip while still flagging a real outage fast.
+const failoverFailureThreshold = 2
+
+// maxInjectAge bounds how long after the user finished dictating (F1 release) a
+// transcription may still be auto-injected. Past this, the result is dropped
+// (error cue + tray hint) instead: by then the user has likely given up waiting
+// and started typing by hand, so a late injection would land mid-sentence in
+// whatever they are now writing — a real hazard in a patient journal. Normal
+// transcription is sub-second to ~2.7s (Berget); only an abnormal tail (a Berget
+// hiccup ~24s, or queue backlog) exceeds this. Tunable: lowering it interrupts
+// hand-typing less often but re-dictates a slow-but-valid result more often.
+const maxInjectAge = 8 * time.Second
 
 // loadDict builds the active dictionary: the embedded baseline with the
 // per-user override (PRATA_DICT_PATH or %LOCALAPPDATA%\Prata\...) layered on
@@ -318,6 +339,7 @@ func main() {
 					elapsed:    time.Since(start),
 					err:        terr,
 					targetHwnd: job.targetHwnd,
+					created:    job.created,
 				}
 				select {
 				case results <- result:
@@ -338,6 +360,26 @@ func main() {
 		defer closer.Close()
 	}
 
+	// System-tray icon. Created before the processor goroutine starts so
+	// processEvents can surface a failover balloon through it; the rest of the
+	// tray configuration (backends, callbacks, Run) follows below. Its only
+	// menu item, Avsluta, requests shutdown by closing quit. onQuit runs on the
+	// tray's UI thread, must return fast, and must not call t.Stop() (the tray
+	// posts its own WM_QUIT) — it only nudges the shared shutdown path below.
+	// quitOnce makes repeat Avsluta clicks harmless. In production
+	// (-H windowsgui, no console) Avsluta is the only graceful quit path.
+	quit := make(chan struct{})
+	var quitOnce sync.Once
+	t := tray.New(icon.ICO, "Prata "+version, func() {
+		quitOnce.Do(func() { close(quit) })
+	})
+
+	// failoverNotifier surfaces a one-time tray hint when the active local
+	// backend fails repeatedly, so the user can switch to Berget Ai in the
+	// menu. It never switches automatically — Prata has no silent failover, so
+	// patient audio is never auto-routed to the cloud.
+	failoverNotifier := failover.New(failoverFailureThreshold)
+
 	// Processor goroutine: drains events sequentially, owning the
 	// audio.Session lifecycle, and applies + injects finished
 	// transcriptions. Single-goroutine ownership means no mutex is needed on
@@ -345,20 +387,8 @@ func main() {
 	processorDone := make(chan struct{})
 	go func() {
 		defer close(processorDone)
-		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription)
+		processEvents(client, d, events, dictAdds, jobs, results, stopTranscription, t, failoverNotifier)
 	}()
-
-	// System-tray icon. Its only menu item, Avsluta, requests shutdown by
-	// closing quit. onQuit runs on the tray's UI thread, must return fast,
-	// and must not call t.Stop() (the tray posts its own WM_QUIT) — it only
-	// nudges the shared shutdown path below. quitOnce makes repeat Avsluta
-	// clicks harmless. In production (-H windowsgui, no console) Avsluta is
-	// the only graceful quit path, since Ctrl+C is never delivered.
-	quit := make(chan struct{})
-	var quitOnce sync.Once
-	t := tray.New(icon.ICO, "Prata "+version, func() {
-		quitOnce.Do(func() { close(quit) })
-	})
 	// "Sök efter uppdatering…": notify-only update check. Must return fast
 	// on the tray UI thread, so the network call runs on its own goroutine
 	// and reports back via a tray balloon. Set before t.Run is launched so
@@ -475,7 +505,7 @@ func main() {
 //
 // client is read only for the active backend ID stamped into each daemonlog
 // line; the transcription itself still runs on the worker goroutine.
-func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}) {
+func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}, t *tray.Tray, fo *failover.Notifier) {
 	var session *audio.Session
 	var targetHwnd uintptr
 
@@ -528,10 +558,16 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 
 				// An empty / near-empty capture (e.g. an accidental brief
 				// tap) would otherwise be sent to Berget and block for the
-				// full 30s HTTP timeout before failing. Skip it instead.
+				// full 30s HTTP timeout before failing. Skip it instead — but
+				// play the error cue so the drop is audible: a too-short capture
+				// can also be a real dictation clipped by slow device start, and
+				// no dictation should vanish with only the stop cue (the same
+				// silent-loss symptom as the paste race). An accidental tap then
+				// beeps too, which is honest feedback that nothing was recorded.
 				if len(pcm) < minCaptureBytes {
 					fmt.Fprintln(os.Stderr, "no audio captured, skipping")
 					daemonlog.Printf("capture too short, skipping")
+					cue.PlayError()
 					continue
 				}
 
@@ -541,7 +577,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				// full (sustained outage) drop with an error cue rather than
 				// stalling capture or piling up stale audio.
 				select {
-				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd}:
+				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd, created: time.Now()}:
 					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 				default:
 					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
@@ -565,6 +601,32 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				fmt.Fprintf(os.Stderr, "transcribe: %v\n", res.err)
 				daemonlog.Printf("transcribe error backend=%s elapsed=%.2fs err=%v", backendID, elapsed, res.err)
 				cue.PlayError()
+				// Repeated failures on a local/keyless backend mean it is
+				// likely unreachable (LAN down, GPU server off). Hint once per
+				// outage streak that the user can switch to the cloud fallback
+				// in the tray menu. This never switches automatically — the
+				// choice, and any routing of patient audio to the cloud, stays
+				// the user's (see internal/failover).
+				active := client.ActiveBackend()
+				if fo.RecordFailure(!active.RequiresKey) {
+					t.Notify("Prata", fmt.Sprintf("%s svarar inte upprepade gånger. Byt backend i menyn vid behov (t.ex. Berget Ai).", active.DisplayName))
+					daemonlog.Printf("failover hint shown backend=%s", backendID)
+				}
+				continue
+			}
+			// The backend responded (even if the text is later judged empty or
+			// degenerate): it is reachable, so clear any failover streak.
+			fo.RecordSuccess()
+			// Staleness guard: a result that returns long after F1 release is
+			// dangerous to inject — by now the user has likely given up and is
+			// typing by hand, and the late text would land mid-sentence in their
+			// patient note. Drop it audibly instead (the backend was reachable,
+			// so the failover streak is already cleared above). See maxInjectAge.
+			if age := time.Since(res.created); age > maxInjectAge {
+				fmt.Fprintf(os.Stderr, "stale transcription dropped (%.1fs old)\n", age.Seconds())
+				daemonlog.Printf("stale result dropped age=%.1fs backend=%s elapsed=%.2fs", age.Seconds(), backendID, elapsed)
+				cue.PlayError()
+				t.Notify("Prata", "Dikteringen tog för lång tid och infogades inte. Diktera om.")
 				continue
 			}
 			text := res.text

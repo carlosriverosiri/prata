@@ -27,11 +27,21 @@ const (
 	vkV              = 0x56
 	vkC              = 0x43
 
-	cfUnicodeText    = 13
-	gmemMoveable     = 0x0002
-	gmemZeroInit     = 0x0040
-	interEventDelay  = 2 * time.Millisecond
-	pasteSettleDelay = 50 * time.Millisecond
+	cfUnicodeText   = 13
+	gmemMoveable    = 0x0002
+	gmemZeroInit    = 0x0040
+	interEventDelay = 2 * time.Millisecond
+	// pasteSettleDelay is how long Type waits after issuing Ctrl+V before it
+	// restores the user's prior clipboard. The restore calls EmptyClipboard, so
+	// if the target reads the clipboard slower than this the dictated text is
+	// gone before it lands — a SILENT empty paste (no error, no text). Notepad++
+	// (Scintilla) reads it slower than the old 50ms allowed and lost dictation
+	// this way; Notepad/Word/PowerPoint read fast enough. 400ms is deliberately
+	// generous: silent dictation loss in a patient journal is far worse than an
+	// imperceptible delay before the user's own clipboard is restored. The
+	// markers on the dictated text are NOT the cause — manual Ctrl+V of marked
+	// text pastes fine in Notepad++ (verified 2026-06-25). See PRATA-DESIGN-LOG.
+	pasteSettleDelay = 400 * time.Millisecond
 
 	// copySettleTimeout is how long CopySelection waits for the clipboard
 	// sequence number to change after Ctrl+C. Chromium/Webdoc often needs
@@ -90,6 +100,7 @@ var (
 	procRtlMoveMemory              = kernel32.NewProc("RtlMoveMemory")
 	procGetCurrentThreadId         = kernel32.NewProc("GetCurrentThreadId")
 	procGetClipboardSequenceNumber = user32.NewProc("GetClipboardSequenceNumber")
+	procRegisterClipboardFormatW   = user32.NewProc("RegisterClipboardFormatW")
 )
 
 // Type sends text to the foreground window via clipboard paste. Direct
@@ -101,6 +112,13 @@ var (
 // Any prior CF_UNICODETEXT clipboard content is saved before the paste
 // and best-effort restored afterwards. Non-text formats (images, files,
 // rich text from Office apps) are not preserved.
+//
+// The dictated text is marked to stay out of clipboard history (Win+V), the
+// cloud clipboard, and clipboard monitors (setDictatedClipboardText), so
+// medical-record text neither lingers nor syncs after the paste. The restore of
+// the prior clipboard is marked the same way (setClipboardText): Prata adds no
+// entry of its own to Win+V, so a clipboard-history user sees only the items
+// they copied themselves, never a Prata-made duplicate of their prior copy.
 func Type(text string) error {
 	text = normalizeClipboardText(text)
 	if text == "" {
@@ -109,7 +127,7 @@ func Type(text string) error {
 
 	previous, hadPrevious, _ := getClipboardText()
 
-	if err := setClipboardText(text); err != nil {
+	if err := setDictatedClipboardText(text); err != nil {
 		return err
 	}
 	if err := sendChord(vkV); err != nil {
@@ -184,6 +202,16 @@ func TypeUnicode(text string) error {
 // dependent failure.
 var sendInputSafeClasses = map[string]struct{}{
 	"Chrome_WidgetWin_1": {},
+	// "Notepad++" (the Scintilla-based editor, class "Notepad++") is kept on
+	// SendInput as the most robust path for it. Its clipboard-paste failure was
+	// NOT the exclusion markers — manual Ctrl+V of marked text pastes fine there
+	// (verified 2026-06-25) — but the restore race: Scintilla reads the clipboard
+	// slower than the old 50ms pasteSettleDelay, so the restore's EmptyClipboard
+	// wiped the dictated text before it landed. That race is now fixed generally
+	// (larger pasteSettleDelay), so the clipboard path works here too; but
+	// SendInput is clipboard-free and immune to the race, so Notepad++ stays on
+	// it. Verified live with multi-line text and digit strings.
+	"Notepad++": {},
 }
 
 // IsSendInputSafeClass reports whether class is on the SendInput allowlist
@@ -308,7 +336,37 @@ func normalizeClipboardText(text string) string {
 	return strings.ReplaceAll(text, "\n", "\r\n")
 }
 
+// setClipboardText places text on the clipboard as CF_UNICODETEXT, replacing
+// any prior content. It is unmarked — used to restore a saved clipboard, so
+// the user's own content goes back exactly as it was (in history, syncable).
+// setClipboardText restores or sets ordinary (non-dictated) clipboard text —
+// e.g. putting the user's prior clipboard back after a paste or selection read.
+// Like every Prata clipboard write it is excluded from history, the cloud
+// clipboard, and monitors (see writeClipboardText), so restoring the user's own
+// content never duplicates their earlier copy in Win+V.
 func setClipboardText(text string) error {
+	return writeClipboardText(text)
+}
+
+// setDictatedClipboardText places dictated text on the clipboard. Like every
+// Prata clipboard write it is kept out of clipboard history, the cloud
+// clipboard, and clipboard monitors, so medical-record text neither lingers in
+// Win+V nor syncs to the cloud after the paste (patient confidentiality).
+func setDictatedClipboardText(text string) error {
+	return writeClipboardText(text)
+}
+
+// writeClipboardText is the shared clipboard writer behind setClipboardText and
+// setDictatedClipboardText. It always marks the entry to stay out of clipboard
+// history (Win+V), the cloud clipboard, and clipboard monitors: every clipboard
+// write Prata makes is excluded, so Prata never adds an entry to the user's
+// clipboard history — neither the dictated text (patient confidentiality) nor
+// the restore of the user's prior clipboard (which would otherwise duplicate
+// the user's own earlier copy in Win+V). The user only ever sees clipboard
+// entries they copied themselves. The markers are best-effort: a failure to set
+// one never fails the write — the worst case reverts to the prior behavior,
+// where the entry is an ordinary clipboard entry.
+func writeClipboardText(text string) error {
 	data, err := syscall.UTF16FromString(text)
 	if err != nil {
 		return fmt.Errorf("encode clipboard text: %w", err)
@@ -350,7 +408,56 @@ func setClipboardText(text string) error {
 		return fmt.Errorf("SetClipboardData: %v", sysErr)
 	}
 
+	setClipboardExclusionMarkers()
 	return nil
+}
+
+// clipboardExclusionFormats are the registered clipboard formats that opt an
+// entry out of clipboard history (Win+V), the cloud clipboard, and third-party
+// clipboard monitors. For the Can* formats a DWORD 0 means "exclude"; the
+// Exclude... format only needs to be present.
+var clipboardExclusionFormats = []string{
+	"CanIncludeInClipboardHistory",
+	"CanUploadToCloudClipboard",
+	"ExcludeClipboardContentFromMonitorProcessing",
+}
+
+// setClipboardExclusionMarkers marks the currently-open clipboard so its
+// content is kept out of clipboard history, the cloud clipboard, and clipboard
+// monitors. It must run inside an open clipboard session, after the data is
+// set. Best-effort throughout: a registration or set failure is ignored so the
+// paste still succeeds — losing a marker only reverts to the prior behavior,
+// never injects or leaks anything new.
+func setClipboardExclusionMarkers() {
+	for _, name := range clipboardExclusionFormats {
+		format := registerClipboardFormat(name)
+		if format == 0 {
+			continue
+		}
+		// A movable, zero-initialized DWORD: 0 is "exclude" for the Can*
+		// formats, and the Exclude... format only needs to be present. The
+		// system owns the handle once SetClipboardData succeeds; on failure
+		// we free it.
+		handle, _, _ := procGlobalAlloc.Call(gmemMoveable|gmemZeroInit, unsafe.Sizeof(uint32(0)))
+		if handle == 0 {
+			continue
+		}
+		if ret, _, _ := procSetClipboardData.Call(format, handle); ret == 0 {
+			procGlobalFree.Call(handle)
+		}
+	}
+}
+
+// registerClipboardFormat registers (or looks up, if already registered) a
+// named clipboard format and returns its ID, or 0 on failure.
+func registerClipboardFormat(name string) uintptr {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return 0
+	}
+	id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(p)))
+	runtime.KeepAlive(p)
+	return id
 }
 
 // getClipboardText returns the current CF_UNICODETEXT clipboard content,

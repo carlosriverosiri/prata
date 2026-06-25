@@ -119,6 +119,10 @@ Follow-up:
 - Extend the allowlist: verify the new class with realistic, multi-line text before adding it.
 - The production path does not log the chosen route; route logging is available in cmd/inject-test -mode auto.
 
+Update (2026-06-25): `Notepad++` joined the allowlist — not for an autorepeat
+bug, but because its Scintilla editor silently rejected the claim_009 clipboard
+exclusion markers on the paste path. See the 2026-06-25 entry below.
+
 ## Reuse from Diktell
 
 Directly reusable:
@@ -684,7 +688,7 @@ only becomes relevant when scaling to IT-driven distribution.
   `release.yml`/`install.ps1`; harmless to remove since the runtime never read
   next to the exe. `internal/dict/dictionary-corrections.txt` is the only baseline source.
 
-**Build-time fold-in — INTERFACE designed now, implementation phased (Phase 5/6)**
+**Build-time fold-in — IMPLEMENTED 2026-06-25 (`cmd/dict-foldin`)**
 
 Valuable override entries should be able to be "folded into" the embedded baseline ahead of
 a release, so they ship to all users. The contract:
@@ -707,6 +711,9 @@ a release, so they ship to all users. The contract:
   (added/replaced/skipped). Exit ≠ 0 on a parse error in any file.
 - **Invariant:** the baseline remains the only embedded source; the tool
   edits only that file, never touches the user's override.
+
+Implemented 2026-06-25 exactly to this contract — see the dated entry at the end
+of this log for the one new decision (where the merge logic lives).
 
 ### 2026-06-17: `--install` machine-wide, self-elevating — happy path (Phase 5a implemented)
 
@@ -1091,3 +1098,251 @@ window gone" to "no target window" as part of this change, so the genuine
 window-closed case owns the "gone" wording. Order matters: the `== 0` check runs
 first, because `IsWindow(0)` is also false and would otherwise swallow the
 distinct "nothing captured" case.
+
+## 2026-06-25 — Dictionary fold-in tool + daemon-log retention
+
+Two low-risk hardening items from the AI-council review (run #22) that needed no
+hardware to verify, so both are unit-tested on Linux and covered by CI.
+
+### `cmd/dict-foldin` implemented (the specified fold-in tool)
+
+The build-time fold-in contract (above) is now built. One decision worth
+recording: **the merge logic lives in `internal/dict` (`FoldIn`), not in the
+CLI.** The contract says fold-in semantics must be "identical to the runtime
+`mergeRules`". The only durable way to guarantee that is to share code, so
+`FoldIn` sits beside `mergeRules`/`Save` and reuses the same `parse`. The CLI is
+then a thin shell: read two files, call `dict.FoldIn`, print an
+added/replaced/skipped report, write the baseline back (unless `--dry-run`).
+`FoldIn` operates on the raw baseline *text* (line-preserving, like `Save`)
+rather than on a parsed rule list, because the baseline is a hand-maintained
+file — its comments, blank lines, and order must survive a fold-in. Re-folding
+the same override is idempotent, and baseline rules are never removed.
+
+### Daemon-log retention
+
+`internal/daemonlog` now deletes `prata-YYYY-MM-DD.log` files older than 30 days
+when it opens today's log. A "see and forget" daemon that runs for years would
+otherwise grow the `logs/` directory by one small file per active day forever —
+unbounded, even if tiny. The date is parsed from the *filename*, not the file's
+mtime, so a copied or touched file is still pruned on its real day, and only
+names matching the exact `prata-YYYY-MM-DD.log` pattern are ever removed (an
+unrelated file beside the logs is left alone). Best-effort throughout: any error
+is ignored, because failing to prune a log must never disrupt dictation. Prune
+is skipped when `PRATA_DAEMON_LOG` overrides the path (tests).
+
+### Clipboard hardening on the paste path (claim_009)
+
+The non-Chromium paste path (`Type`) saved/restored only `CF_UNICODETEXT`, so
+dictated medical-record text briefly sat in the clipboard like any other entry —
+visible in clipboard history (Win+V) and syncable to the cloud clipboard.
+SendInput targets (Chromium/Webdoc) never had this exposure; the paste fallback
+did. Fix: after setting the text, the paste now also sets three registered
+marker formats — `CanIncludeInClipboardHistory` (DWORD 0),
+`CanUploadToCloudClipboard` (DWORD 0), and
+`ExcludeClipboardContentFromMonitorProcessing` — in the same clipboard session,
+via a new `setDictatedClipboardText`.
+
+Three decisions worth recording:
+
+- **Every Prata clipboard write is marked — the dictated text and the restore
+  alike** (revised 2026-06-25). `writeClipboardText` now *always* sets the
+  markers; both `setDictatedClipboardText` (the dictated write) and
+  `setClipboardText` (restoring the user's prior clipboard after a paste or
+  selection read) go through it. The SendInput path never touches the clipboard
+  at all. Originally only the dictated text was marked and the restore was left
+  unmarked to put the clipboard back "exactly as it was" — but that re-added a
+  duplicate of the user's *own* prior copy to Win+V on every paste-path
+  dictation, which a heavy clipboard-history user (copying radiology reports into
+  the journal) sees as noise. Marking the restore too means Prata contributes
+  nothing to Win+V; the user's original copy stays (it was an ordinary, unmarked
+  Ctrl+C), so nothing of theirs is lost.
+- **Best-effort, never fatal.** A failed `RegisterClipboardFormatW` /
+  `SetClipboardData` for a marker is ignored: the text is already on the
+  clipboard, and the worst case is the prior behavior (text in history), never a
+  failed paste or a worse leak. This mirrors the package's existing best-effort
+  clipboard posture.
+- **The dictated text never lingers.** The dictated entry exists only for the
+  brief paste window; the restore's `EmptyClipboard` drops it and its markers.
+  The restore then re-marks the user's *own* content so it stays out of Win+V as
+  a new entry too, while their original copy remains.
+
+Verified live on Windows (2026-06-25): dictated text stays out of Win+V, and the
+paste path no longer duplicates the user's own copy. **Note:** the markers were
+briefly suspected of breaking the paste in Notepad++ that same session, but were
+exonerated — manual Ctrl+V of marked text pastes fine there. The real cause was a
+clipboard restore race (the paste path's `pasteSettleDelay` was too short); see
+the 2026-06-25 entry below.
+
+### Explicit, notify-only backend failover hint (claim_004)
+
+"No silent failover" is a deliberate invariant — a dead backend must not
+auto-route patient audio to the cloud. But it left a gap: when the LAN GPU is
+down, the user only hears the error cue and cannot tell a backend outage from a
+bad dictation. Fix: after two consecutive transcription failures on a
+local/keyless backend, the tray shows a one-time balloon suggesting a manual
+switch. It only *suggests*; the switch stays a deliberate menu action, so the
+confidentiality model is untouched.
+
+Decisions:
+
+- **Notify-only, never auto-switch.** The hint points the user at the menu; the
+  app never changes the backend or routes audio itself. That is the whole point
+  of the invariant, so the failover package is named for the feature but does
+  exactly one thing: decide *when to hint*.
+- **Logic in a pure package (`internal/failover`), glue in `cmd/prata`.** The
+  threshold / once-per-streak decision is stdlib-only and unit-tested on any OS;
+  the Windows-only daemon just feeds it failures/successes and calls
+  `tray.Notify`. Keeps the only hard-to-test part (the Win32 tray) thin.
+- **Reset on any response.** A response that yields empty/degenerate text still
+  counts as reachable and clears the streak — the hint is about reachability,
+  not content. Only a true request failure (network/HTTP) advances it.
+- **Suggest only from a local backend.** On Berget itself (`RequiresKey`) we do
+  not hint — there is no more-available fallback to point at.
+- **Tray created before the processor goroutine.** processEvents now needs the
+  tray to raise the balloon, so `tray.New` moved above the processor launch
+  (the rest of the tray configuration and `Run` still follow). `tray.Notify` is
+  goroutine-safe and blocks until Run is ready, and the hint can only fire after
+  the user has dictated twice, so the earlier creation is safe.
+
+`internal/failover` is unit-tested and cross-compiles for windows. Verified
+end-to-end on Windows (2026-06-25): with the active backend pointed at a
+genuinely unreachable keyless GPU (Tailscale taken down), two consecutive
+dictations produced two `transcribe error` log lines, then one
+`failover hint shown` line and the tray balloon; a third failure produced no new
+hint, confirming the once-per-streak guard.
+
+### 2026-06-25: Notepad++ silently drops paste — the real cause is the clipboard restore race, not the markers
+
+During live testing of the claim_009 clipboard markers, dictation into
+**Notepad++** failed in the most dangerous way: the start/stop cues played, but
+no text appeared and **no error cue sounded** — the dictation just vanished. The
+daemon log even recorded `injected ... chars=N`, because the clipboard-paste
+path (`Type`) reports success once `SetClipboardData` + the synthesized Ctrl+V
+return; it never confirms the target actually accepted the paste.
+
+Diagnosis path (worth recording, because the symptom is so quiet and the first
+hypothesis was wrong):
+
+- The symptom — start+stop cue, **no** error cue, no text — matches exactly one
+  code path other than a working paste: `len(pcm) < minCaptureBytes` (a too-short
+  capture, which also skips silently). The daemon log ruled that out (0
+  occurrences) and showed `injected` lines instead — capture and transcription
+  were fine, the text was leaving the app.
+- The mic was fine (Diktell worked), and the text appeared correctly in **Word
+  (`OpusApp`), classic Notepad (`Notepad`), PowerPoint, and Chrome**. Only
+  **Notepad++** failed. Word/Notepad/PPT use the *same* clipboard-paste path and
+  work, so the path itself is sound.
+- **First hypothesis (WRONG): the claim_009 exclusion markers.** Plausible — only
+  the clipboard path carries them, and Notepad++ is Scintilla. Disproved with a
+  throwaway tool (`cmd/cliptest`) that puts CF_UNICODETEXT + a chosen subset of
+  markers on the clipboard: **manual Ctrl+V of all-three-markers text pastes fine
+  in Notepad++.** So the markers do not break the paste — something in Prata's
+  *automated* paste sequence did.
+- **Real cause: the restore race.** `Type` waits `pasteSettleDelay` after Ctrl+V,
+  then restores the user's clipboard via `EmptyClipboard` + re-set. At 50 ms,
+  Scintilla had not yet read the clipboard, so the restore wiped the dictated
+  text before it landed. Confirmed by putting Notepad++ back on the clipboard
+  path and bumping `pasteSettleDelay` to 400 ms — dictation then worked. Notepad/
+  Word/PPT read the clipboard faster than 50 ms, which is why they never failed.
+
+Fix (two parts):
+
+- **General:** `pasteSettleDelay` 50 ms → 400 ms. This hardens the *whole*
+  clipboard-paste path against slow readers, which is the true §2/§3 silent-loss
+  risk — not Notepad++ alone. 400 ms is deliberately generous: silent dictation
+  loss in a journal is far worse than an imperceptible restore delay.
+- **Notepad++ specifically:** kept on `sendInputSafeClasses` (added the same day).
+  SendInput is clipboard-free and so race-immune; it is the most robust path for
+  an editor the user actively uses. The class is stable (unlike Qt classes such
+  as `Qt6102QWindowIcon`, which encode the version and would break exact-match
+  allowlisting on upgrade).
+
+Lessons:
+
+- The clipboard-paste path can fail **silently**: there is deliberately no
+  execution fallback (it would risk a double-inject in a medical record), and the
+  path never confirms the insert landed. The residual gap — *generic* detection
+  that a paste was consumed — is unsolved here (Win32 has no clean signal short of
+  delayed-rendering, a larger architectural change). The delay bump mitigates the
+  known mechanism; the detection question is logged as open (PRATA-REVIEW §15 #3).
+- Get a window class timing-independently from the process's `MainWindowHandle` +
+  `GetClassName`, not a timed foreground probe (focus timing is unreliable).
+- Don't stop at the first plausible cause: isolate it. The marker hypothesis was
+  reasonable but a five-minute manual-paste test (`cmd/cliptest`) saved shipping
+  the wrong mental model.
+
+### 2026-06-25: Degenerate-output guard — validated the gzip threshold, added a complementary phrase-loop check (§15 #7)
+
+The guard discarded transcriptions whose gzip ratio exceeds 2.4 (Whisper's own
+`compression_ratio_threshold`) to catch KB-Whisper repetition loops on digit
+strings. Open question: false positives on legitimate repetitive clinical text,
+false negatives on subtle loops.
+
+Measured against a corpus of realistic Swedish clinical phrases:
+
+- **No false positives, wide margin.** Real token loops ("O A O A ...", repeated
+  digits) score 8–12. The *most repetitive legitimate* dictation — "ingen X,
+  ingen Y, ..."; bilateral findings; "utan anmärkning" lists — tops out at ~1.8.
+  The 2.4 threshold sits in the empty gap. It must NOT be lowered: the worst
+  legitimate case (~1.8) is the real floor, and dropping a true dictation is far
+  worse than keeping a loop.
+- **One real gap: low-repetition phrase loops.** A sentence repeated only ~4x
+  compresses to ~1.9 — under the threshold. Lowering the ratio can't catch it
+  without hitting the legitimate ~1.8 cases. They're genuinely inseparable *by
+  compression ratio*.
+
+So a second, orthogonal signal was added: `looksRepeated` flags a multi-word
+phrase repeated back-to-back ≥4 times (scanning all positions, so an
+end-of-output loop after real dictation is caught). It is false-positive-safe by
+construction — four identical 2+-word phrases in a row never occur in real
+dictation, while legitimate repetition repeats a *word* across *varied* content,
+so the following words differ and the window never matches. Deliberately
+conservative: a phrase repeated only 2–3x, and short single-word runs, are left
+alone (ambiguous with a spoken read-back, short, visible to the user). Both
+signals are locked in by regression tests so a future threshold tweak can't
+silently regress the legitimate cases. The whole guard remains best-effort and
+discard-only: on any doubt it keeps the text, because there is no fallback.
+
+### 2026-06-25: Failure-mode review (§9) — a staleness guard for late injection; why a wrong-patient guard can't be window-based
+
+A systematic sweep of the dictation pipeline (capture → queue → transcribe →
+inject → F8/failover) for silent text loss, misdirected injection, and leaks. Two
+fixes shipped; the headline risk turned out narrower than first feared.
+
+**Async injection into a stale context.** `targetHwnd` is captured at F1 press,
+but transcription is async (up to 30s on a Berget hiccup or queue backlog). The
+existing guard only aborts if the target window was *closed* (`inject.IsWindow`),
+not if its content changed — its comment even claims to handle "the user moved
+from patient A's record to patient B's", which it does not. First framed as a
+cross-patient hazard. Investigation killed the obvious guard: the journal
+(Webdoc) is a hash-route SPA (`webdoc.atlan.se/#`) whose **window title is static
+across patients** (the patient is in the page body), and the user keeps patients
+in **tabs that share one Chrome HWND**. Prata operates at the window level, so it
+**cannot** see an in-app patient switch — title and HWND are identical. A
+title/HWND fingerprint is therefore ineffective for that case.
+
+Recalibrated with the user's actual workflow: they finish one patient before the
+next, so bouncing between patients is unlikely. The real, likely harm of a *very
+late* result is that it lands mid-sentence in text the user has since started
+typing **by hand**. Fix: a **staleness guard** (`maxInjectAge`, 8s). The backend
+still counts as reachable (the failover streak is cleared first), but a result
+older than the bound is dropped with an error cue + tray hint instead of injected.
+Normal transcription is sub-second to ~2.7s; only an abnormal tail exceeds 8s.
+Verified live: normal dictation injects; with the bound temporarily at 1ms every
+result is dropped (`stale result dropped age=…` logged, no text, error cue, the
+`age` matching the transcription time — proving the capture-time wiring). Residual
+gap (a fast in-window tab switch under 8s) is undetectable by Prata and left to
+operational discipline; separate Chrome *windows* per patient would make a future
+HWND check effective if ever needed.
+
+**Too-short capture dropped silently.** The `len(pcm) < minCaptureBytes` path
+skipped with only the stop cue — a real dictation clipped by a slow device start
+would vanish like the paste race. Now plays the error cue too, so no drop is
+silent. An accidental F1 tap then beeps, which is honest feedback.
+
+Lower-severity items, left as documented notes rather than code: F8's synthetic
+Ctrl+C makes the *app* copy the selected text to the clipboard, so the selection
+briefly enters Win+V — inherent to reading a selection by synthesizing a copy, and
+not removable after the fact. And the events channel (buffer 4) can briefly
+backpressure under rapid dictation during a long injection — it delays, never
+loses.

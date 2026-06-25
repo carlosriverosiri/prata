@@ -5,6 +5,11 @@
 *.so
 *.dylib
 
+# Bare binaries from building a cmd/ tool on a non-Windows box (no .exe suffix),
+# e.g. `go build ./cmd/dict-foldin/` dropping ./dict-foldin in the repo root.
+/dict-foldin
+/prata
+
 # Go test artifacts
 *.test
 *.out

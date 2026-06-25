@@ -90,6 +90,7 @@ prata/
 ├── .github/workflows/      # ci.yml (fmt+vet+build+test), release.yml
 ├── cmd/
 │   ├── prata/              # The daemon + --install / --uninstall / --set-key
+│   ├── dict-foldin/        # Build-time tool: fold override entries into the baseline
 │   └── *-test/             # Manual test harnesses (f8, hotkey, inject, popup, …)
 └── internal/
     ├── audio/      # malgo capture
@@ -97,6 +98,7 @@ prata/
     ├── cue/        # audio feedback tones
     ├── daemonlog/  # durable per-dictation file log (%LOCALAPPDATA%\Prata\logs, metadata only)
     ├── dict/       # correction dictionary (embedded baseline + per-user override)
+    ├── failover/   # notify-only backend-failure hint (never auto-switches)
     ├── hotkey/     # global F1/F8
     ├── icon/       # tray icon asset
     ├── inject/     # SendInput / clipboard text injection
@@ -165,4 +167,4 @@ go test ./... -count=1
 
 ---
 
-*Last updated: 2026-06-21.*
+*Last updated: 2026-06-25.*

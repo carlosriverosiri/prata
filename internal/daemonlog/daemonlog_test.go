@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestOpenPrintfClose exercises the happy path: Open creates the file, Printf
@@ -52,6 +53,45 @@ func TestOpenPrintfClose(t *testing.T) {
 	if !strings.HasPrefix(got, "20") { // timestamp prefix (year 20xx)
 		t.Errorf("line not timestamped; log=%q", got)
 	}
+}
+
+// TestPruneOldLogs verifies retention deletes only dated log files past the
+// window, keeps recent ones, and never touches a name that does not match the
+// prata-YYYY-MM-DD.log pattern (an unparseable date or an unrelated file).
+func TestPruneOldLogs(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	// name -> should still exist after a 30-day prune at `now`.
+	files := map[string]bool{
+		"prata-2026-06-25.log": true,  // today
+		"prata-2026-06-01.log": true,  // 24 days old, inside the window
+		"prata-2026-05-25.log": false, // 31 days old, outside the window
+		"prata-2020-01-01.log": false, // ancient
+		"prata-notadate.log":   true,  // unparseable date -> left alone
+		"notes.txt":            true,  // unrelated file -> left alone
+	}
+	for name := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+
+	pruneOldLogs(dir, now, retentionDays)
+
+	for name, wantSurvive := range files {
+		_, err := os.Stat(filepath.Join(dir, name))
+		survived := err == nil
+		if survived != wantSurvive {
+			t.Errorf("%s: survived=%v, want %v", name, survived, wantSurvive)
+		}
+	}
+}
+
+// TestPruneOldLogsMissingDir confirms prune is a best-effort no-op (no panic)
+// when the logs directory cannot be read.
+func TestPruneOldLogsMissingDir(t *testing.T) {
+	pruneOldLogs(filepath.Join(t.TempDir(), "does-not-exist"), time.Now(), retentionDays)
 }
 
 // TestPrintfBeforeOpenIsNoop verifies Printf is a safe no-op when no file is
