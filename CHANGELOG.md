@@ -21,14 +21,16 @@ or misframed, two were genuinely worth acting on):
   when, Prata last came up (a tool that keeps restarting or has not started in
   days now shows it); (2) the **darkest silent failure made visible** — if the F1
   push-to-talk hotkey cannot be registered (almost always another program already
-  owns F1), the daemon used to exit with no cue, no balloon, nothing; it now logs
-  `FATAL listener stopped` and shows a modal box ("Prata kunde inte starta —
-  dikteringstangenten F1 …") so the clinician sees why dictation is dead. Two
-  more pieces of the designed health signal — a Task Scheduler
-  restart-on-failure for the crash class and a persistent degraded tray state —
-  now follow below. A startup mic probe and F1 self-healing (stay-alive +
-  re-probe vs the current fatal exit) remain, the latter pending the developer's
-  decision. See PRATA-DESIGN-LOG and §15 #14.
+  owns F1), the daemon used to exit with no cue, no balloon, nothing. It no longer
+  exits: it now **self-heals** (stays alive, re-probes F1, recovers when it frees)
+  and surfaces the state via a cue, a balloon, and a persistent "F1 UPPTAGEN" tray
+  badge — see the dedicated entry below. (A genuine message-loop *system* error
+  still logs `FATAL listener stopped`, shows a modal box, and exits — now
+  relaunched by the restart-on-failure task.) Three more pieces of the designed
+  health signal — a Task Scheduler restart-on-failure, a persistent degraded tray
+  state, and F1 self-healing — now follow below. Only a startup mic probe remains
+  (low value; the silent-capture guard already names a dead mic on the first
+  dictation). See PRATA-DESIGN-LOG and §15 #14.
 
 - `internal/installer/installer.go` — the machine-wide Task Scheduler task now
   carries a bounded **restart-on-failure** policy (`<RestartOnFailure>`, `PT1M`
@@ -54,8 +56,28 @@ or misframed, two were genuinely worth acting on):
   `SVARAR INTE` (alongside the existing one-time balloon) and is cleared on the
   next successful transcription. Goroutine-safe via the same stash-and-post
   pattern as `Notify` (a private window message refreshes the tooltip on the
-  icon-owning thread). The same mechanism is ready for the F1 self-heal case
-  (`F1 UPPTAGEN`) once that decision lands. `tooltipText` is unit-tested. Part of §15 #14.
+  icon-owning thread). The same mechanism is now also used by the F1 self-heal
+  case below (`F1 UPPTAGEN`). `tooltipText` is unit-tested. Part of §15 #14.
+- `internal/hotkey/listener.go`, `cmd/prata/main.go` — **F1 self-heal: a busy F1
+  no longer kills the daemon.** F1 is a single system-wide hotkey, so another
+  program that already owns it (a macro tool, a game overlay, a leftover Prata, a
+  boot-time race) blocked Prata's `RegisterHotKey(F1)` and the daemon exited. Now
+  the listener stays alive: it reports the contention (new `SetOnF1State`
+  callbacks → an error cue, a balloon *"F1 används av ett annat program. Stäng det
+  …"*, and a persistent `F1 UPPTAGEN` tray badge via `SetDegraded`) and re-probes
+  `RegisterHotKey(F1)` every 3 s on the message-loop thread (a helper goroutine
+  posts a private wake message; the retry runs where the hotkey is bound). The
+  moment F1 frees — typically when the offending program closes — it claims F1,
+  clears the badge, and shows *"Prata är igång igen"*, all without a restart: the
+  "see and forget" payoff. F8 registration is now independent of F1 (a different
+  key), so the quick-fix works even while F1 is contended. The state is driven
+  from the processor goroutine — the single owner of the tray health state (where
+  the failover `SVARAR INTE` also lives), so the two can't fight, and in practice
+  can't co-occur (no dictation, hence no backend failure, happens while F1 is
+  down). Replaces the first slice's modal-box-then-exit for the F1 case (the box
+  now covers only a genuine message-loop system error). Live-tested: with another
+  program holding F1, Prata stays up and shows the badge; close it and Prata
+  recovers within ~3 s. Completes the health signal's F1-self-healing item. Part of §15 #14.
 
 - `internal/audio` + `cmd/prata` — **silent-capture guard.** A capture that is
   long enough but carries no sound (a muted, disconnected, or wrong-default
