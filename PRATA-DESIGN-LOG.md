@@ -1125,3 +1125,37 @@ names matching the exact `prata-YYYY-MM-DD.log` pattern are ever removed (an
 unrelated file beside the logs is left alone). Best-effort throughout: any error
 is ignored, because failing to prune a log must never disrupt dictation. Prune
 is skipped when `PRATA_DAEMON_LOG` overrides the path (tests).
+
+### Clipboard hardening on the paste path (claim_009)
+
+The non-Chromium paste path (`Type`) saved/restored only `CF_UNICODETEXT`, so
+dictated medical-record text briefly sat in the clipboard like any other entry —
+visible in clipboard history (Win+V) and syncable to the cloud clipboard.
+SendInput targets (Chromium/Webdoc) never had this exposure; the paste fallback
+did. Fix: after setting the text, the paste now also sets three registered
+marker formats — `CanIncludeInClipboardHistory` (DWORD 0),
+`CanUploadToCloudClipboard` (DWORD 0), and
+`ExcludeClipboardContentFromMonitorProcessing` — in the same clipboard session,
+via a new `setDictatedClipboardText`.
+
+Three decisions worth recording:
+
+- **Only the dictated text is marked, never the restore.** `setClipboardText` is
+  now a thin wrapper over `writeClipboardText(_, false)` and restores the user's
+  prior clipboard *unmarked* — marking the user's own content would wrongly strip
+  it from their Win+V. Exclusion is `setDictatedClipboardText`
+  (`writeClipboardText(_, true)`), reached only from `Type`'s dictated write, and
+  never from the SendInput path, which does not touch the clipboard at all.
+- **Best-effort, never fatal.** A failed `RegisterClipboardFormatW` /
+  `SetClipboardData` for a marker is ignored: the text is already on the
+  clipboard, and the worst case is the prior behavior (text in history), never a
+  failed paste or a worse leak. This mirrors the package's existing best-effort
+  clipboard posture.
+- **Markers do not persist.** They live only for the brief paste window; the
+  subsequent restore (or clear) calls `EmptyClipboard`, dropping all formats
+  including the markers.
+
+Verified to compile and `go vet` for `GOOS=windows` (the package is pure
+syscall, no cgo). The runtime behavior — that the text truly stays out of Win+V
+and the cloud clipboard — still needs hardware verification on a real Windows
+box.

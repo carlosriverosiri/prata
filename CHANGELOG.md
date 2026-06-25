@@ -36,6 +36,17 @@ that point.
 
 ### Changed
 
+- `internal/inject` — the clipboard paste path now keeps dictated text out of
+  clipboard history (Win+V), the cloud clipboard, and clipboard monitors. After
+  placing the text it sets the `CanIncludeInClipboardHistory`,
+  `CanUploadToCloudClipboard`, and `ExcludeClipboardContentFromMonitorProcessing`
+  marker formats in the same clipboard session (new `setDictatedClipboardText`).
+  Only the dictated text is marked — restoring the user's prior clipboard stays
+  unmarked, putting it back exactly as it was — and the markers are best-effort,
+  so a failure reverts to the prior behavior and never fails the paste. Closes
+  the paste-path confidentiality gap (SendInput targets never had it). Compiles
+  and vets for windows; the Win+V / cloud-exclusion behavior is pending hardware
+  verification.
 - `internal/daemonlog` — the daemon now prunes its own logs on startup: per-day
   `prata-YYYY-MM-DD.log` files older than 30 days are deleted when the log is
   opened. A "see and forget" daemon that runs for years would otherwise leave one

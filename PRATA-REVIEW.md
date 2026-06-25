@@ -240,7 +240,9 @@ This is one of the most safety-sensitive decisions.
     medical record, confirmed to be the same class) → **SendInput Unicode**, the
     whole string in *one* call. The clipboard is never touched.
   - All other windows → **clipboard paste** (`CF_UNICODETEXT`, save/restore the
-    previous clipboard).
+    previous clipboard). The dictated text is marked to stay out of clipboard
+    history (Win+V), the cloud clipboard, and clipboard monitors; the restore of
+    the user's prior clipboard is left unmarked.
 - **Invariants (patient safety — must not change):**
   - **Safe default:** all uncertainty (no foreground window, a failed class read,
     an unknown class) → clipboard paste.
@@ -358,7 +360,11 @@ installer; the post-install start happens via `schtasks /Run` (medium IL).
   written falls back to stderr and never disrupts dictation (`PRATA_DAEMON_LOG`
   overrides the path for tests).
 - **Dictated medical-record text never leaves the clipboard** in Chromium/the
-  record (the SendInput path) → neither Win+V nor the cloud clipboard.
+  record (the SendInput path) → neither Win+V nor the cloud clipboard. On the
+  paste path (other windows) the dictated text is placed with the
+  history/cloud/monitor exclusion markers, so it is kept out of Win+V and the
+  cloud clipboard there too; only the brief save/restore window remains, and the
+  restore of the user's own prior clipboard is unmarked.
 - **The Berget key is DPAPI-encrypted** per user/machine
   (`%LOCALAPPDATA%\Prata\apikey.dat`) — unreadable for other accounts/machines.
   *No* machine-scope DPAPI (it would expose the key to everyone on a shared PC).
@@ -433,9 +439,11 @@ ideas are most valuable.
    safely? Is "no execution fallback" right even when SendInput *guaranteed* did
    not manage to send anything?
 3. **Patient confidentiality on the paste path.** On non-Chromium windows the
-   clipboard is used (save/restore). There is a short time window where
-   medical-record text sits in the clipboard. How serious is that, and is there a
-   better path that does not break the one-file/stdlib-only principle?
+   clipboard is used (save/restore). The dictated text is now marked with the
+   clipboard-history / cloud / monitor exclusion formats so it stays out of Win+V
+   and the cloud clipboard; a short window where the text sits in the clipboard
+   still exists (for the paste itself). Is this the right approach, and is the
+   residual window a concern? (Marker behavior pending hardware verification.)
 4. **Multi-session on a shared PC.** `--install`/update kills *everyone else's*
    `prata.exe`. Is "update when no one is dictating" a sustainable operational
    rule, or should the update be session-aware?

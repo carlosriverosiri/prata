@@ -90,6 +90,7 @@ var (
 	procRtlMoveMemory              = kernel32.NewProc("RtlMoveMemory")
 	procGetCurrentThreadId         = kernel32.NewProc("GetCurrentThreadId")
 	procGetClipboardSequenceNumber = user32.NewProc("GetClipboardSequenceNumber")
+	procRegisterClipboardFormatW   = user32.NewProc("RegisterClipboardFormatW")
 )
 
 // Type sends text to the foreground window via clipboard paste. Direct
@@ -101,6 +102,13 @@ var (
 // Any prior CF_UNICODETEXT clipboard content is saved before the paste
 // and best-effort restored afterwards. Non-text formats (images, files,
 // rich text from Office apps) are not preserved.
+//
+// The dictated text is marked to stay out of clipboard history (Win+V), the
+// cloud clipboard, and clipboard monitors (setDictatedClipboardText), so
+// medical-record text neither lingers nor syncs after the paste. Those markers
+// are cleared with the rest of the clipboard when the prior content is
+// restored; the restore itself is unmarked, putting the user's own clipboard
+// back exactly as it was.
 func Type(text string) error {
 	text = normalizeClipboardText(text)
 	if text == "" {
@@ -109,7 +117,7 @@ func Type(text string) error {
 
 	previous, hadPrevious, _ := getClipboardText()
 
-	if err := setClipboardText(text); err != nil {
+	if err := setDictatedClipboardText(text); err != nil {
 		return err
 	}
 	if err := sendChord(vkV); err != nil {
@@ -308,7 +316,27 @@ func normalizeClipboardText(text string) string {
 	return strings.ReplaceAll(text, "\n", "\r\n")
 }
 
+// setClipboardText places text on the clipboard as CF_UNICODETEXT, replacing
+// any prior content. It is unmarked — used to restore a saved clipboard, so
+// the user's own content goes back exactly as it was (in history, syncable).
 func setClipboardText(text string) error {
+	return writeClipboardText(text, false)
+}
+
+// setDictatedClipboardText places dictated text on the clipboard and marks it
+// to stay out of clipboard history, the cloud clipboard, and clipboard
+// monitors, so medical-record text neither lingers in Win+V nor syncs to the
+// cloud after the paste (patient confidentiality).
+func setDictatedClipboardText(text string) error {
+	return writeClipboardText(text, true)
+}
+
+// writeClipboardText is the shared clipboard writer behind setClipboardText and
+// setDictatedClipboardText. With excludeFromHistory it sets the history/cloud/
+// monitor exclusion markers after the text. Those markers are best-effort: a
+// failure to set one never fails the paste — the worst case reverts to the
+// prior behavior, where the dictated text is an ordinary clipboard entry.
+func writeClipboardText(text string, excludeFromHistory bool) error {
 	data, err := syscall.UTF16FromString(text)
 	if err != nil {
 		return fmt.Errorf("encode clipboard text: %w", err)
@@ -350,7 +378,58 @@ func setClipboardText(text string) error {
 		return fmt.Errorf("SetClipboardData: %v", sysErr)
 	}
 
+	if excludeFromHistory {
+		setClipboardExclusionMarkers()
+	}
 	return nil
+}
+
+// clipboardExclusionFormats are the registered clipboard formats that opt an
+// entry out of clipboard history (Win+V), the cloud clipboard, and third-party
+// clipboard monitors. For the Can* formats a DWORD 0 means "exclude"; the
+// Exclude... format only needs to be present.
+var clipboardExclusionFormats = []string{
+	"CanIncludeInClipboardHistory",
+	"CanUploadToCloudClipboard",
+	"ExcludeClipboardContentFromMonitorProcessing",
+}
+
+// setClipboardExclusionMarkers marks the currently-open clipboard so its
+// content is kept out of clipboard history, the cloud clipboard, and clipboard
+// monitors. It must run inside an open clipboard session, after the data is
+// set. Best-effort throughout: a registration or set failure is ignored so the
+// paste still succeeds — losing a marker only reverts to the prior behavior,
+// never injects or leaks anything new.
+func setClipboardExclusionMarkers() {
+	for _, name := range clipboardExclusionFormats {
+		format := registerClipboardFormat(name)
+		if format == 0 {
+			continue
+		}
+		// A movable, zero-initialized DWORD: 0 is "exclude" for the Can*
+		// formats, and the Exclude... format only needs to be present. The
+		// system owns the handle once SetClipboardData succeeds; on failure
+		// we free it.
+		handle, _, _ := procGlobalAlloc.Call(gmemMoveable|gmemZeroInit, unsafe.Sizeof(uint32(0)))
+		if handle == 0 {
+			continue
+		}
+		if ret, _, _ := procSetClipboardData.Call(format, handle); ret == 0 {
+			procGlobalFree.Call(handle)
+		}
+	}
+}
+
+// registerClipboardFormat registers (or looks up, if already registered) a
+// named clipboard format and returns its ID, or 0 on failure.
+func registerClipboardFormat(name string) uintptr {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return 0
+	}
+	id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(p)))
+	runtime.KeepAlive(p)
+	return id
 }
 
 // getClipboardText returns the current CF_UNICODETEXT clipboard content,
