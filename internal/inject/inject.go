@@ -105,10 +105,10 @@ var (
 //
 // The dictated text is marked to stay out of clipboard history (Win+V), the
 // cloud clipboard, and clipboard monitors (setDictatedClipboardText), so
-// medical-record text neither lingers nor syncs after the paste. Those markers
-// are cleared with the rest of the clipboard when the prior content is
-// restored; the restore itself is unmarked, putting the user's own clipboard
-// back exactly as it was.
+// medical-record text neither lingers nor syncs after the paste. The restore of
+// the prior clipboard is marked the same way (setClipboardText): Prata adds no
+// entry of its own to Win+V, so a clipboard-history user sees only the items
+// they copied themselves, never a Prata-made duplicate of their prior copy.
 func Type(text string) error {
 	text = normalizeClipboardText(text)
 	if text == "" {
@@ -192,6 +192,15 @@ func TypeUnicode(text string) error {
 // dependent failure.
 var sendInputSafeClasses = map[string]struct{}{
 	"Chrome_WidgetWin_1": {},
+	// "Notepad++" (the Scintilla-based editor) reports class "Notepad++". Its
+	// clipboard-paste path fails to insert the dictated text — unlike classic
+	// Notepad (class "Notepad"), which shares that path and works — so route it
+	// through SendInput instead, which sidesteps the clipboard (and its history
+	// exclusion markers) entirely. Scintilla accepts the single batched Unicode
+	// SendInput call, the same way Chromium does. Pending verification with
+	// realistic multi-line text and digit strings before this is treated as
+	// settled.
+	"Notepad++": {},
 }
 
 // IsSendInputSafeClass reports whether class is on the SendInput allowlist
@@ -319,24 +328,34 @@ func normalizeClipboardText(text string) string {
 // setClipboardText places text on the clipboard as CF_UNICODETEXT, replacing
 // any prior content. It is unmarked — used to restore a saved clipboard, so
 // the user's own content goes back exactly as it was (in history, syncable).
+// setClipboardText restores or sets ordinary (non-dictated) clipboard text —
+// e.g. putting the user's prior clipboard back after a paste or selection read.
+// Like every Prata clipboard write it is excluded from history, the cloud
+// clipboard, and monitors (see writeClipboardText), so restoring the user's own
+// content never duplicates their earlier copy in Win+V.
 func setClipboardText(text string) error {
-	return writeClipboardText(text, false)
+	return writeClipboardText(text)
 }
 
-// setDictatedClipboardText places dictated text on the clipboard and marks it
-// to stay out of clipboard history, the cloud clipboard, and clipboard
-// monitors, so medical-record text neither lingers in Win+V nor syncs to the
-// cloud after the paste (patient confidentiality).
+// setDictatedClipboardText places dictated text on the clipboard. Like every
+// Prata clipboard write it is kept out of clipboard history, the cloud
+// clipboard, and clipboard monitors, so medical-record text neither lingers in
+// Win+V nor syncs to the cloud after the paste (patient confidentiality).
 func setDictatedClipboardText(text string) error {
-	return writeClipboardText(text, true)
+	return writeClipboardText(text)
 }
 
 // writeClipboardText is the shared clipboard writer behind setClipboardText and
-// setDictatedClipboardText. With excludeFromHistory it sets the history/cloud/
-// monitor exclusion markers after the text. Those markers are best-effort: a
-// failure to set one never fails the paste — the worst case reverts to the
-// prior behavior, where the dictated text is an ordinary clipboard entry.
-func writeClipboardText(text string, excludeFromHistory bool) error {
+// setDictatedClipboardText. It always marks the entry to stay out of clipboard
+// history (Win+V), the cloud clipboard, and clipboard monitors: every clipboard
+// write Prata makes is excluded, so Prata never adds an entry to the user's
+// clipboard history — neither the dictated text (patient confidentiality) nor
+// the restore of the user's prior clipboard (which would otherwise duplicate
+// the user's own earlier copy in Win+V). The user only ever sees clipboard
+// entries they copied themselves. The markers are best-effort: a failure to set
+// one never fails the write — the worst case reverts to the prior behavior,
+// where the entry is an ordinary clipboard entry.
+func writeClipboardText(text string) error {
 	data, err := syscall.UTF16FromString(text)
 	if err != nil {
 		return fmt.Errorf("encode clipboard text: %w", err)
@@ -378,9 +397,7 @@ func writeClipboardText(text string, excludeFromHistory bool) error {
 		return fmt.Errorf("SetClipboardData: %v", sysErr)
 	}
 
-	if excludeFromHistory {
-		setClipboardExclusionMarkers()
-	}
+	setClipboardExclusionMarkers()
 	return nil
 }
 
