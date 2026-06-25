@@ -18,6 +18,8 @@ func TestTaskXMLEnforcesInvariants(t *testing.T) {
 		`<GroupId>S-1-5-32-545</GroupId>`,               // BUILTIN\Users (locale-safe SID)
 		`<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>`, // no time limit
 		`<Command>C:\Program Files\Prata\prata.exe</Command>`,
+		`<Interval>PT1M</Interval>`, // restart-on-failure: 1 min apart
+		`<Count>3</Count>`,          // restart-on-failure: bounded at 3 (no crash-loop)
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(xml, s) {
@@ -53,6 +55,7 @@ func TestTaskXMLElementOrder(t *testing.T) {
 	settings := between(t, xml, "<Settings>", "</Settings>")
 	settingsOrder := []string{
 		"<AllowStartOnDemand>",
+		"<RestartOnFailure>",
 		"<MultipleInstancesPolicy>",
 		"<DisallowStartIfOnBatteries>",
 		"<StopIfGoingOnBatteries>",
@@ -69,6 +72,11 @@ func TestTaskXMLElementOrder(t *testing.T) {
 	for i := 0; i+1 < len(settingsOrder); i++ {
 		assertOrder(t, settings, settingsOrder[i], settingsOrder[i+1])
 	}
+
+	// Within RestartOnFailure: Interval before Count (the order schtasks /XML
+	// emits and accepts; matching it avoids a schema surprise).
+	restart := between(t, settings, "<RestartOnFailure>", "</RestartOnFailure>")
+	assertOrder(t, restart, "<Interval>", "<Count>")
 
 	// Top-level: Triggers, Principals, Settings, Actions in that order.
 	assertOrder(t, xml, "<Triggers>", "<Principals>")

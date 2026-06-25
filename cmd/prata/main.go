@@ -565,6 +565,10 @@ func transcribeSafely(client *transcribe.Client, pcm []byte) (text string, err e
 func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event, dictAdds <-chan dictAdd, jobs chan<- transcribeJob, results <-chan transcribeResult, stopTranscription chan struct{}, t *tray.Tray, fo *failover.Notifier) {
 	var session *audio.Session
 	var targetHwnd uintptr
+	// backendDegraded tracks whether we have set a persistent degraded tray
+	// state for the current backend outage, so we clear it exactly once on
+	// recovery instead of posting a tooltip refresh after every success.
+	var backendDegraded bool
 
 	for {
 		select {
@@ -686,6 +690,12 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				active := client.ActiveBackend()
 				if fo.RecordFailure(!active.RequiresKey) {
 					t.Notify("Prata", fmt.Sprintf("%s svarar inte upprepade gånger. Byt backend i menyn vid behov (t.ex. Berget Ai).", active.DisplayName))
+					// Persist the outage on the tray too: the balloon above is
+					// shown once and fades, but the tooltip keeps reading
+					// "… — SVARAR INTE" on hover until the backend recovers, so a
+					// clinician who missed the toast still sees something is wrong.
+					t.SetDegraded("SVARAR INTE")
+					backendDegraded = true
 					daemonlog.Printf("failover hint shown backend=%s", backendID)
 				}
 				continue
@@ -693,6 +703,11 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 			// The backend responded (even if the text is later judged empty or
 			// degenerate): it is reachable, so clear any failover streak.
 			fo.RecordSuccess()
+			// Recovery: drop the persistent degraded tooltip set above, once.
+			if backendDegraded {
+				t.ClearDegraded()
+				backendDegraded = false
+			}
 			// Staleness guard: a result that returns long after F1 release is
 			// dangerous to inject — by now the user has likely given up and is
 			// typing by hand, and the late text would land mid-sentence in their

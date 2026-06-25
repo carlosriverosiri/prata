@@ -658,6 +658,16 @@ func runSchtasks(args ...string) error {
 //   - Exec is the installed binary with no arguments (= daemon).
 //   - MultipleInstancesPolicy Parallel so each session gets its own instance
 //     (the session-scoped mutex prevents duplicates within a session).
+//   - RestartOnFailure (PT1M interval, 3 attempts) self-heals a hard process
+//     death: if the daemon exits non-zero — a crash the in-process panic
+//     recovery (see cmd/prata) could not catch — Task Scheduler relaunches it
+//     up to three times, a minute apart. Bounded, not unbounded, so a
+//     persistent failure (a corrupt binary, a missing DLL) degrades to "stays
+//     down" rather than a restart loop that pegs the CPU. It only fires on a
+//     real non-zero exit, so a clean Avsluta is never restarted. It sits
+//     immediately after AllowStartOnDemand because the settingsType schema
+//     sequence puts it there; out-of-order Settings children make schtasks
+//     /XML reject the whole document ("unexpected node").
 func taskXML(exePath string) string {
 	return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -677,6 +687,10 @@ func taskXML(exePath string) string {
   </Principals>
   <Settings>
     <AllowStartOnDemand>true</AllowStartOnDemand>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
     <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
