@@ -62,6 +62,15 @@ that point.
 
 ### Changed
 
+- `internal/sanity` — analyzed the degenerate-output gzip-ratio threshold (2.4)
+  against a corpus of realistic Swedish clinical phrases (PRATA-REVIEW §15 #7).
+  No behavior change: the threshold is robust — token loops (the real KB-Whisper
+  failure) score 8–12, while the worst legitimate *repetitive* dictation ("ingen
+  X, ingen Y, ..."; bilateral findings) tops out at ~1.8, so there are no false
+  positives and the threshold must not be lowered. Added regression tests for the
+  legitimate-repetition cases and documented the limitation (a sentence repeated
+  ~4x, ratio ~1.9, slips through; it cannot be separated from legitimate
+  repetition by compression ratio and is short/visible to the user).
 - `internal/inject` — the clipboard paste path now keeps dictated text out of
   clipboard history (Win+V), the cloud clipboard, and clipboard monitors. After
   placing the text it sets the `CanIncludeInClipboardHistory`,

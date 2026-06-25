@@ -11,6 +11,18 @@
 // decoding pipeline relies on (its compression_ratio_threshold defaults to
 // 2.4): repetitive text compresses far better than natural language, so a
 // high ratio flags a loop.
+//
+// Scope and a deliberate limitation (measured 2026-06-25, PRATA-REVIEW §15 #7):
+// the guard targets HIGH-repetition token loops, which is the real KB-Whisper
+// failure mode (ratios 8–12, far above the threshold). Legitimate but repetitive
+// clinical dictation — "ingen X, ingen Y, ...", bilateral findings, "utan
+// anmärkning" lists — tops out around 1.8, so there is wide margin and no false
+// positives; the threshold is deliberately NOT lowered, because doing so would
+// start discarding that legitimate text. The cost is that a LOW-repetition phrase
+// loop (a sentence repeated ~4x) compresses to ~1.9 and slips through. It cannot
+// be separated from legitimate repetition by compression ratio alone, it is short
+// and visible to the user, and there is no execution fallback to undo, so it is
+// accepted rather than risk a false positive that drops a real dictation.
 package sanity
 
 import (

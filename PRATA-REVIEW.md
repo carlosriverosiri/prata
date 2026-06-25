@@ -484,8 +484,17 @@ ideas are most valuable.
    the threshold right, and is a balloon the best surface — or should the hint
    be more (or less) prominent?
 7. **The degenerate-output guard.** A gzip-ratio threshold against whisper
-   repetition loops — is that robust, or are there false-positive/negative risks
-   for short clinical phrases?
+   repetition loops. Analyzed 2026-06-25 against a corpus of realistic Swedish
+   clinical phrases: **robust for its purpose, no false positives.** Token loops
+   (the real KB-Whisper failure) score 8–12; the worst *legitimate* repetitive
+   dictation ("ingen X, ingen Y, ..."; bilateral findings) tops out at ~1.8 — wide
+   margin below the 2.4 threshold. The threshold must NOT be lowered (it would
+   start discarding that legitimate text). Documented limitation: a
+   low-repetition phrase loop (a sentence repeated ~4x, ratio ~1.9) slips through;
+   it cannot be separated from legitimate repetition by compression ratio, is
+   short/visible, and is accepted rather than risk a false positive. A
+   *complementary* exact-consecutive-repetition check (distinct from gzip) could
+   catch those without false positives — open as a possible future addition.
 8. **Ergonomics.** F1 (PTT) + F8 (quick-fix). Risk of an Fn layer on mini-PC
    keyboards (requires Fn+F1). A better key choice, or is this right?
 9. **General ideas.** What is missing for this to be a robust clinical tool for
