@@ -1444,3 +1444,51 @@ behaviour change are not touched unilaterally):
   tray state (seen on Monday).
 - A *startup mic probe* (earlier warning than the first failed dictation, which
   the silent-capture guard already covers).
+
+**Update — second slice shipped (same day): two of the four deferred items.**
+The developer green-lit items 2 and 3 (the two that don't change F1's
+fatal-vs-alive behaviour); F1 self-heal stays deferred pending that decision,
+and the mic probe stays deferred as low-value.
+
+- **Task Scheduler restart-on-failure — bounded 3× / PT1M.** Added
+  `<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>`
+  to `taskXML`. *Bounded, not unbounded:* unbounded restarts turn a permanent
+  failure (a corrupt binary, a missing runtime DLL) into a CPU-pegging restart
+  loop on a clinic PC nobody is watching; three attempts a minute apart self-heal
+  a transient crash, then the task gives up and "stays down" — a quieter,
+  more diagnosable failure. *Placement matters:* the v1.2 `settingsType` schema is
+  an ordered sequence, and `schtasks /XML` rejects an out-of-order document
+  ("unexpected node"), so the element goes immediately after `<AllowStartOnDemand>`
+  (its schema position), with `<Interval>` before `<Count>`. The element-order
+  test was extended to lock this in. *Honest scope:* it fires only on a non-zero
+  process **exit**; with the goroutine panic-recovery already in place the daemon
+  rarely exits, so this mainly catches a hard process death (an OOM kill, an
+  un-recovered runtime fault). It still cannot restart a *deleted* or *disabled*
+  task — only the OS owns that, which is the standing "non-running daemon can't
+  report on itself" limit.
+- **Persistent degraded tray state — a tooltip suffix, not (yet) a new icon.**
+  Added `Tray.SetDegraded(reason)` / `ClearDegraded()`: the tooltip gains a
+  persistent uppercase `" — <reason>"` suffix (`Prata dev — LAN GPU-server —
+  SVARAR INTE`) that stays until cleared, where a balloon is shown once and
+  fades. *Why the tooltip and not a distinct icon:* the tooltip is pure Win32
+  with no new asset and is the existing surface (`tooltipText`/`updateTooltip`),
+  so it was the lowest-risk persistent signal; it is strictly better than a
+  one-shot balloon (readable on hover any time) though admittedly quieter than an
+  icon swap — a distinct degraded icon is noted as a future louder option. *What
+  drives it today:* since F1 self-heal (item 1) is not built, the only live
+  degraded state is a **backend outage**, so `cmd/prata` sets `SVARAR INTE` when
+  the failover streak trips its hint and clears it on the next success (a local
+  `backendDegraded` flag clears exactly once, so a healthy run does not post a
+  tooltip refresh per dictation). This also answers part of §15 #11 (failover
+  discoverability beyond a transient balloon). *Concurrency:* `SetDegraded` is
+  callable from any goroutine — it stashes the reason under a lock and posts a
+  private window message (`degradedMsg`) so the icon-owning message-loop thread
+  does the actual `NIM_MODIFY`, the same stash-and-post discipline as `Notify`.
+  The mechanism is deliberately generic: item 1 will reuse `SetDegraded("F1
+  UPPTAGEN")` the moment the self-heal decision lands.
+
+*Still deferred:* **F1 self-heal vs fatal** (the one real behaviour change — needs
+the developer's call) and the **startup mic probe** (low value; the silent-capture
+guard already names a dead mic on the first dictation). The hard limit is
+unchanged: a *non-running* daemon cannot announce a deleted task or a pre-launch
+AV block.

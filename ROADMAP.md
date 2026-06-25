@@ -69,14 +69,17 @@ Prioritised. Each cross-references `PRATA-REVIEW.md` §15 where there is a detai
 discussion. None of these are committed work — they are candidates.
 
 ### Higher value
-1. **"See and forget" health signal** (§15 #14). *🟡 First slice shipped
-   2026-06-25:* a durable startup log anchor (`daemon started …`) and the darkest
-   silent mode made visible (an F1 `RegisterHotKey` failure now shows a modal box
-   instead of exiting silently). **Remaining** (pending decisions): a Task
-   Scheduler restart-on-failure for the crash class (bounded vs unbounded), F1
-   self-healing vs fatal, a persistent degraded tray state vs one-shot balloon, a
-   startup mic probe. The hard limit: a *non-running* daemon can't report a deleted
-   task / pre-launch AV block — needs the OS or an external probe.
+1. **"See and forget" health signal** (§15 #14). *🟡 Two slices shipped
+   2026-06-25:* (1) a durable startup log anchor (`daemon started …`) and the
+   darkest silent mode made visible (an F1 `RegisterHotKey` failure now shows a
+   modal box instead of exiting silently); (2) a Task Scheduler
+   **restart-on-failure** (bounded 3× / PT1M — self-heals a transient crash, no
+   crash-loop) and a **persistent degraded tray state** (`SetDegraded`, a
+   non-fading tooltip suffix; shows `SVARAR INTE` on a backend outage today, ready
+   for `F1 UPPTAGEN`). **Remaining** (pending a decision): **F1 self-healing vs
+   fatal** (the one behaviour change), and a low-value startup mic probe. The hard
+   limit: a *non-running* daemon can't report a deleted task / pre-launch AV block
+   — needs the OS or an external probe.
 2. **Transport security + backend-response authenticity** (§15 #13). The LAN GPU is
    reached over **plaintext HTTP** with no auth, and the response is injected with no
    integrity check → a LAN attacker (ARP spoof / MITM) could read patient audio *and*

@@ -613,13 +613,18 @@ ideas are most valuable.
     nobody knows until a clinician notices dictation died weeks later. (*First
     slice shipped 2026-06-25:* a durable startup log anchor `daemon started …`, and
     the darkest mode made visible — an F1 `RegisterHotKey` failure now shows a
-    modal box instead of exiting silently.) **Still open** (the developer's
-    decisions): a Task Scheduler **restart-on-failure** for the crash class
-    (bounded vs unbounded), whether an F1 failure should **self-heal** (stay alive
-    + re-probe) instead of exit, a one-shot balloon vs a **persistent degraded
-    tray state**, and a startup mic probe. The hard limit stands: a *non-running*
-    daemon cannot report a deleted task or a pre-launch AV block — that needs the
-    OS or an external probe.
+    modal box instead of exiting silently. *Second slice, same day:* a Task
+    Scheduler **restart-on-failure** for the crash class — **bounded 3× / PT1M**,
+    so a transient crash self-heals but a permanent failure stays down instead of
+    looping; and a **persistent degraded tray state** (`SetDegraded`/`ClearDegraded`,
+    a tooltip suffix that does not fade like a balloon), driven today by the
+    backend-outage path — `SVARAR INTE` while a local backend is unreachable,
+    cleared on recovery — which also addresses #11.) **Still open** (the developer's
+    decision): whether an F1 failure should **self-heal** (stay alive + re-probe)
+    instead of exit — the one real behaviour change, and the case the degraded
+    tray state is already built to surface (`F1 UPPTAGEN`); plus a low-value
+    startup mic probe. The hard limit stands: a *non-running* daemon cannot report
+    a deleted task or a pre-launch AV block — that needs the OS or an external probe.
 
 ---
 

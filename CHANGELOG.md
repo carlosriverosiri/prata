@@ -23,11 +23,39 @@ or misframed, two were genuinely worth acting on):
   push-to-talk hotkey cannot be registered (almost always another program already
   owns F1), the daemon used to exit with no cue, no balloon, nothing; it now logs
   `FATAL listener stopped` and shows a modal box ("Prata kunde inte starta —
-  dikteringstangenten F1 …") so the clinician sees why dictation is dead. The
-  rest of the designed health signal (a startup mic probe, a Task Scheduler
-  restart-on-failure for the crash class, and possibly a persistent degraded tray
-  state / F1 self-healing) is scoped as a follow-up pending a few decisions — see
-  PRATA-DESIGN-LOG and §15 #14.
+  dikteringstangenten F1 …") so the clinician sees why dictation is dead. Two
+  more pieces of the designed health signal — a Task Scheduler
+  restart-on-failure for the crash class and a persistent degraded tray state —
+  now follow below. A startup mic probe and F1 self-healing (stay-alive +
+  re-probe vs the current fatal exit) remain, the latter pending the developer's
+  decision. See PRATA-DESIGN-LOG and §15 #14.
+
+- `internal/installer/installer.go` — the machine-wide Task Scheduler task now
+  carries a bounded **restart-on-failure** policy (`<RestartOnFailure>`, `PT1M`
+  interval, `3` attempts). If the daemon exits non-zero — a hard crash the
+  in-process panic recovery can't catch — Task Scheduler relaunches it up to
+  three times, a minute apart, instead of leaving the clinic PC silently without
+  dictation until someone notices. Bounded, not unbounded, so a persistent
+  failure (corrupt binary, missing DLL) degrades to "stays down" rather than a
+  CPU-pegging restart loop; a clean Avsluta (exit 0) is never restarted. The
+  element sits immediately after `<AllowStartOnDemand>` per the `settingsType`
+  schema sequence — out-of-order `<Settings>` children make `schtasks /XML`
+  reject the whole document ("unexpected node"). `installer_test.go` gains the
+  value + order assertions. Part of §15 #14. (Note: a non-zero exit is rare now
+  that the goroutines recover from panics, so this mainly catches a hard process
+  death; it cannot help with a *deleted* task — that needs the OS, not the daemon.)
+- `internal/tray/tray.go`, `cmd/prata/main.go` — a persistent **degraded tray
+  state**: `Tray.SetDegraded(reason)` / `ClearDegraded()` add an uppercase
+  " — <reason>" suffix to the tray tooltip that stays until cleared (e.g.
+  `Prata dev — LAN GPU-server — SVARAR INTE`). Unlike a one-shot balloon, which
+  fades, the tooltip keeps reporting the problem on hover, so a clinician who
+  missed the toast still sees something is wrong. `cmd/prata` wires it to the
+  backend-failover path: when a local backend fails repeatedly the tooltip shows
+  `SVARAR INTE` (alongside the existing one-time balloon) and is cleared on the
+  next successful transcription. Goroutine-safe via the same stash-and-post
+  pattern as `Notify` (a private window message refreshes the tooltip on the
+  icon-owning thread). The same mechanism is ready for the F1 self-heal case
+  (`F1 UPPTAGEN`) once that decision lands. `tooltipText` is unit-tested. Part of §15 #14.
 
 - `internal/audio` + `cmd/prata` — **silent-capture guard.** A capture that is
   long enough but carries no sound (a muted, disconnected, or wrong-default
