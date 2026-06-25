@@ -8,9 +8,13 @@ that point.
 
 ## [Unreleased]
 
-Hardening from a multi-model external-review triage (the council ran against the
-v0.5.0 doc; each finding was verified against the code — most were already handled
-or misframed, two were genuinely worth acting on):
+## v0.6.0 — 2026-06-25
+
+Completes the **"see and forget" health signal** (PRATA-REVIEW §15 #14) — a
+durable startup log anchor, **F1 self-heal**, a Task Scheduler
+**restart-on-failure**, and a **persistent degraded tray state** — and folds in
+the post-v0.5.0 multi-model council-triage hardening (a silent-capture guard and
+goroutine panic recovery, each verified against the code, not the review doc):
 
 ### Added
 

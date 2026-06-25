@@ -4,7 +4,8 @@
 > detailed open-question discussion is in `PRATA-REVIEW.md` §15; the "why" behind
 > each decision is in `PRATA-DESIGN-LOG.md`. This file is the high-level index.
 >
-> **Status:** v0.5.0 shipped 2026-06-25; `master` is clean.
+> **Status:** v0.6.0 shipped 2026-06-25 (the "see and forget" health signal,
+> §15 #14, is complete); `master` is clean.
 
 ---
 
