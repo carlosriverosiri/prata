@@ -8,6 +8,8 @@ that point.
 
 ## [Unreleased]
 
+## v0.5.0 — 2026-06-25
+
 ### Added
 
 - `internal/failover` (new) + `cmd/prata` — an explicit, notify-only backend
