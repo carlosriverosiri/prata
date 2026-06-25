@@ -18,11 +18,18 @@ func TestIsDegenerate(t *testing.T) {
 			in:   strings.Repeat("O A ", 100),
 			want: true,
 		},
-		"short repetition below floor is not degenerate": {
-			// High ratio, but under the length floor where gzip's
-			// header overhead makes the ratio meaningless.
-			in:   strings.Repeat("O A ", 5),
+		"short below-floor non-loop is not degenerate": {
+			// Short and repetitive enough that the gzip ratio is unreliable
+			// (below the length floor), but only 3 words — under looksRepeated's
+			// back-to-back threshold — so neither signal fires.
+			in:   "ja ja ja",
 			want: false,
+		},
+		"short token loop is caught by repetition check": {
+			// "O A O A O A O A O A" — the canonical Whisper loop. Below the gzip
+			// length floor, but looksRepeated catches the back-to-back "O A".
+			in:   strings.Repeat("O A ", 5),
+			want: true,
 		},
 		"empty string is not degenerate": {
 			in:   "",
@@ -48,7 +55,7 @@ func TestIsDegenerate(t *testing.T) {
 			want: false,
 		},
 
-		// --- Phrase/sentence loops: caught when repetition is high enough ---
+		// --- Phrase/sentence loops: caught by gzip ratio (high repetition) ---
 		"repeated sentence loop is degenerate": {
 			in:   strings.Repeat("Patienten mår bra idag. ", 6),
 			want: true,
@@ -58,14 +65,24 @@ func TestIsDegenerate(t *testing.T) {
 			want: true,
 		},
 
-		// --- Known limitation (documented, not a bug) ---
-		// A sentence repeated only ~4x compresses to ~1.9, below maxRatio, so the
-		// gzip guard does NOT catch it. The ratio cannot be lowered to catch it
-		// without discarding the legitimate repetitive cases above (which reach
-		// ~1.8). Low-repetition phrase loops are short and visible to the user,
-		// who can delete and re-dictate. See PRATA-REVIEW §15 #7.
-		"low-repetition phrase loop slips through (known limit)": {
+		// --- Low-repetition phrase loops: caught by looksRepeated, not gzip ---
+		// A sentence repeated only 4x compresses to ~1.9 (under maxRatio), so the
+		// gzip ratio misses it; the back-to-back multi-word repetition check
+		// catches it. See PRATA-REVIEW §15 #7.
+		"phrase loop repeated 4x is degenerate": {
 			in:   strings.Repeat("Patienten mår bra idag. ", 4),
+			want: true,
+		},
+		"phrase loop after real text is degenerate": {
+			in:   "Patienten har ont i höger knä sedan en vecka. " + strings.Repeat("Tack så mycket för idag. ", 4),
+			want: true,
+		},
+
+		// --- Accepted gaps (documented, not bugs) ---
+		// A phrase repeated only 3x is ambiguous with a spoken read-back, so it is
+		// left alone (looksRepeated needs 4, gzip needs ~2.4). Short and visible.
+		"phrase repeated only 3x is kept": {
+			in:   strings.Repeat("Patienten mår bra idag. ", 3),
 			want: false,
 		},
 	}

@@ -1270,3 +1270,35 @@ Lessons:
 - Don't stop at the first plausible cause: isolate it. The marker hypothesis was
   reasonable but a five-minute manual-paste test (`cmd/cliptest`) saved shipping
   the wrong mental model.
+
+### 2026-06-25: Degenerate-output guard — validated the gzip threshold, added a complementary phrase-loop check (§15 #7)
+
+The guard discarded transcriptions whose gzip ratio exceeds 2.4 (Whisper's own
+`compression_ratio_threshold`) to catch KB-Whisper repetition loops on digit
+strings. Open question: false positives on legitimate repetitive clinical text,
+false negatives on subtle loops.
+
+Measured against a corpus of realistic Swedish clinical phrases:
+
+- **No false positives, wide margin.** Real token loops ("O A O A ...", repeated
+  digits) score 8–12. The *most repetitive legitimate* dictation — "ingen X,
+  ingen Y, ..."; bilateral findings; "utan anmärkning" lists — tops out at ~1.8.
+  The 2.4 threshold sits in the empty gap. It must NOT be lowered: the worst
+  legitimate case (~1.8) is the real floor, and dropping a true dictation is far
+  worse than keeping a loop.
+- **One real gap: low-repetition phrase loops.** A sentence repeated only ~4x
+  compresses to ~1.9 — under the threshold. Lowering the ratio can't catch it
+  without hitting the legitimate ~1.8 cases. They're genuinely inseparable *by
+  compression ratio*.
+
+So a second, orthogonal signal was added: `looksRepeated` flags a multi-word
+phrase repeated back-to-back ≥4 times (scanning all positions, so an
+end-of-output loop after real dictation is caught). It is false-positive-safe by
+construction — four identical 2+-word phrases in a row never occur in real
+dictation, while legitimate repetition repeats a *word* across *varied* content,
+so the following words differ and the window never matches. Deliberately
+conservative: a phrase repeated only 2–3x, and short single-word runs, are left
+alone (ambiguous with a spoken read-back, short, visible to the user). Both
+signals are locked in by regression tests so a future threshold tweak can't
+silently regress the legitimate cases. The whole guard remains best-effort and
+discard-only: on any doubt it keeps the text, because there is no fallback.

@@ -483,18 +483,18 @@ ideas are most valuable.
    but nothing switches on its own and patient audio is never auto-routed. Is
    the threshold right, and is a balloon the best surface — or should the hint
    be more (or less) prominent?
-7. **The degenerate-output guard.** A gzip-ratio threshold against whisper
-   repetition loops. Analyzed 2026-06-25 against a corpus of realistic Swedish
-   clinical phrases: **robust for its purpose, no false positives.** Token loops
-   (the real KB-Whisper failure) score 8–12; the worst *legitimate* repetitive
-   dictation ("ingen X, ingen Y, ..."; bilateral findings) tops out at ~1.8 — wide
-   margin below the 2.4 threshold. The threshold must NOT be lowered (it would
-   start discarding that legitimate text). Documented limitation: a
-   low-repetition phrase loop (a sentence repeated ~4x, ratio ~1.9) slips through;
-   it cannot be separated from legitimate repetition by compression ratio, is
-   short/visible, and is accepted rather than risk a false positive. A
-   *complementary* exact-consecutive-repetition check (distinct from gzip) could
-   catch those without false positives — open as a possible future addition.
+7. **The degenerate-output guard.** *Resolved 2026-06-25.* Two complementary
+   signals now. The gzip ratio (2.4) catches HIGH-repetition token loops —
+   analyzed against a corpus of realistic Swedish clinical phrases: token loops
+   score 8–12, while the worst *legitimate* repetitive dictation ("ingen X, ingen
+   Y, ..."; bilateral findings) tops out at ~1.8, so there are no false positives
+   and the threshold must NOT be lowered. `looksRepeated` now catches the
+   LOW-repetition phrase loops the ratio missed (a sentence repeated ≥4x): it
+   flags a multi-word phrase repeated back-to-back, which legitimate repetition
+   never does (it repeats a *word* across *varied* content). Both backed by
+   regression tests. Remaining accepted gaps: a phrase repeated only 2–3x and
+   short single-word runs are left alone — ambiguous with legitimate speech,
+   short, and visible to the user, so not worth risking a false positive.
 8. **Ergonomics.** F1 (PTT) + F8 (quick-fix). Risk of an Fn layer on mini-PC
    keyboards (requires Fn+F1). A better key choice, or is this right?
 9. **General ideas.** What is missing for this to be a robust clinical tool for
