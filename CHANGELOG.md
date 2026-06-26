@@ -8,6 +8,47 @@ that point.
 
 ## [Unreleased]
 
+### Added
+
+- **Documentation system for AI reconstruction.** Three new source-of-truth docs
+  close the gaps an audit found when testing whether a future AI could rebuild
+  Prata from the docs alone (it scored ~80%, the shortfall being constants and
+  rejected-path reasoning that lived only in code/prose):
+  - `PROJECT-IDENTITY.md` — pins the un-guessable identity facts (the canonical Go
+    module path `github.com/carlosriveros/prata`, which differs from the GitHub
+    slug; the one build command; deliberately-absent secrets and where they live;
+    literal-reader traps such as the two-step backend default).
+  - `CONSTANTS.md` — a registry of every rebuild-load-bearing constant (value,
+    source line, *why this value*), lifting code-only numbers like
+    `transcribeQueueDepth = 8`, `focusSettle = 30 ms`, and the inject sub-timeouts
+    into the docs.
+  - `DECISIONS-REJECTED.md` — a negative-knowledge register of ~49 rejected/
+    abandoned/built-then-dropped paths, each with a machine-findable `Status`
+    (LOCKED / DEFERRED / DISPROVEN / …) and a `Re-try trigger`. Lifts the reasoning
+    out of `PRATA-DESIGN-LOG.md` prose into a scannable index.
+- **Reusable doc-system kit** under `doc-system/` — a tech-stack-agnostic template
+  (PROJECT-IDENTITY / MASTER / AGENTS / CONSTANTS / CHANGELOG / HANDOFF +
+  Decision-Record format, a day-1 bootstrap prompt, and a doc-freshness detector
+  spec) to drop into any future project.
+- **`cmd/gen-context-pack`** — a stdlib-only generator that assembles
+  `CONTEXT-PACK.md`: a single AI-onboarding bundle with a provenance stamp, the
+  read-order map, embedded WHAT/negative-knowledge, and a **pinned-facts table
+  auto-extracted from the code** (module path + the load-bearing constants). A new
+  CI job regenerates it and fails on `git diff`, so doc-vs-code drift (e.g. a
+  changed constant) is caught automatically.
+
+### Changed
+
+- `AGENTS.md` §1 doc-map, §2 routing, and §5 structure updated for the three new
+  source docs and the module-path pin.
+
+### Fixed
+
+- `AGENTS.md` §5 mislabelled `internal/sanity` as "startup self-checks"; it is the
+  **degenerate-output guard** (gzip ratio + phrase-loop) that blocks Whisper
+  repetition loops before injection. Corrected (an AI rebuilding from the old label
+  would have built the wrong package and dropped a patient-safety feature).
+
 ## v0.6.0 — 2026-06-25
 
 Completes the **"see and forget" health signal** (PRATA-REVIEW §15 #14) — a

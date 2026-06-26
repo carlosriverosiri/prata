@@ -1,0 +1,33 @@
+# doc-asserts.txt — load-bearing facts that must stay true (read by check-docs.sh).
+#
+# Format: a "# claim:" line (human-readable) followed by ONE shell command (the
+# check) that must exit 0. Anything else starting with # is an ordinary comment.
+# Keep one assertion per fact your docs cite as load-bearing — this is the cheapest
+# way to catch a doc claim drifting from the code/config.
+#
+# The examples below are Prata's; replace with your project's facts.
+
+# claim: Go module path is github.com/carlosriveros/prata (PROJECT-IDENTITY.md)
+grep -q "module github.com/carlosriveros/prata" go.mod
+
+# claim: pasteSettleDelay is 400 ms (CONSTANTS.md, DECISIONS-REJECTED REJ-011)
+grep -q "pasteSettleDelay = 400 \* time.Millisecond" internal/inject/inject.go
+
+# claim: maxInjectAge is 8 s (CONSTANTS.md)
+grep -q "maxInjectAge = 8 \* time.Second" cmd/prata/main.go
+
+# claim: transcribeQueueDepth is 8 (CONSTANTS.md)
+grep -q "transcribeQueueDepth = 8" cmd/prata/main.go
+
+# claim: gzip degenerate threshold maxRatio is 2.4 and must not be lowered (REJ-020)
+grep -q "maxRatio = 2.4" internal/sanity/sanity.go
+
+# claim: SendInput allowlist still contains exactly the two documented classes
+grep -q '"Chrome_WidgetWin_1"' internal/inject/inject.go
+# claim: ...and Notepad++
+grep -q '"Notepad++"' internal/inject/inject.go
+
+# For projects with a context-pack generator, the strongest assertion is simply:
+#   the regenerated pack matches the committed one.
+# claim: CONTEXT-PACK.md is not stale (regenerate and diff)
+# go run ./cmd/gen-context-pack | diff - CONTEXT-PACK.md

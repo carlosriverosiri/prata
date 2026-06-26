@@ -48,3 +48,35 @@ jobs:
 
       - name: Test
         run: go test ./... -count=1
+
+  docs:
+    name: Context-pack drift gate
+    # Runs on Linux: cmd/gen-context-pack is stdlib-only and OS-independent, so it
+    # builds here even though the daemon (cgo + Win32) does not. This keeps the
+    # doc-vs-code drift check fast and independent of the Windows build.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Unit-test the generator
+        run: go test ./cmd/gen-context-pack/ -count=1
+
+      - name: Regenerate the context pack
+        run: go run ./cmd/gen-context-pack > CONTEXT-PACK.md
+
+      - name: Fail on drift
+        shell: bash
+        run: |
+          if ! git diff --exit-code CONTEXT-PACK.md; then
+            echo "::error::CONTEXT-PACK.md is stale. A constant or the module path changed"
+            echo "::error::in code but the pack was not regenerated. Run:"
+            echo "::error::  go run ./cmd/gen-context-pack > CONTEXT-PACK.md"
+            echo "::error::and commit the result."
+            exit 1
+          fi

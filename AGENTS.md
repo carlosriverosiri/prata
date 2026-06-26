@@ -23,6 +23,9 @@ Each document has a distinct job. Know which one to update.
 | File | Purpose | Language |
 | --- | --- | --- |
 | `PRATA-MASTER.md` | Curated single source of truth — *what is built and how it was reasoned*, at a glance. **Hand-maintained.** | English |
+| `PROJECT-IDENTITY.md` | Un-guessable identity facts: module path, the one build command, deliberately-absent secrets + where they live, known literal-reader traps. **Source.** | English |
+| `CONSTANTS.md` | Registry of every rebuild-load-bearing constant/threshold: value, source line, *why this value*. If a load-bearing constant is only in a code comment, that's a bug. **Source.** | English |
+| `DECISIONS-REJECTED.md` | Negative-knowledge register: rejected/abandoned paths with `Status` (LOCKED/DEFERRED/…) + a `Re-try trigger`. Index + the two fields the design-log prose lacked. **Source.** | English |
 | `README.md` | Public entry point / overview. | English |
 | `PRATA-GPU-SERVER.md` | Backend & server setup: network topology, Tailscale vs LAN, firewall, deployment. | English |
 | `PRATA-DESIGN-LOG.md` | Design decisions and Win32 traps — the *"how I reasoned"* log (dated entries). | English |
@@ -40,6 +43,9 @@ Each document has a distinct job. Know which one to update.
 - Route the update to the right file:
   - Behavior / feature / user-flow change → `PRATA-MASTER.md` (+ `README.md` if it is publicly visible).
   - Design decision or a Win32 gotcha worth remembering → `PRATA-DESIGN-LOG.md` (dated entry).
+  - A new or changed **load-bearing constant / threshold** → `CONSTANTS.md` (same commit; never leave it only in a code comment).
+  - A **rejected / abandoned / built-then-dropped path** → a `REJ-NNN` row in `DECISIONS-REJECTED.md` (+ a dated `PRATA-DESIGN-LOG.md` narrative that references the id).
+  - An **identity fact** (module path, endpoint location, canonical name) → `PROJECT-IDENTITY.md`.
   - Backend / server / network change → `PRATA-GPU-SERVER.md`.
   - Any user-visible change → a `CHANGELOG.md` entry under `[Unreleased]`.
 - **Match the existing language of the file you edit** (see the table in §1). Do not translate a Swedish design doc to English or vice versa.
@@ -66,6 +72,7 @@ The user is a domain expert — a clinician who builds AI-assisted tools but doe
 | Area | Choice | Notes |
 | --- | --- | --- |
 | Language | **Go 1.26** (`go.mod`) | Windows-only; `CGO_ENABLED=1` (malgo uses cgo). |
+| Module path | **`github.com/carlosriveros/prata`** | Load-bearing for imports. **Differs** from the GitHub slug `carlosriverosiri/prata` — both are correct. Pinned in `PROJECT-IDENTITY.md`. |
 | Audio capture | **gen2brain/malgo** | miniaudio/WASAPI binding — the *only* external dependency. |
 | Hotkeys, tray, clipboard, injection, DPAPI, popup, MessageBox, single-instance | **stdlib `syscall` + direct Win32** | No third-party libraries; bindings are hand-rolled in `internal/`. |
 | HTTP | **stdlib `net/http`** | multipart POST to OpenAI-compatible transcription endpoints. |
@@ -78,6 +85,9 @@ Adding a dependency is a deliberate decision — Prata's near-zero-dependency po
 prata/
 ├── AGENTS.md            # This file
 ├── PRATA-MASTER.md      # Curated source of truth (hand-maintained)
+├── PROJECT-IDENTITY.md  # Un-guessable identity facts (module path, build cmd, absent secrets, traps)
+├── CONSTANTS.md         # Registry of load-bearing constants (value + source + why)
+├── DECISIONS-REJECTED.md # Negative-knowledge register (rejected paths, status, re-try trigger)
 ├── README.md            # Public overview
 ├── PRATA-GPU-SERVER.md  # Backend/server/network setup
 ├── PRATA-DESIGN-LOG.md  # Design decisions + Win32 traps
@@ -105,7 +115,7 @@ prata/
     ├── inject/     # SendInput / clipboard text injection
     ├── installer/  # --install / --uninstall logic
     ├── popup/      # F8 popup window (Win32)
-    ├── sanity/     # startup self-checks
+    ├── sanity/     # degenerate-output guard (gzip ratio + phrase-loop) before injection
     ├── single/     # single-instance guard
     ├── tray/       # system tray menu + tooltip
     ├── transcribe/ # HTTP client, backends, WAV encoding, response normalization
@@ -168,4 +178,4 @@ go test ./... -count=1
 
 ---
 
-*Last updated: 2026-06-25.*
+*Last updated: 2026-06-26.*
