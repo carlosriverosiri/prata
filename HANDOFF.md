@@ -1,101 +1,83 @@
-# HANDOFF — finish the "see and forget" health signal (§15 #14)
+# HANDOFF — state of play after v0.6.0 (2026-06-25)
 
-> **What this is.** A self-contained brief to continue Prata's "see and forget"
-> health-signal work on a **different machine** (a home Windows PC, via Claude
-> Desktop / local Claude Code). It is transient — delete it once the work lands.
-> You have no memory of the prior session; everything you need is here or in the
-> repo docs it points to.
+> **What this is.** A self-contained brief to continue Prata on **another
+> machine** with a fresh session that has no memory of the prior work. It
+> reflects the repo as of **v0.6.0**. Everything described below is already
+> committed, pushed, merged, and released — there is nothing in flight.
 
 ---
 
-## 0. Read first (the design already exists — don't re-derive it)
+## 0. Read first (the docs are the source of truth)
 
-- `PRATA-DESIGN-LOG.md` → the dated entry **"2026-06-25: 'See and forget' health
-  signal — design, and the first slice shipped"** (the full design, what shipped,
-  what's deferred, the open decisions, and the honest limits).
-- `PRATA-REVIEW.md` **§15 #14**, and `ROADMAP.md` item **#1**.
-- `AGENTS.md` §1 (documentation map) and §2 (keep `PRATA-MASTER.md` fresh).
+- `ROADMAP.md` — the curated status + prioritised backlog (start here).
+- `CHANGELOG.md` — the per-change record; `## v0.6.0 — 2026-06-25` is the latest.
+- `PRATA-REVIEW.md` **§15** — the open-question discussion (each item numbered).
+- `PRATA-DESIGN-LOG.md` — the "why" behind each decision (dated entries).
+- `PRATA-MASTER.md` — the hand-curated overview; `AGENTS.md` §1–§2 — the doc map
+  and the rule to keep MASTER fresh in the same change as behaviour changes.
 
-## 1. State
+## 1. State — clean and released
 
-- Repo `master` @ **c06ea5e**, clean, fully pushed. v0.5.0 is released; new work
-  lives in `CHANGELOG.md` "[Unreleased]".
-- The health signal's **first slice already shipped** (c06ea5e): a startup log
-  anchor (`daemon started version=… backend=…`) and a **visible F1-registration
-  failure** — a modal box instead of a silent exit under `-H windowsgui`.
-- This handoff is the **remaining 4 items**.
+- `master` @ latest, **working tree clean, fully pushed, no open PRs, no stray
+  branches** (only `master` exists locally and on the remote).
+- **v0.6.0 is released** (GitHub release with `prata.exe` + `Installera-Prata.bat`
+  + `Avinstallera-Prata.bat`): <https://github.com/carlosriverosiri/prata/releases/tag/v0.6.0>.
+- The **"see and forget" health signal (§15 #14) is complete** — three slices
+  shipped:
+  1. a durable startup log anchor (`daemon started version=… backend=…`);
+  2. a Task Scheduler **restart-on-failure** (bounded 3× / PT1M) **and** a
+     **persistent degraded tray state** (`Tray.SetDegraded`/`ClearDegraded`, a
+     non-fading tooltip suffix; `SVARAR INTE` on a backend outage);
+  3. **F1 self-heal** — a busy F1 no longer exits the daemon; it stays alive,
+     cues + balloons + shows a persistent `F1 UPPTAGEN` badge, and re-probes
+     every 3 s, reclaiming F1 the instant it frees, no restart.
+- The **developer's primary machine is already running v0.6.0** (installed via
+  `--install`, verified by hash + `daemon started version=v0.6.0` in the log).
 
-## 2. Environment — you are LOCAL on a Windows machine
+## 2. Environment — building/testing on the new machine
 
-This is the simple path: you run on the home machine's disk, so you do the **full
-build and the live tests yourself** — no cloud split. First confirm the toolchain:
+- Confirm the toolchain: `go version` (Go 1.2x) and `gcc --version` (MinGW-W64 —
+  cgo needs a C compiler; `cmd/prata` and `internal/audio` use `malgo`).
+- CI gate (also enforced by `.github/workflows/release.yml` on a `v*` tag):
+  `gofmt -l .` clean → `CGO_ENABLED=1 go vet ./...` → `go build ./...` →
+  `go test ./...`.
+- Production build:
+  `CGO_ENABLED=1 go build -ldflags="-s -w -H windowsgui -X main.version=<tag>" -o prata.exe ./cmd/prata`.
+- **Redeploy notes** (gotchas hit before): a running tray-app daemon is *not*
+  killed by `schtasks /End`; use `taskkill /F /IM prata.exe`. `schtasks /Run` is
+  Access-Denied from a non-elevated shell (machine-wide task), so to start the
+  daemon at the required **medium** integrity outside the installer, launch the
+  binary directly (`Start-Process "C:\Program Files\Prata\prata.exe"`). The clean
+  install path is `Start-Process prata.exe -ArgumentList '--install' -Verb RunAs
+  -Wait` (one UAC + a final "installerad och startad" dialog).
 
-```
-go version          # expect Go 1.2x
-gcc --version        # expect MinGW-W64 (cgo needs a C compiler)
-```
+## 3. Candidate next steps (none urgent — pick what you want)
 
-- Both present → proceed. CI gate: `CGO_ENABLED=1 go vet ./...` /
-  `CGO_ENABLED=1 go build ./...` / `CGO_ENABLED=1 go test ./...`.
-  Production build: `CGO_ENABLED=1 go build -ldflags="-s -w -H windowsgui -X main.version=dev" -o prata.exe ./cmd/prata`.
-- `gcc` missing → install MinGW-W64 (e.g. MSYS2: `pacman -S mingw-w64-ucrt-x86_64-gcc`) — `cmd/prata` and `internal/audio` need cgo (`malgo`). Without cgo you can only build/test the pure packages (`internal/hotkey`, `internal/installer`, `internal/tray`) and `GOOS=windows` cross-compile.
-- To run/live-test: stop any running instance, then launch the freshly built
-  `prata.exe`. (PowerShell: `Get-Process prata | Stop-Process -Force; Start-Process .\prata.exe`.)
+- **Fleet rollout of v0.6.0** — the other ~12 clinic machines still run an older
+  version. Update each via USB: `Installera-Prata.bat` from the v0.6.0 download
+  (the same `--install` flow). This is where the health-signal robustness matters
+  most.
+- **Startup mic probe** (§15 #14, the *only* remaining health-signal item) —
+  low value; the silent-capture guard already names a dead mic on the first
+  dictation. Optional.
+- **Next backlog items** (`ROADMAP.md` → 🔭): transport security / response
+  authenticity for the LAN GPU (§15 #13) is the next "higher value" candidate;
+  then the medium/niche items.
 
-## 3. The 4 items (recommendation + the OPEN DECISION — confirm with the user)
+## 4. Git & docs discipline
 
-### 1) F1 self-healing vs fatal — *biggest; a behaviour change*
-Today: `internal/hotkey/listener.go` `Run()` registers F1 **fatally** → returns an
-error → `cmd/prata/main.go` (`case err := <-listenerDone:`) logs `FATAL`, shows a
-modal box, and exits. **Option:** keep the daemon **alive** and re-probe
-`RegisterHotKey(F1)` on a timer until it succeeds (self-heals when the program that
-owns F1 closes), surfacing a degraded state (item 3). This is the meatiest change —
-it touches the listener lifecycle **and** `main`'s shutdown (which waits on
-`listenerDone`). `internal/hotkey` is pure syscall. **Live-test:** have another app
-claim F1 (or simulate the failure), start Prata, confirm it survives + recovers when
-that app closes. *Decision for the user: stay fatal (current) or self-heal.*
+- Branch from `master` (e.g. `feat/<thing>`), commit per logical change. **End
+  every commit message with:** `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- Repo pattern: feature branch → PR → merge `--merge --delete-branch`; small
+  doc/fix commits can go straight to `master` (confirm with the user).
+- Keep the doc set in sync **in the same change** as behaviour: `CHANGELOG.md`
+  `[Unreleased]`, `PRATA-DESIGN-LOG.md`, `PRATA-REVIEW.md` §15, `ROADMAP.md`, and
+  `PRATA-MASTER.md` (AGENTS.md §2).
+- Cutting a release: finalise `CHANGELOG [Unreleased] → vX.Y.Z`, bump the ROADMAP
+  status line, commit (`release: cut vX.Y.Z`), then `git tag -a vX.Y.Z` and push
+  the tag — the `v*` push triggers the build-and-publish workflow.
 
-### 2) Task Scheduler restart-on-failure — *touches the INSTALL path*
-`internal/installer/installer.go` → `taskXML(exePath)` (~line 661) builds the task
-XML. Add to the `<Settings>` block:
-`<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>`.
-**Caveat (see the comment ~lines 645-657): `schtasks /XML` rejects out-of-order
-`<Settings>` children — place it in the schema-correct position.** Update
-`installer_test.go`. *Decision: bounded (3×, recommended — self-heals a crash without
-a crash-loop) vs unbounded.* Note it only fires on a non-zero **exit**; with the
-panic recovery already in place the daemon rarely exits, so this mainly catches a
-hard process death. **Verify by running `prata.exe --install` (admin) on Windows**
-and checking `schtasks /Query /TN Prata /XML` shows the restart settings; optionally
-kill the daemon and confirm Task Scheduler restarts it.
+## 5. Delete me
 
-### 3) Persistent degraded tray state — *so it's seen, not just a dismissable balloon*
-`internal/tray/tray.go` — the tooltip is built by `tooltipText()`/`updateTooltip()`.
-Add a way to set a degraded tooltip (e.g. `Prata — F1 UPPTAGEN`) and/or a distinct
-icon state, called from `cmd/prata` when degraded. Pure syscall. **Live-test** the
-visual on Windows. (Pairs with item 1's self-heal so the degraded state is visible
-while F1 is unavailable.)
-
-### 4) Startup mic probe — *LOW priority; the silent-capture guard already covers it*
-`internal/audio/capture.go` — add a best-effort `DeviceAvailable()` (init a capture
-device without `Start`, then `Uninit`; false if `InitDevice` fails); wire into
-`cmd/prata` startup, balloon if no mic. CGO (`malgo`). **Live-test:** mute/disconnect
-the mic, start Prata, confirm the balloon. Lower value since a missing mic already
-surfaces on the first dictation (error cue + the silent-capture balloon).
-
-## 4. Suggested order
-
-**#2 + #3 first** (self-contained, fully buildable/testable on their own), then
-**#1** after the user confirms keep-alive-vs-fatal, then **#4** (lowest value).
-
-## 5. Git & docs
-
-- Branch from `master` (e.g. `feat/health-signal-rest`). Commit per item. **End every
-  commit message with:** `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
-- This repo's pattern: small slices committed to `master` (the v0.5.0 work was a
-  feature branch merged `--no-ff`, then doc/fix commits went directly to `master`).
-  Confirm with the user whether to merge via a branch or commit to `master`.
-- Keep these in sync as you go: `CHANGELOG.md` [Unreleased]; `PRATA-DESIGN-LOG.md`
-  (extend the 2026-06-25 health-signal entry); `PRATA-REVIEW.md` §15 #14;
-  `ROADMAP.md` #1; and `PRATA-MASTER.md` if behaviour changes (AGENTS.md §2).
-- Run the full cgo gate (§2) and live-test before committing patient-safety-relevant
-  changes — never let a dictation fail silently; that is the whole point of this work.
+This brief is transient — delete it (or rewrite it) once you have moved on from
+the state above, so it never goes stale and misleads a fresh session.
