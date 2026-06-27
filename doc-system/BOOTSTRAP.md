@@ -3,6 +3,10 @@
 Run this **before** the feature code, on commit #1 of a new project. The whole kit
 is one prompt to your AI coder plus a few seed files.
 
+> **Spike or throwaway?** You don't need all nine files on day 1 — see *Minimal viable
+> adoption* in `README.md`. Seed `PROJECT-IDENTITY.md` + `DECISIONS-REJECTED.md` first
+> and add the rest when the project earns them.
+
 ## The bootstrap prompt (paste verbatim to your AI coder)
 
 ```
@@ -21,7 +25,8 @@ Create at the repo root, with every <PLACEHOLDER> filled from this repo:
    load-bearing constant is introduced.
 5. DECISIONS-REJECTED.md — the register header + an empty index, and seed REJ-001
    with the stack/architecture you rejected on day 1 and WHY.
-6. CHANGELOG.md + HANDOFF.md — skeletons, stamped.
+6. CHANGELOG.md + HANDOFF.md + DESIGN-LOG.md — skeletons, stamped (DESIGN-LOG is the
+   dated, append-only home for the reasoning narrative; start it with just the header).
 7. The first Decision Record (DECISIONS/DR-0001-stack.md) for "why this stack",
    with the rejected alternatives filled in.
 
@@ -33,6 +38,10 @@ Then wire freshness:
 - mirror the same-run rule into the IDE always-on rule (point to AGENTS §2, don't
   restate the whole table).
 Stamp every spine doc header: valid-as-of <git-short-sha> (<tag>) <date>.
+
+Finally, print an ACCEPTANCE REPORT and stop: list every file you created, every
+<PLACEHOLDER> you could NOT fill (file + token), and anything you skipped. Do not
+start feature code until a human has reviewed this report.
 ```
 
 ## Day-1 invariants to pin immediately
@@ -68,6 +77,7 @@ PER RELEASE
 PERIODIC AUDIT (~N weeks / before a handoff)
   [ ] doc-asserts CI green   [ ] spot-check 5 constants doc-vs-code
   [ ] resolve/confirm OPEN question threads   [ ] stamps near HEAD?
+  [ ] re-check DEFERRED re-try triggers — any precondition now true? (DECISIONS-REJECTED)
 ```
 
 ## Cheap-capture habits (so the dialogue gets recorded for free)

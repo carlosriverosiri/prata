@@ -39,6 +39,7 @@ what was *tried and rejected*.
 | `CONSTANTS.md` | spine | SOURCE | Registry of every load-bearing constant: value, source, *why this value*. |
 | `DECISIONS-REJECTED.md` | spine | SOURCE | Negative-knowledge register: rejected paths with `Status` + `Re-try trigger`. |
 | `DECISION-RECORD.md` | spine | SOURCE | The per-decision template (Context → Options incl. **mandatory rejected** → Decision → Reasoning dialogue → Constants → Invariants). |
+| `DESIGN-LOG.md` | spine | SOURCE | Dated, append-only reasoning narrative — the dialogue the conclusions came from (what the Decision Records and `DECISIONS-REJECTED` point back to). |
 | `CHANGELOG.md` | record | SOURCE | Keep-a-Changelog history. |
 | `HANDOFF.md` | transient | TRANSIENT | Ephemeral cross-session brief; self-deletes; carries a `valid-as-of` stamp. |
 
@@ -53,11 +54,26 @@ what was *tried and rejected*.
 2. **Every change:** apply the same-run rule in `AGENTS.md` §2 — update the routed
    doc *in the same commit* as the code. The AI coder does this; you approve.
 3. **Freshness:** wire `freshness/check-docs.sh` as a pre-commit warning and a CI
-   gate, and keep `freshness/doc-asserts.example.yaml` filled with your real
-   load-bearing facts. Optionally add a **context-pack generator**
+   gate, and keep `freshness/doc-asserts.txt` (seeded from `doc-asserts.example.txt`)
+   filled with your real load-bearing facts. The detector also sanity-checks each
+   spine doc's `valid-as-of` stamp against HEAD (Layer C), so the freshness marker is
+   enforced rather than decorative. Optionally add a **context-pack generator**
    (`freshness/CONTEXT-PACK-SPEC.md`) — Prata ships a stdlib-Go reference impl at
    `cmd/gen-context-pack/` that auto-extracts constants from code and a CI job that
    fails on drift.
+
+## Minimal viable adoption (don't start with all nine files)
+
+The full set pays off on a project that will outlive its first month. For a spike, a
+throwaway, or a sub-1-week tool, seed only the two highest-leverage docs and skip the
+rest until the project earns them:
+
+- `PROJECT-IDENTITY.md` — the un-guessable facts (module path, build command, traps).
+- `DECISIONS-REJECTED.md` — the dead ends, so you don't re-tread them next week.
+
+Add `MASTER.md` + `CONSTANTS.md` + `AGENTS.md` and wire the freshness hooks the moment
+the spike turns into something you'll hand off or come back to. Starting small beats
+not starting; the system is additive.
 
 ## What this kit deliberately is NOT
 

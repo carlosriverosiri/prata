@@ -50,6 +50,17 @@ func TestReConst_WordBoundary(t *testing.T) {
 	}
 }
 
+// The load-bearing case the left word-boundary exists for: a longer identifier that
+// ENDS with the queried name (suffix containment) must not satisfy the match, and the
+// real declaration further down must still win.
+func TestReConst_SuffixCollision(t *testing.T) {
+	src := "logretentionDays = 30\nretentionDays = 7\n"
+	got, ok := extractValue(src, reConst("retentionDays"))
+	if !ok || got != "7" {
+		t.Fatalf("got %q ok=%v, want \"7\" true (a suffix collision must not pin 30)", got, ok)
+	}
+}
+
 func TestExtractSection(t *testing.T) {
 	src := "intro\n## Register\n| ID | Rejected |\n| REJ-001 | x |\nClass legend: foo\ntail"
 	got, ok := extractSection(src, "| ID | Rejected", "Class legend")

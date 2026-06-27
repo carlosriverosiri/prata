@@ -10,7 +10,7 @@
 | Fact | Value | Notes |
 | --- | --- | --- |
 | Product name | **<PROJECT>** | |
-| Module / package path | **`<exact import root>`** | **Load-bearing.** If it differs from the repo URL, say so explicitly — a rebuilder must use *this*, not the URL. |
+| Module / package path | **`<exact import root>`** | **Load-bearing.** Pin the exact string a rebuilder imports/installs. Call out any mismatch: import root vs repo URL (Go `go.mod`), distribution name vs import name (Python `pip install X` → `import y`), scoped vs unscoped (npm `@scope/pkg`). |
 | Repository | **`<host/owner/repo>`** | |
 | Primary artifact | `<binary / entrypoint / package>` | |
 
@@ -22,13 +22,15 @@
 | Build constraints | <OS, cgo, native deps> |
 | External dependencies | <list, or "none — intentional"> |
 
-## The one build command
+## How it is built / run (the one canonical command)
 
 ```
-<the single canonical build command>
+<the single canonical build OR run command — e.g. `go build ./...`, `npm run build`,
+`python -m <pkg>`, `cargo build --release`. For a library with no build step: the
+install + import smoke-test. For ML/data: the train or eval entrypoint.>
 ```
 
-Verification gate (mirror CI): `<fmt> · <vet/lint> · <build> · <test>`
+Verification gate (mirror CI): `<format · lint/typecheck · build-or-import · test>`
 
 ## Deliberately absent from the docs (and where the real values live)
 

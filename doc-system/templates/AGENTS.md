@@ -20,6 +20,8 @@
 | `MASTER.md` | SOURCE | what it is + how it was reasoned |
 | `CONSTANTS.md` | SOURCE | every load-bearing constant + why |
 | `DECISIONS-REJECTED.md` | SOURCE | rejected paths + Status + Re-try trigger |
+| `DECISION-RECORD.md` (→ `DR-NNNN`) | SOURCE | one record per decision: Context → Options incl. **rejected** → Decision → reasoning |
+| `DESIGN-LOG.md` | SOURCE | dated, append-only reasoning narrative (the dialogue behind the decisions) |
 | `CHANGELOG.md` | SOURCE | user-visible / work history |
 | `HANDOFF.md` | TRANSIENT | ephemeral continuation brief (deletable) |
 | `<DERIVED-DOC>.md` | DERIVED — **not** a source of truth, may be stale | <job> |
@@ -38,6 +40,7 @@ Routing — when you change X, update Y in the same run:
 | --- | --- |
 | Observable behavior / feature / user-flow | `MASTER.md` |
 | A decision, or a path you **rejected** | a Decision Record + a `REJ-NNN` row in `DECISIONS-REJECTED.md` |
+| The **reasoning** behind an investigation (incl. the wrong turns) | a dated `DESIGN-LOG.md` entry |
 | A load-bearing **constant / threshold** | `CONSTANTS.md` (never leave it only in a code comment) |
 | An **identity fact** (module path, endpoint, canonical name) | `PROJECT-IDENTITY.md` |
 | Infra / backend / network / deploy | `<INFRA-DOC>.md` |

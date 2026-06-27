@@ -43,8 +43,10 @@ Same sources → identical output → no diff. Changed constant → diff → CI 
                 statement that the pack is the compiled form of the spine docs.
 1. READ ORDER   the doc map, each marked SOURCE / DERIVED / TRANSIENT (authored).
 2. IDENTITY     PROJECT-IDENTITY.md, embedded (a rebuilder needs no link-chase).
-3. PINNED FACTS auto-extracted table: every load-bearing constant + module path,
-                each with its value and source file. THIS is the anti-drift table.
+3. PINNED FACTS auto-extracted table: a CI-checked SUBSET of the highest-churn,
+                code-only constants + the module path, each with value and source
+                file. THIS is the anti-drift table; `CONSTANTS.md` stays the
+                complete registry (do not imply this table is exhaustive).
 4. NEGATIVE     the DECISIONS-REJECTED.md index table, embedded, + the count.
    KNOWLEDGE
 5. DEEPER       pointers to MASTER / DESIGN-LOG / infra doc for the full reasoning.
@@ -59,19 +61,28 @@ A small in-code table of `(label, source-file, regex/AST-query, note)`. Each que
 captures one value. Examples by stack:
 
 - **Go:** `regexp` over `const name = value` / `name = N * time.Unit` (see Prata).
+  Anchor the query to the **declaration**, not a bare substring, so a comment or test
+  can't satisfy it (e.g. `(?:^|[^\w])name\s*=`).
 - **TS/JS:** match `export const NAME = …` or read a `config.ts`.
 - **Python:** match `NAME = …` or read `pyproject.toml` / a constants module.
+- **Config-driven (ML / data):** when the load-bearing values live in YAML/JSON/TOML
+  rather than source (learning rate, batch size, seed, data-version hash), read the
+  config key directly — the extractor is still "open file, pull one value".
 - **Module/package path:** `go.mod` `module …`, `package.json` `"name"`,
   `pyproject.toml` `[project] name`.
 
-If a query finds nothing, emit a visible `⚠️ NOT FOUND` marker (and a non-zero
-stderr note) so a moved constant is loud, not silent.
+If a query finds nothing, emit a visible `⚠️ NOT FOUND` marker **and exit non-zero**
+(not merely a stderr note) — otherwise a maintainer can regenerate-and-commit the
+broken marker to clear the drift diff, and CI goes green on a pack that lost a fact.
 
 ## Minimal wiring
 
 1. One generator program/script (stdlib only — keep it dependency-free).
 2. One entry point to run it (a `make`/`just`/`npm` target, or `go run …`).
-3. One CI job: regenerate + `git diff --exit-code` the pack.
+3. One CI job: regenerate + `git diff --exit-code` the pack. See
+   `freshness/ci-drift-gate.example.yml` for a copy-paste job that regenerates into a
+   scratch path and `git diff --no-index`-compares it, so a generator crash can never
+   truncate the committed baseline.
 4. One committed `CONTEXT-PACK.md`.
 
 Optional delivery: a `--export-context` flag on your binary that prints the embedded

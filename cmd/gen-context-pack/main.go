@@ -58,19 +58,26 @@ var facts = []fact{
 	{"httpTimeout (update)", "internal/update/update.go", "notify-only update-check request timeout", reDur("httpTimeout")},
 }
 
+// nameBoundary is a non-capturing left word-boundary so a LONGER identifier ending
+// in the same word cannot match (e.g. reConst("retentionDays") must NOT fire on
+// `logretentionDays = 30`). It consumes one non-word byte, so the value stays in
+// capture group 1. (A leading `\b` would not help: `retentionDays` has a word
+// boundary inside `logretentionDays` too.)
+const nameBoundary = `(?:^|[^0-9A-Za-z_])`
+
 // reConst matches `name = 123` (an integer constant).
 func reConst(name string) *regexp.Regexp {
-	return regexp.MustCompile(name + `\s*=\s*([0-9]+)\b`)
+	return regexp.MustCompile(nameBoundary + name + `\s*=\s*([0-9]+)\b`)
 }
 
 // reFloat matches `name = 1.23` (a float constant).
 func reFloat(name string) *regexp.Regexp {
-	return regexp.MustCompile(name + `\s*=\s*([0-9]+\.[0-9]+)`)
+	return regexp.MustCompile(nameBoundary + name + `\s*=\s*([0-9]+\.[0-9]+)`)
 }
 
 // reDur matches `name = 8 * time.Second` (a time.Duration constant).
 func reDur(name string) *regexp.Regexp {
-	return regexp.MustCompile(name + `\s*=\s*([0-9]+\s*\*\s*time\.\w+)`)
+	return regexp.MustCompile(nameBoundary + name + `\s*=\s*([0-9]+\s*\*\s*time\.\w+)`)
 }
 
 // extractValue returns the trimmed first capture group of re in content.
@@ -115,6 +122,14 @@ func readFile(path string) string {
 }
 
 func main() {
+	// Fail fast if not run from the repository root: every readFile() path below is
+	// repo-relative, and a wrong CWD would otherwise emit a hollowed-out pack at
+	// exit 0 (all facts NOT FOUND, every embed empty) that looks like a real run.
+	if _, err := os.Stat("go.mod"); err != nil {
+		fmt.Fprintln(os.Stderr, "gen-context-pack: run from the repository root (go.mod not found)")
+		os.Exit(1)
+	}
+
 	var b strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
 
@@ -154,7 +169,8 @@ func main() {
 
 	// --- 3. Pinned facts (extracted from code) ---
 	w("## 3. Pinned facts — auto-extracted from the code\n\n")
-	w("Every value below is read live from the source file named. If one changes in code, this\n")
+	w("This is a CI-checked **subset** — the highest-churn, code-only constants — read live from\n")
+	w("the source file named; `CONSTANTS.md` is the complete registry. If one changes in code, this\n")
 	w("table changes, and the CI drift gate forces this pack to be regenerated.\n\n")
 	w("| Fact | Value | Source | Why it matters |\n| --- | --- | --- | --- |\n")
 	missing := 0
@@ -192,12 +208,17 @@ func main() {
 	w("- Backend / server / network runbook: `PRATA-GPU-SERVER.md`.\n")
 	w("- How to work on the project + doc-freshness rules: `AGENTS.md`.\n")
 
-	if missing > 0 {
-		fmt.Fprintf(os.Stderr, "gen-context-pack: warning: %d pinned fact(s) NOT FOUND — a regex or a source moved\n", missing)
-	}
-
 	if _, err := os.Stdout.WriteString(b.String()); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-context-pack:", err)
+		os.Exit(1)
+	}
+
+	// A missing pinned fact means a regex or a source file moved. The ⚠️ NOT FOUND
+	// marker is already in the emitted pack (so the drift diff is visible) — now also
+	// fail the EXIT CODE, so a CI step that runs the generator directly goes red even
+	// if someone regenerates-and-commits the broken pack to clear the diff.
+	if missing > 0 {
+		fmt.Fprintf(os.Stderr, "gen-context-pack: error: %d pinned fact(s) NOT FOUND — a regex or a source moved\n", missing)
 		os.Exit(1)
 	}
 }

@@ -109,7 +109,8 @@ gap, and do **not** invent values:
 
 ## 3. Pinned facts — auto-extracted from the code
 
-Every value below is read live from the source file named. If one changes in code, this
+This is a CI-checked **subset** — the highest-churn, code-only constants — read live from
+the source file named; `CONSTANTS.md` is the complete registry. If one changes in code, this
 table changes, and the CI drift gate forces this pack to be regenerated.
 
 | Fact | Value | Source | Why it matters |
@@ -150,7 +151,7 @@ table changes, and the CI drift gate forces this pack to be regenerated.
 | REJ-009 | Denylist instead of allowlist | safety-invariant | LOCKED | none |
 | REJ-010 | Execution fallback (SendInput fail → paste) | safety-invariant | LOCKED | none — double-inject in a record is unsafe |
 | REJ-011 | Belief: clipboard markers caused Notepad++ paste loss | wrong-hypothesis | DISPROVEN | none — exonerated by `cmd/cliptest` |
-| REJ-012 | Leaving the restored prior clipboard unmarked | implementation | SUPERSEDED-BY REJ-012 | none — all writes now marked |
+| REJ-012 | Leaving the restored prior clipboard unmarked | implementation | BUILT-THEN-DROPPED | none — all writes now marked |
 | REJ-013 | Qt exact-class allowlisting | implementation | DEFERRED | only if a safe paste-landing confirmation removes the need |
 | REJ-014 | Pin whisper.cpp to v1.8.6 to fix word-splits | wrong-hypothesis | DISPROVEN | none — byte-identical A/B; bug is version-independent |
 | REJ-015 | Patch/fork the whisper.cpp server | architecture | LOCKED | none — joining belongs on the client |
