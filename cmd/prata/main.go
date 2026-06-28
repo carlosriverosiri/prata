@@ -101,6 +101,10 @@ type transcribeJob struct {
 	// that comes back so late the user has likely moved on or started typing by
 	// hand — see maxInjectAge.
 	created time.Time
+	// audioDur is how long the user spoke, derived from the capture length. It
+	// scales the staleness window so long dictations are not dropped at the short
+	// floor — see effectiveMaxInjectAge.
+	audioDur time.Duration
 }
 
 // transcribeResult carries a finished transcription from the worker
@@ -111,7 +115,8 @@ type transcribeResult struct {
 	elapsed    time.Duration
 	err        error
 	targetHwnd uintptr
-	created    time.Time // capture finish time, carried from the job (see maxInjectAge)
+	created    time.Time     // capture finish time, carried from the job (see maxInjectAge)
+	audioDur   time.Duration // spoken length, carried from the job (see effectiveMaxInjectAge)
 }
 
 // transcribeQueueDepth bounds how many finished captures can wait for
@@ -126,15 +131,68 @@ const transcribeQueueDepth = 8
 // nagging on a single transient blip while still flagging a real outage fast.
 const failoverFailureThreshold = 2
 
-// maxInjectAge bounds how long after the user finished dictating (F1 release) a
-// transcription may still be auto-injected. Past this, the result is dropped
-// (error cue + tray hint) instead: by then the user has likely given up waiting
-// and started typing by hand, so a late injection would land mid-sentence in
-// whatever they are now writing — a real hazard in a patient journal. Normal
-// transcription is sub-second to ~2.7s (Berget); only an abnormal tail (a Berget
-// hiccup ~24s, or queue backlog) exceeds this. Tunable: lowering it interrupts
-// hand-typing less often but re-dictates a slow-but-valid result more often.
+// maxInjectAge is the FLOOR of the staleness window: how long after the user
+// finished dictating (F1 release) a transcription may still be auto-injected for
+// a SHORT capture. Past the effective window (see effectiveMaxInjectAge), the
+// result is dropped (error cue + tray hint): by then the user has likely given
+// up waiting and started typing by hand, so a late injection would land
+// mid-sentence in whatever they are now writing — a real hazard in a patient
+// journal. Normal transcription is sub-second to ~2.7s (Berget); only an
+// abnormal tail (a Berget hiccup ~24s, or queue backlog) exceeds this. Tunable:
+// lowering it interrupts hand-typing less often but re-dictates a slow-but-valid
+// result more often.
 const maxInjectAge = 8 * time.Second
+
+// injectAgeMax caps the staleness window no matter how long the dictation was,
+// so a stuck or badly backlogged result can never inject after the user has
+// surely moved on. Bounds the growth from injectAgeDictationFactor below.
+//
+// The §9 review (PRATA-DESIGN-LOG, 2026-06-25) set the original 8s bound as a
+// patient-safety guard against a late result landing mid-sentence after the user
+// switched patients and started hand-typing. The clinician using Prata reweighted
+// that on 2026-06-28: after dictating you *wait* for the text — you do not leave a
+// journal field empty, open another patient, and start typing — so the
+// cross-patient hazard is unlikely and smoothness matters more. 30s comfortably
+// covers the local GPU server's long-dictation transcription (the 8-10s tail that
+// was being dropped, observed 2026-06-28) without waiting absurdly long for a
+// genuinely stuck result.
+const injectAgeMax = 30 * time.Second
+
+// injectAgeDictationFactor scales the staleness window by how long the user
+// actually spoke. A long dictation legitimately takes longer to transcribe
+// (transcription time roughly tracks audio length) AND the user, having spoken
+// for a while, expects to wait — they are far less likely to have given up and
+// started hand-typing. Dropping such a result at the short 8s floor was exactly
+// the symptom behind the repeated "tog för lång tid" popups on 2026-06-28: long
+// dictations transcribed in 8–10s and fell just over the floor while short taps
+// (sub-2s) always landed. Letting the window grow to a multiple of the spoken
+// duration keeps long dictations, while short taps keep the tight floor where a
+// late inject is the real hazard.
+const injectAgeDictationFactor = 2
+
+// effectiveMaxInjectAge is the staleness window for a capture of the given
+// spoken length: the maxInjectAge floor for short taps, growing to a multiple
+// of the dictation length for longer ones, but never past injectAgeMax.
+func effectiveMaxInjectAge(audioDur time.Duration) time.Duration {
+	window := audioDur * injectAgeDictationFactor
+	if window < maxInjectAge {
+		return maxInjectAge
+	}
+	if window > injectAgeMax {
+		return injectAgeMax
+	}
+	return window
+}
+
+// audioDuration returns the wall-clock length of an S16LE PCM buffer from the
+// transcribe format constants (the inverse of minCaptureBytes' derivation).
+func audioDuration(pcmLen int) time.Duration {
+	bytesPerSec := transcribe.SampleRate * transcribe.NumChannels * transcribe.BitsPerSample / 8
+	if bytesPerSec <= 0 {
+		return 0
+	}
+	return time.Duration(pcmLen) * time.Second / time.Duration(bytesPerSec)
+}
 
 // loadDict builds the active dictionary: the embedded baseline with the
 // per-user override (PRATA_DICT_PATH or %LOCALAPPDATA%\Prata\...) layered on
@@ -373,6 +431,7 @@ func main() {
 					err:        terr,
 					targetHwnd: job.targetHwnd,
 					created:    job.created,
+					audioDur:   job.audioDur,
 				}
 				select {
 				case results <- result:
@@ -679,7 +738,7 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 				// full (sustained outage) drop with an error cue rather than
 				// stalling capture or piling up stale audio.
 				select {
-				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd, created: time.Now()}:
+				case jobs <- transcribeJob{pcm: pcm, targetHwnd: hwnd, created: time.Now(), audioDur: audioDuration(len(pcm))}:
 					fmt.Fprintf(os.Stderr, "captured %d bytes, transcribing...\n", len(pcm))
 				default:
 					fmt.Fprintln(os.Stderr, "transcription queue full, dropping capture")
@@ -734,10 +793,13 @@ func processEvents(client *transcribe.Client, d *dict.Dict, events <-chan event,
 			// dangerous to inject — by now the user has likely given up and is
 			// typing by hand, and the late text would land mid-sentence in their
 			// patient note. Drop it audibly instead (the backend was reachable,
-			// so the failover streak is already cleared above). See maxInjectAge.
-			if age := time.Since(res.created); age > maxInjectAge {
-				fmt.Fprintf(os.Stderr, "stale transcription dropped (%.1fs old)\n", age.Seconds())
-				daemonlog.Printf("stale result dropped age=%.1fs backend=%s elapsed=%.2fs", age.Seconds(), backendID, elapsed)
+			// so the failover streak is already cleared above). The window scales
+			// with how long the user spoke so long dictations are not dropped at
+			// the short floor — see effectiveMaxInjectAge.
+			maxAge := effectiveMaxInjectAge(res.audioDur)
+			if age := time.Since(res.created); age > maxAge {
+				fmt.Fprintf(os.Stderr, "stale transcription dropped (%.1fs old, window %.1fs)\n", age.Seconds(), maxAge.Seconds())
+				daemonlog.Printf("stale result dropped age=%.1fs window=%.1fs audio=%.1fs backend=%s elapsed=%.2fs", age.Seconds(), maxAge.Seconds(), res.audioDur.Seconds(), backendID, elapsed)
 				cue.PlayError()
 				t.Notify("Prata", "Dikteringen tog för lång tid och infogades inte. Diktera om.")
 				continue

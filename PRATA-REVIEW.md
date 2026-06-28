@@ -299,14 +299,19 @@ This is one of the most safety-sensitive decisions.
     now holds focus. (Note: this catches window *closure* only, not an in-app
     content change such as a Webdoc patient/tab switch — those share the HWND and
     title; see the staleness guard below and the §9 review in PRATA-DESIGN-LOG.)
-  - **Staleness guard (v0.5.0):** injection is async, so a result can return long
-    after the user finished dictating (a Berget hiccup / queue backlog, up to
-    ~30s). A result older than `maxInjectAge` (8s, measured from F1 release) is
-    dropped with an error cue + tray hint ("Dikteringen tog för lång tid …") rather
-    than injected — by then the user has likely given up waiting and started typing
-    by hand, and a late injection would land mid-sentence in their patient note, a
-    silent patient-safety hazard. The backend still counts as reachable (the
-    failover streak is cleared first). Normal dictation (≤~2.7s) is unaffected.
+  - **Staleness guard (v0.5.0; window scaled 2026-06-28):** injection is async, so a
+    result can return long after the user finished dictating (a Berget hiccup / queue
+    backlog, up to ~30s). A result older than the staleness window (measured from F1
+    release) is dropped with an error cue + tray hint ("Dikteringen tog för lång tid …")
+    rather than injected — by then the user may have moved on, and a late injection
+    would land mid-sentence in their patient note. The backend still counts as
+    reachable (the failover streak is cleared first). The window is `maxInjectAge`
+    (8s) as a floor for short taps, scaled to ×2 of the spoken length and capped at
+    `injectAgeMax` (30s): Berget transcription is ≤~2.7s, but the local GPU server
+    legitimately takes 8–10s on long dictations, which the old flat 8s bound dropped
+    as false positives (see PRATA-DESIGN-LOG 2026-06-28). The clinician reweighted the
+    patient-safety framing: after dictating you wait for the text rather than leaving
+    the field empty and switching patients, so the cross-patient hazard is unlikely.
 - **Why:** (1) in AI chats you should be able to copy a screenshot, dictate, and
   then Ctrl+V the image in — dictation must not touch the clipboard; (2) patient
   confidentiality: medical-record text should not linger in Win+V or sync to the
