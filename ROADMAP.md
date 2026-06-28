@@ -18,9 +18,11 @@ Grouped by theme; commit refs in brackets.
   (`pasteSettleDelay` 50 ms → 400 ms), not the exclusion markers (exonerated via
   manual-paste test). Notepad++ additionally routed to SendInput. Verified live in
   Word, Notepad, PowerPoint, Chrome, Cursor, Notepad++. [`3da73db`, `e04c032`]
-- **Late-injection staleness guard** (`maxInjectAge` 8 s) — a result returning long
+- **Late-injection staleness guard** (`maxInjectAge` 8 s floor) — a result returning long
   after the user finished dictating is dropped (cue + balloon) instead of injected
-  mid-sentence. Verified live. [`d7d785a`]
+  mid-sentence. Verified live. [`d7d785a`] The window now **scales with dictation
+  length** (×2, capped 30 s) so long dictations on the slower local GPU server are
+  not falsely dropped — see PRATA-DESIGN-LOG (2026-06-28).
 - **Too-short capture** now plays the error cue — no dictation drops silently. [`6fea54f`]
 - **Silent-capture guard** (`audio.Peak` + `silencePeakFloor`) — a muted /
   disconnected mic no longer injects Whisper's hallucinated text; it drops with the

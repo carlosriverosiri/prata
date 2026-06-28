@@ -8,6 +8,22 @@ that point.
 
 ## [Unreleased]
 
+### Fixed
+
+- `cmd/prata` — **long dictations are no longer dropped as "tog för lång tid."**
+  The staleness guard's `maxInjectAge` (8s) was calibrated on Berget's sub-2.7s
+  transcription; on the local **Hemma / Rngv GPU server** a long dictation
+  legitimately takes 8–10s, so the flat bound produced false positives — the
+  2026-06-28 daemon log showed eleven `stale result dropped` events clustered just
+  over 8s. The window now **scales with how long the user spoke**: 8s stays the
+  floor for short taps, growing to ×2 of the spoken length (`injectAgeDictationFactor`,
+  derived from the capture length) and capped at `injectAgeMax` (30s). The stale
+  log line now records `window=` and `audio=` for self-diagnosis. The 8s bound's
+  patient-safety framing (a late inject after a patient switch) was reweighted with
+  the clinician's workflow — you wait for a dictation before moving on — so the cap
+  favours smoothness while still dropping a genuinely stuck result. See
+  PRATA-DESIGN-LOG (2026-06-28).
+
 ## v0.6.0 — 2026-06-25
 
 Completes the **"see and forget" health signal** (PRATA-REVIEW §15 #14) — a

@@ -1531,3 +1531,45 @@ path, not a unit mock (the retry is entangled with the Win32 message loop).
 *Still deferred:* only the **startup mic probe** (low value; the silent-capture
 guard already names a dead mic on the first dictation). The hard limit is unchanged:
 a *non-running* daemon cannot announce a deleted task or a pre-launch AV block.
+
+### 2026-06-28: Staleness guard scaled by dictation length — the 8s premise was Berget-specific and broke on the local GPU server
+
+**Symptom.** Long dictations repeatedly hit "Dikteringen tog för lång tid och
+infogades inte. Diktera om." while short ones worked, so the user could only
+dictate short sentences. The daemon log (`prata-2026-06-28.log`) showed **eleven
+`stale result dropped` events**, the legitimate ones clustered at age **8.2–9.7s**
+— just over the bound — with transcription `elapsed` matching. No `silent capture`
+events at all: this was the staleness guard, not the mic/peak guard.
+
+**Root cause — a premise that no longer holds.** The §9 staleness guard
+(`maxInjectAge`, 8s) was calibrated on the explicit premise *"normal transcription
+is sub-second to ~2.7s; only an abnormal tail exceeds 8s."* That was true for
+**Berget** (cloud). On the **Hemma / Rngv GPU server** (Tailscale), a *long*
+dictation legitimately transcribes in **8–10s** — normal, not an abnormal tail. A
+bound tuned for one backend produced **false positives** on a slower one, dropping
+valid long dictations. (A midday server slowdown — up to a 30s `context deadline
+exceeded` — made it worse, but the core bug is the backend-blind flat bound.)
+
+**Fix — scale the window by how long the user spoke.** `maxInjectAge` (8s) is now a
+*floor* for short taps; the effective window grows to `injectAgeDictationFactor`
+(×2) of the spoken length (derived from `len(pcm)` via `audioDuration`), capped at
+`injectAgeMax`. A 1s tap keeps the tight 8s floor (where a late inject is the real
+hazard); a long dictation gets proportionally longer, since a long transcription is
+expected *and* the user is far less likely to have moved on. The stale log line now
+records `window=` and `audio=` so this is self-diagnosing next time.
+
+**Safety reweighting (`injectAgeMax` = 30s).** §9 set the 8s bound as a
+patient-safety guard against a late result landing mid-sentence after a patient
+switch — and noted a window-based guard is impossible (Webdoc shares one HWND/title
+across patients). The clinician using Prata reweighted that risk here: **after
+dictating you wait for the text — you do not leave a journal field empty, open
+another patient, and start typing** — so the cross-patient hazard is unlikely and
+smoothness matters more. The cap was set to 30s (smoothest within a 25–30s comfort
+range): it covers the 8–10s normal tail with margin while still dropping a
+genuinely stuck result instead of injecting it absurdly late. The residual gap
+(an in-window switch within the window) is the same accepted, undetectable gap as
+before, just wider.
+
+**Verified.** `go build ./...` and `go vet` clean; new `cmd/prata/main_test.go`
+covers the floor, the scaling regime, the cap, and the `audioDuration` conversion
+(all green). Live re-dictation pending a rebuild/restart on the dictating machine.
