@@ -26,10 +26,12 @@ that point.
     abandoned/built-then-dropped paths, each with a machine-findable `Status`
     (LOCKED / DEFERRED / DISPROVEN / …) and a `Re-try trigger`. Lifts the reasoning
     out of `PRATA-DESIGN-LOG.md` prose into a scannable index.
-- **Reusable doc-system kit** under `doc-system/` — a tech-stack-agnostic template
+- **Reusable doc-system kit** — a tech-stack-agnostic documentation template
   (PROJECT-IDENTITY / MASTER / AGENTS / CONSTANTS / CHANGELOG / HANDOFF +
   Decision-Record format, a day-1 bootstrap prompt, and a doc-freshness detector
-  spec) to drop into any future project.
+  spec) distilled from this project and published standalone at
+  github.com/carlosriverosiri/doc-system (kept out of this repo to avoid a drifting
+  duplicate).
 - **`cmd/gen-context-pack`** — a stdlib-only generator that assembles
   `CONTEXT-PACK.md`: a single AI-onboarding bundle with a provenance stamp, the
   read-order map, embedded WHAT/negative-knowledge, and a **pinned-facts table
