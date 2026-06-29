@@ -28,7 +28,7 @@
 
 | Constant | Value | Source | Why this value |
 | --- | --- | --- | --- |
-| `pasteSettleDelay` | **400 ms** | `internal/inject/inject.go:44` | Wait after Ctrl+V before restoring the prior clipboard. Was 50 ms; Scintilla (Notepad++) read the clipboard slower than 50 ms, so the restore's `EmptyClipboard` wiped the dictated text before it landed. Applies to **all** paste targets; deliberately generous. See `DECISIONS-REJECTED.md` REJ-011 and `PRATA-DESIGN-LOG.md` (2026-06-25). |
+| `pasteSettleDelay` | **700 ms** | `internal/inject/inject.go:53` | Wait after Ctrl+V before **clearing** the clipboard. `Type` no longer restores the prior clipboard (REJ-050) — Ctrl+V is async, so a slow/cold reader could read *after* the restore re-published the old content and paste it instead of the dictation (the 2026-06-29 Infinity wrong-content bug). Now the clipboard only ever goes dictation → empty; the worst residual is a silent empty paste, which the delay guards against (Scintilla/Notepad++ read slower than the old 50 ms). Bumped 400 → 700 ms as defense-in-depth once the wrong-content vector was removed. See `DECISIONS-REJECTED.md` REJ-011/REJ-050/REJ-051 and `PRATA-DESIGN-LOG.md` (2026-06-25, 2026-06-29). |
 | `copySettleTimeout` | **300 ms** | `internal/inject/inject.go:49` | How long `CopySelection` (F8) waits for the synthesized Ctrl+C to populate the clipboard. |
 | `focusSettle` | **30 ms** | `internal/inject/inject.go:55` | How long `RestoreForeground` waits after `SetForegroundWindow` before re-reading the foreground to confirm the restore. Code-only. |
 | `interEventDelay` | **2 ms** | `internal/inject/inject.go:33` | Inter-event delay on the SendInput path. Code-only. |

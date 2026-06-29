@@ -44,7 +44,7 @@ var facts = []fact{
 	{"transcribeQueueDepth", "cmd/prata/main.go", "FIFO transcribe queue + jobs/results/dictAdds channel sizes", reConst("transcribeQueueDepth")},
 	{"failoverFailureThreshold", "cmd/prata/main.go", "consecutive failures before the once-per-streak tray hint", reConst("failoverFailureThreshold")},
 	{"maxInjectAge", "cmd/prata/main.go", "drop (not inject) a transcription older than this after F1 release", reDur("maxInjectAge")},
-	{"pasteSettleDelay", "internal/inject/inject.go", "wait after Ctrl+V before restoring the prior clipboard", reDur("pasteSettleDelay")},
+	{"pasteSettleDelay", "internal/inject/inject.go", "wait after Ctrl+V before CLEARING the clipboard (never restores prior content — see REJ-050)", reDur("pasteSettleDelay")},
 	{"copySettleTimeout", "internal/inject/inject.go", "F8 wait for the synthesized Ctrl+C to populate the clipboard", reDur("copySettleTimeout")},
 	{"focusSettle", "internal/inject/inject.go", "wait before re-reading the foreground to confirm a restore", reDur("focusSettle")},
 	{"interEventDelay", "internal/inject/inject.go", "inter-event delay on the SendInput path", reDur("interEventDelay")},

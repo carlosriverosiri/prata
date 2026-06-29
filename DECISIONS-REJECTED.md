@@ -81,6 +81,8 @@
 | REJ-047 | Cross-platform layer / config files / env-var key | architecture | DEFERRED | only when a real second platform/user actually needs it |
 | REJ-048 | Whisper Flow (commercial competitor) | dependency | LOCKED | none — KB-Whisper quality + GDPR win |
 | REJ-049 | Keep improving Diktell in parallel | process | LOCKED | none — "Diktell is finished" is the discipline |
+| REJ-050 | Restore the user's prior clipboard after a dictation paste | safety-invariant | LOCKED | none — async-paste race can re-publish & paste the old content |
+| REJ-051 | Win32 delayed-rendering to keep clipboard-restore safely | implementation | DEFERRED | only if losing clipboard-restore proves painful AND a deadlock-safe owner-thread design is validated |
 
 Class legend: `architecture · safety-invariant · safety-mechanism · implementation · wrong-hypothesis · dependency · ergonomics · process`.
 
@@ -164,6 +166,22 @@ and detailed in the design log.
 - **Why:** The governing value is "see and forget" longevity. Go won on the Go 1 compatibility promise, broad stdlib coverage (Win32 via `syscall` with no third-party crates), a 150 MB vs 4–6 GB toolchain, a single static binary, and AI fluency in the language. Accepted trade-off: `malgo` is less battle-tested than Rust's `cpal`.
 - **Lesson:** For an unattended tool maintained mostly through AI, toolchain durability and language fluency outweigh raw performance.
 - **Cross-refs:** `PRATA-DESIGN-LOG.md` Decision 3; `PRATA-REVIEW.md` §12.
+
+### REJ-050 — Restore the user's prior clipboard after a dictation paste
+- **Date / version:** 2026-06-29
+- **Class:** safety-invariant · **Status:** LOCKED · **Re-try trigger:** none — only a confirmed paste-landing signal could supersede it (see REJ-051)
+- **What was rejected:** `Type` saving the prior `CF_UNICODETEXT` clipboard and re-setting it ~400 ms after Ctrl+V, as a courtesy so a copy → dictate → paste-the-original workflow kept the original copy.
+- **Why:** `SendInput` posts Ctrl+V **asynchronously** — it does not wait for the target to read the clipboard. A cold/slow first paste (here: Infinity's chat field, not on the SendInput allowlist) read the clipboard *after* the restore had already put the user's prior content (a just-copied Markdown/code doc) back, so the OLD content was pasted instead of the dictation. In a patient journal a wrong-content paste is the worst outcome; nothing-pasted is acceptable. The restore is the *only* path by which old content can reach the target, so it was removed: once the dictation is set the clipboard only ever goes dictation → empty (clear). The worst residual is a silent empty paste, guarded by `pasteSettleDelay`.
+- **What replaced it:** `Type` now `clearClipboard()`s after the settle instead of restoring (`internal/inject/inject.go`); `pasteSettleDelay` 400 → 700 ms as defense-in-depth. Accepted cost: the prior clipboard is not preserved (copy → dictate → paste-the-copy must re-copy). Bonus: dictated medical text no longer lingers on the clipboard at all.
+- **Lesson:** A "courtesy" that re-publishes data into an async race can turn a silent *empty* failure into a silent *wrong-content* one — far worse. Related to REJ-008 (the all-format restore, already rejected for the TOCTOU race); this removes the single-format restore for the same family of reason.
+
+### REJ-051 — Win32 delayed-rendering to keep clipboard-restore safely
+- **Date / version:** 2026-06-29
+- **Class:** implementation · **Status:** DEFERRED · **Re-try trigger:** only if losing clipboard-restore (REJ-050) proves painful in daily use AND a deadlock-safe owner-thread design is validated live
+- **What was rejected (for now):** Make Prata the clipboard owner via `SetClipboardData(CF_UNICODETEXT, NULL)` and render the dictation on `WM_RENDERFORMAT` (the instant a consumer reads), restoring the prior clipboard only after the render — keeping the restore convenience while still fixing the wrong-content bug.
+- **Why deferred:** It needs a dedicated message-only window + pinned-thread message loop, cross-thread coordination while `inputMu` is held (deadlock risk if the owner thread wedges), and `WM_RENDERALLFORMATS`/`WM_DESTROYCLIPBOARD` handling — and it is still **not** an absolute guarantee: the timeout-then-restore fallback re-publishes the prior content for a consumer that never honors `WM_RENDERFORMAT`. REJ-050 (clear-only) is a ~6-line change that *guarantees* no wrong-content paste, so it was chosen over this.
+- **Lesson:** Prefer the simple change that makes the bad outcome structurally impossible over the complex one that only makes it unlikely — especially in patient-safety code.
+- **Cross-refs:** `PRATA-DESIGN-LOG.md` (2026-06-29); evaluated as "Approach C" in the diagnosis workflow.
 
 ---
 

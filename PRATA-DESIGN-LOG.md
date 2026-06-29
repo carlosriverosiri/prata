@@ -1573,3 +1573,68 @@ before, just wider.
 **Verified.** `go build ./...` and `go vet` clean; new `cmd/prata/main_test.go`
 covers the floor, the scaling regime, the cap, and the `audioDuration` conversion
 (all green). Live re-dictation pending a rebuild/restart on the dictating machine.
+
+### 2026-06-29: Clipboard restore race, the *wrong-content* variant — `Type` now clears instead of restoring (REJ-050)
+
+**Symptom.** Dictating into Infinity (Infracom's phone-exchange app) chat, right
+after copying a Markdown/code document: F1, release — and the just-copied MD
+document was pasted instead of the dictation. A second dictation worked; a restart
+"worked" too; it failed only on the **first** dictation after the copy.
+
+**This is the 2026-06-25 Notepad++ restore race, one notch worse.** Same root
+mechanism — `Type` is racing the target's clipboard read against its own restore —
+but where Notepad++ had *no* prior clipboard (so the late restore's `EmptyClipboard`
+gave a silent **empty** paste), here there *was* a prior clipboard, so the late
+restore re-set the OLD MD doc and the target pasted **wrong content**. In a patient
+journal wrong content is the catastrophic outcome; an empty paste (re-dictate) is
+not. The key insight nailing it down: `SendInput` (Ctrl+V) is **asynchronous** —
+`sendChord` only queues the keystroke and returns; it never waits for the target's
+UI thread to run its paste handler and read `CF_UNICODETEXT`. So in Go source order
+the restore is "after" Ctrl+V, but the target's *actual* read can be ordered after
+the restore. A cold/first paste into Infinity's (web-style) chat field read slower
+than the 400 ms window once; "second/restart worked" is just the field warming up —
+a `Type` restart changes nothing (no process-lifetime clipboard state). Concurrency
+(`inputMu`, `f1Held`/`f8Busy` single-flight, the FIFO worker) was audited and is
+sound — this is purely a timing race, not a lock bug.
+
+**Method.** Ran a 14-agent diagnosis workflow (5 independent lenses → 3 adversarial
+skeptics → 5 fix designs → a synthesis judge). The concurrency, set-path,
+focus-timing, and external-interference lenses all converged on the restore-timing
+family; the set-path lens *proved* a wrong-content paste is impossible without the
+restore (every `writeClipboardText` error path returns before Ctrl+V, and
+`EmptyClipboard` precedes the new-data write, so a failed set leaves *empty*, never
+old). That isolates the restore as the sole vector.
+
+**Fix — remove the vector, don't shrink the window (REJ-050).** The restore is the
+*only* way the old content can reach the target, so `Type` no longer restores: after
+the dictation is set, the clipboard only ever goes dictation → empty. It now sleeps
+`pasteSettleDelay` then `clearClipboard()`s unconditionally; the prior-clipboard read
+(`getClipboardText`) is gone. This *guarantees* no wrong-content paste on the
+clipboard path — the worst residual is a silent empty paste, the patient-safe
+direction. `pasteSettleDelay` bumped 400 → 700 ms as cheap defense-in-depth against
+that residual now that a too-slow read can only ever yield *empty*. Cost: the user's
+prior clipboard is not preserved (copy → dictate → paste-the-copy must re-copy) —
+judged a minor annoyance against the safety guarantee, and explicitly chosen by the
+clinician. Bonus: dictated medical text no longer lingers on the clipboard at all.
+
+**Why not the alternatives.** A longer/adaptive delay (Approach A) only shrinks an
+unbounded window — async paste has no upper latency bound, so no finite delay is a
+guarantee. Gating the restore on a "paste consumed" signal (Approach D) is
+impossible: `GetClipboardSequenceNumber` bumps on *write*, not on a paste/read, and
+`GetOpenClipboardWindow` polling misses the sub-poll-interval open. Deferring the
+restore (Approach E) lingers medical text on the live clipboard and risks a surprise
+manual paste. Win32 delayed-rendering (Approach C) would keep the restore *and* fix
+the bug for compliant consumers, but needs a second message-loop window with
+cross-thread coordination while `inputMu` is held (deadlock risk) and is *still* not
+absolute (its timeout-then-restore fallback re-publishes old content for a consumer
+that ignores `WM_RENDERFORMAT`). A ~6-line guarantee beat a large near-guarantee —
+delayed-rendering is parked as **REJ-051 (DEFERRED)** with the re-try trigger
+recorded.
+
+**Verified.** `go build ./...`, `go vet`, and the full `go test ./...` are clean.
+The fix is a structural guarantee (no code path re-publishes prior content), so it
+is provable by inspection; the *timing* (does Infinity's first cold paste now land
+the dictation, or at worst nothing — never the old doc) needs a live rebuild + the
+original repro on the clinic PC. A `Type()` live test was deliberately **not** run
+here because it would fire a synthetic Ctrl+V into whatever window is focused on the
+live desktop. See REJ-050/REJ-051 and `CONSTANTS.md` (`pasteSettleDelay`).

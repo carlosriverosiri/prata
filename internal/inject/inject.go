@@ -32,16 +32,25 @@ const (
 	gmemZeroInit    = 0x0040
 	interEventDelay = 2 * time.Millisecond
 	// pasteSettleDelay is how long Type waits after issuing Ctrl+V before it
-	// restores the user's prior clipboard. The restore calls EmptyClipboard, so
-	// if the target reads the clipboard slower than this the dictated text is
-	// gone before it lands — a SILENT empty paste (no error, no text). Notepad++
-	// (Scintilla) reads it slower than the old 50ms allowed and lost dictation
-	// this way; Notepad/Word/PowerPoint read fast enough. 400ms is deliberately
-	// generous: silent dictation loss in a patient journal is far worse than an
-	// imperceptible delay before the user's own clipboard is restored. The
-	// markers on the dictated text are NOT the cause — manual Ctrl+V of marked
-	// text pastes fine in Notepad++ (verified 2026-06-25). See PRATA-DESIGN-LOG.
-	pasteSettleDelay = 400 * time.Millisecond
+	// CLEARS the clipboard. Ctrl+V is synthesized asynchronously — sendChord only
+	// queues the keystroke and returns; the target may read the clipboard well
+	// after that — so this delay keeps the dictated text in place until even a
+	// slow or cold reader has had time to consume it. A target that reads slower
+	// than this loses the dictation to the clear — a SILENT empty paste (no error,
+	// no text), which is the patient-safe failure direction (the user re-dictates).
+	// Notepad++ (Scintilla) read slower than the old 50ms allowed and lost
+	// dictation this way; Notepad/Word/PowerPoint read fast enough.
+	//
+	// Type deliberately CLEARS rather than restores the prior clipboard, so this
+	// delay can never end by re-publishing the OLD clipboard into the race. That
+	// was the 2026-06-29 Infinity bug: a cold first paste read the clipboard AFTER
+	// the restore had put the prior MD document back, so the OLD content was pasted
+	// instead of the dictation — the worst outcome in a patient journal. 700ms is
+	// deliberately generous: a slightly longer window where the clipboard holds the
+	// dictation is harmless, while too short risks the silent empty paste. The
+	// markers on the dictated text are NOT involved — manual Ctrl+V of marked text
+	// pastes fine in Notepad++ (verified 2026-06-25). See PRATA-DESIGN-LOG.
+	pasteSettleDelay = 700 * time.Millisecond
 
 	// copySettleTimeout is how long CopySelection waits for the clipboard
 	// sequence number to change after Ctrl+C. Chromium/Webdoc often needs
@@ -109,23 +118,29 @@ var (
 // produce repeated characters. Clipboard paste is the same path users
 // exercise manually with Ctrl+V and is therefore more robust.
 //
-// Any prior CF_UNICODETEXT clipboard content is saved before the paste
-// and best-effort restored afterwards. Non-text formats (images, files,
-// rich text from Office apps) are not preserved.
+// Type does NOT preserve the user's prior clipboard: after the paste settles it
+// CLEARS the clipboard rather than restoring whatever was there before. This is
+// a deliberate patient-safety trade. Ctrl+V is synthesized asynchronously, so a
+// slow or cold target can read the clipboard at a moment when Type would already
+// have restored the prior content — and then paste the OLD content instead of the
+// dictation (the 2026-06-29 Infinity bug). Re-publishing the prior clipboard is
+// the ONLY way the old content can reach the target, so Type never does it: once
+// the dictated text is set, the clipboard only ever transitions dictation ->
+// empty. The worst residual failure is a silent empty paste (the user
+// re-dictates), never a wrong-content paste. The cost is that a
+// copy -> dictate -> paste-the-original workflow loses the original copy; that
+// was judged an acceptable annoyance against the safety guarantee. Non-text
+// formats (images, files, rich text) were never preserved either.
 //
 // The dictated text is marked to stay out of clipboard history (Win+V), the
 // cloud clipboard, and clipboard monitors (setDictatedClipboardText), so
-// medical-record text neither lingers nor syncs after the paste. The restore of
-// the prior clipboard is marked the same way (setClipboardText): Prata adds no
-// entry of its own to Win+V, so a clipboard-history user sees only the items
-// they copied themselves, never a Prata-made duplicate of their prior copy.
+// medical-record text neither lingers nor syncs after the paste; clearing the
+// clipboard afterwards removes it entirely.
 func Type(text string) error {
 	text = normalizeClipboardText(text)
 	if text == "" {
 		return nil
 	}
-
-	previous, hadPrevious, _ := getClipboardText()
 
 	if err := setDictatedClipboardText(text); err != nil {
 		return err
@@ -134,13 +149,13 @@ func Type(text string) error {
 		return err
 	}
 
+	// Hold the dictation on the clipboard long enough for even a slow/cold target
+	// to read it, then CLEAR — never restore the prior clipboard, so the old
+	// content can never win the async-paste race and be pasted instead (see the
+	// comment on pasteSettleDelay). A clear failure leaves only the
+	// history-excluded dictation behind; it never fails the paste.
 	time.Sleep(pasteSettleDelay)
-
-	if hadPrevious {
-		_ = setClipboardText(previous)
-	} else {
-		_ = clearClipboard()
-	}
+	_ = clearClipboard()
 	return nil
 }
 

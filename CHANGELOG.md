@@ -46,6 +46,21 @@ that point.
 
 ### Fixed
 
+- `internal/inject` — **the clipboard paste no longer risks pasting your *previously
+  copied* content instead of the dictation.** Reported live: dictating into Infinity's
+  chat right after copying a Markdown document pasted the **MD document** instead of the
+  dictation (first attempt only). Cause: `Type` saved the prior clipboard and restored
+  it ~400 ms after the synthesized Ctrl+V — but `SendInput` is **asynchronous**, so a
+  cold/slow first paste read the clipboard *after* the restore had put the old content
+  back, and pasted it. In a patient journal a wrong-content paste is the worst outcome.
+  Fix: `Type` **no longer restores the prior clipboard — it clears it** after the paste
+  settles, so once the dictation is set the clipboard only ever goes dictation → empty;
+  the old content can never be re-published into the race. The worst residual is a
+  silent empty paste (re-dictate), which is patient-safe. `pasteSettleDelay` raised
+  400 → 700 ms as defense-in-depth. Trade-off (chosen deliberately): your previously
+  copied clipboard is no longer restored after a clipboard-path dictation, so a
+  copy → dictate → paste-the-original workflow must re-copy. See PRATA-DESIGN-LOG
+  (2026-06-29) and `DECISIONS-REJECTED.md` REJ-050 / REJ-051.
 - `AGENTS.md` §5 mislabelled `internal/sanity` as "startup self-checks"; it is the
   **degenerate-output guard** (gzip ratio + phrase-loop) that blocks Whisper
   repetition loops before injection. Corrected (an AI rebuilding from the old label

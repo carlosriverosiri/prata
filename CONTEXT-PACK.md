@@ -120,7 +120,7 @@ table changes, and the CI drift gate forces this pack to be regenerated.
 | `transcribeQueueDepth` | `8` | `cmd/prata/main.go` | FIFO transcribe queue + jobs/results/dictAdds channel sizes |
 | `failoverFailureThreshold` | `2` | `cmd/prata/main.go` | consecutive failures before the once-per-streak tray hint |
 | `maxInjectAge` | `8 * time.Second` | `cmd/prata/main.go` | drop (not inject) a transcription older than this after F1 release |
-| `pasteSettleDelay` | `400 * time.Millisecond` | `internal/inject/inject.go` | wait after Ctrl+V before restoring the prior clipboard |
+| `pasteSettleDelay` | `700 * time.Millisecond` | `internal/inject/inject.go` | wait after Ctrl+V before CLEARING the clipboard (never restores prior content — see REJ-050) |
 | `copySettleTimeout` | `300 * time.Millisecond` | `internal/inject/inject.go` | F8 wait for the synthesized Ctrl+C to populate the clipboard |
 | `focusSettle` | `30 * time.Millisecond` | `internal/inject/inject.go` | wait before re-reading the foreground to confirm a restore |
 | `interEventDelay` | `2 * time.Millisecond` | `internal/inject/inject.go` | inter-event delay on the SendInput path |
@@ -135,7 +135,7 @@ table changes, and the CI drift gate forces this pack to be regenerated.
 
 ## 4. Negative knowledge — rejected paths (index from DECISIONS-REJECTED.md)
 
-**49 rejected/abandoned paths recorded.** A rebuild must not re-tread these.
+**51 rejected/abandoned paths recorded.** A rebuild must not re-tread these.
 `Status: LOCKED` = never revisit; `DEFERRED` = parked pending the `Re-try trigger`.
 
 | ID | Rejected / failed path | Class | Status | Re-try trigger |
@@ -189,6 +189,8 @@ table changes, and the CI drift gate forces this pack to be regenerated.
 | REJ-047 | Cross-platform layer / config files / env-var key | architecture | DEFERRED | only when a real second platform/user actually needs it |
 | REJ-048 | Whisper Flow (commercial competitor) | dependency | LOCKED | none — KB-Whisper quality + GDPR win |
 | REJ-049 | Keep improving Diktell in parallel | process | LOCKED | none — "Diktell is finished" is the discipline |
+| REJ-050 | Restore the user's prior clipboard after a dictation paste | safety-invariant | LOCKED | none — async-paste race can re-publish & paste the old content |
+| REJ-051 | Win32 delayed-rendering to keep clipboard-restore safely | implementation | DEFERRED | only if losing clipboard-restore proves painful AND a deadlock-safe owner-thread design is validated |
 
 Full detail (Status + Re-try trigger per item): `DECISIONS-REJECTED.md`.
 Dated narratives: `PRATA-DESIGN-LOG.md`. Open threads: `PRATA-REVIEW.md` §15.
